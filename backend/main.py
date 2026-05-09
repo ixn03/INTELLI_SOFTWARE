@@ -1,20 +1,17 @@
-from fastapi import FastAPI
-from pydantic import BaseModel
+from fastapi import FastAPI, File, UploadFile
 
 
-class HealthResponse(BaseModel):
-    status: str
+app = FastAPI()
 
 
-app = FastAPI(title="INTELLI_SOFTWARE Backend")
+@app.get("/health")
+def health():
+    return {"status": "INTELLI backend running"}
 
 
-@app.get("/", response_model=HealthResponse)
-def read_root() -> HealthResponse:
-    return HealthResponse(status="ok")
-
-
-@app.get("/health", response_model=HealthResponse)
-def health_check() -> HealthResponse:
-    return HealthResponse(status="ok")
+@app.post("/upload")
+async def upload_file(file: UploadFile = File(...)):
+    return {
+        "filename": file.filename
+    }
 
