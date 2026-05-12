@@ -52,6 +52,12 @@ def parse_ladder_rung_text(
                         "start": match.start(),
                         "end": match.end(),
                     },
+                    # Preserve the original rung text on every parsed
+                    # instruction so the normalization layer can still
+                    # see ``BST`` / ``NXB`` / ``BND`` branch markers,
+                    # which the instruction tokenizer otherwise drops
+                    # (they're bare keywords without parentheses).
+                    "rung_text": rung_text,
                 },
             )
         )

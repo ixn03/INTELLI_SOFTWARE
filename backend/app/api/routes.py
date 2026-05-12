@@ -9,7 +9,9 @@ from app.models.reasoning import TraceResult as ReasoningTraceResult
 from app.services.explanation_service import explain_trace
 from app.services.graph_service import graph_summary
 from app.services.project_store import project_store
+from app.services.question_router_service import answer_question
 from app.services.trace_service import trace_object, trace_tag
+from app.services.trace_v2_service import trace_object_v2
 
 
 router = APIRouter()
@@ -149,7 +151,7 @@ def _require_latest_normalized() -> tuple[str, dict[str, Any]]:
             status_code=404,
             detail=(
                 "No project has been uploaded yet. POST a file to "
-                "/upload before calling the /api/* v1 endpoints."
+                "/upload before calling the /api/* reasoning endpoints."
             ),
         )
     try:
@@ -175,6 +177,63 @@ def trace_object_v1(request: TraceV1Request) -> ReasoningTraceResult:
     _, normalized = _require_latest_normalized()
     return trace_object(
         target_object_id=request.target_object_id,
+        control_objects=normalized["control_objects"],
+        relationships=normalized["relationships"],
+        execution_contexts=normalized["execution_contexts"],
+    )
+
+
+@router.post("/api/trace-v2", response_model=ReasoningTraceResult)
+def trace_object_v2_endpoint(
+    request: TraceV1Request,
+) -> ReasoningTraceResult:
+    """Run a deterministic Trace v2 against the most recently uploaded
+    project. Returns the same ``TraceResult`` shape as Trace v1, with
+    natural-language and condition-aware conclusions prepended to
+    ``conclusions`` and surfaced in ``summary``.
+
+    Request body is identical to ``/api/trace-v1``::
+
+        { "target_object_id": "tag::PLC01/MainProgram/Motor_Run" }
+    """
+
+    _, normalized = _require_latest_normalized()
+    return trace_object_v2(
+        target_object_id=request.target_object_id,
+        control_objects=normalized["control_objects"],
+        relationships=normalized["relationships"],
+        execution_contexts=normalized["execution_contexts"],
+    )
+
+
+class AskV1Request(BaseModel):
+    question: str
+
+
+@router.post("/api/ask-v1", response_model=ReasoningTraceResult)
+def ask_v1(request: AskV1Request) -> ReasoningTraceResult:
+    """Deterministic question router (v1).
+
+    Accepts a free-text question, identifies a target control object
+    by exact id or name match, classifies intent via keywords, and
+    routes the call to ``trace_object_v2``. The returned
+    ``TraceResult`` is decorated with router metadata in
+    ``platform_specific`` (``question``, ``detected_target_object_id``,
+    ``detected_intent``, ``router_version``).
+
+    If the question doesn't name a known control object, a
+    low-confidence result is returned with a clear recovery hint --
+    no exception is raised for "no match" so the UI can render the
+    same result shape on every call.
+
+    Request body::
+
+        { "question": "Why is PMP_LiOH_B_Run not running?" }
+    """
+
+    _, normalized = _require_latest_normalized()
+    return answer_question(
+        question=request.question,
         control_objects=normalized["control_objects"],
         relationships=normalized["relationships"],
         execution_contexts=normalized["execution_contexts"],
