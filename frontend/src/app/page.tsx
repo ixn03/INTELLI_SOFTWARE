@@ -4,6 +4,7 @@ import axios from "axios";
 import { useState } from "react";
 
 import ProjectExplorer from "@/components/ProjectExplorer";
+import ReasoningTracePanel from "@/components/ReasoningTracePanel";
 import RoutineViewer from "@/components/RoutineViewer";
 import TracePanel from "@/components/TracePanel";
 
@@ -111,6 +112,10 @@ export default function HomePage() {
           <div className="min-h-[280px] lg:min-h-0">
             <TracePanel projectId={projectId} />
           </div>
+        </div>
+
+        <div className="mx-auto mt-6 max-w-[1600px]">
+          <ReasoningTracePanel projectUploaded={Boolean(projectId)} />
         </div>
       </main>
     );
