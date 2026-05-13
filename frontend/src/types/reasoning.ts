@@ -16,6 +16,7 @@
  *   - POST /api/trace-v2            -> TraceResponse (NL-augmented)
  *   - POST /api/ask-v1              -> AskResponse  (router metadata)
  *   - POST /api/ask-v2              -> AskResponse  (orchestration + optional runtime)
+ *   - POST /api/ask-v3              -> LLMAssistResponse (deterministic-first assist)
  *   - POST /api/evaluate-runtime-v2 -> TraceResponse (runtime v2 overlay)
  */
 
@@ -134,6 +135,126 @@ export interface TraceResponse {
    * ``detected_intent``, ``router_version``).
    */
   platform_specific?: Record<string, unknown>;
+}
+
+// ---------------------------------------------------------------------------
+// Evidence Engine / Trustworthiness v1
+// ---------------------------------------------------------------------------
+
+export interface EvidenceItem {
+  id: string;
+  evidence_type: string;
+  source_platform?: string | null;
+  source_location?: string | null;
+  target_object_id?: string | null;
+  statement: string;
+  confidence: number;
+  deterministic: boolean;
+  related_relationship_ids: string[];
+  runtime_snapshot_keys: string[];
+  unsupported: boolean;
+  metadata: Record<string, unknown>;
+}
+
+export interface EvidenceBundle {
+  conclusion: string;
+  supporting_evidence: EvidenceItem[];
+  conflicting_evidence: EvidenceItem[];
+  unsupported_evidence: EvidenceItem[];
+  confidence: number;
+  warnings: string[];
+}
+
+export interface TrustAssessment {
+  confidence_score: number;
+  uncertainty_reasons: string[];
+  unsupported_reasons: string[];
+  conflicting_reasons: string[];
+  missing_runtime_reasons: string[];
+  parser_coverage_reasons: string[];
+  recommendation_level: string;
+}
+
+export function asRecord(v: unknown): Record<string, unknown> | null {
+  return v !== null && typeof v === "object" && !Array.isArray(v)
+    ? (v as Record<string, unknown>)
+    : null;
+}
+
+function asStringArray(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  return v.filter((x): x is string => typeof x === "string");
+}
+
+function asEvidenceItemArray(v: unknown): EvidenceItem[] {
+  if (!Array.isArray(v)) return [];
+  return v
+    .map((raw): EvidenceItem | null => {
+      const o = asRecord(raw);
+      if (!o || typeof o.statement !== "string") return null;
+      return {
+        id: typeof o.id === "string" ? o.id : "",
+        evidence_type:
+          typeof o.evidence_type === "string" ? o.evidence_type : "unknown",
+        source_platform:
+          typeof o.source_platform === "string" ? o.source_platform : null,
+        source_location:
+          typeof o.source_location === "string" ? o.source_location : null,
+        target_object_id:
+          typeof o.target_object_id === "string" ? o.target_object_id : null,
+        statement: o.statement,
+        confidence: typeof o.confidence === "number" ? o.confidence : 0.5,
+        deterministic: Boolean(o.deterministic),
+        related_relationship_ids: asStringArray(o.related_relationship_ids),
+        runtime_snapshot_keys: asStringArray(o.runtime_snapshot_keys),
+        unsupported: Boolean(o.unsupported),
+        metadata: asRecord(o.metadata) ?? {},
+      };
+    })
+    .filter((x): x is EvidenceItem => x !== null);
+}
+
+export function parseEvidenceBundle(raw: unknown): EvidenceBundle | null {
+  const o = asRecord(raw);
+  if (!o || typeof o.conclusion !== "string") return null;
+  return {
+    conclusion: o.conclusion,
+    supporting_evidence: asEvidenceItemArray(o.supporting_evidence),
+    conflicting_evidence: asEvidenceItemArray(o.conflicting_evidence),
+    unsupported_evidence: asEvidenceItemArray(o.unsupported_evidence),
+    confidence: typeof o.confidence === "number" ? o.confidence : 0.5,
+    warnings: asStringArray(o.warnings),
+  };
+}
+
+export function parseTrustAssessment(raw: unknown): TrustAssessment | null {
+  const o = asRecord(raw);
+  if (!o || typeof o.confidence_score !== "number") return null;
+  return {
+    confidence_score: o.confidence_score,
+    uncertainty_reasons: asStringArray(o.uncertainty_reasons),
+    unsupported_reasons: asStringArray(o.unsupported_reasons),
+    conflicting_reasons: asStringArray(o.conflicting_reasons),
+    missing_runtime_reasons: asStringArray(o.missing_runtime_reasons),
+    parser_coverage_reasons: asStringArray(o.parser_coverage_reasons),
+    recommendation_level:
+      typeof o.recommendation_level === "string"
+        ? o.recommendation_level
+        : "review",
+  };
+}
+
+export function evidenceBundleFromTrace(trace: TraceResponse): EvidenceBundle | null {
+  const ps = trace.platform_specific;
+  return (
+    parseEvidenceBundle(ps?.["runtime_evidence_bundle"]) ??
+    parseEvidenceBundle(ps?.["evidence_bundle"]) ??
+    null
+  );
+}
+
+export function trustFromTrace(trace: TraceResponse): TrustAssessment | null {
+  return parseTrustAssessment(trace.platform_specific?.["trust_assessment"]);
 }
 
 /**
@@ -255,6 +376,8 @@ export interface RuntimeV2PlatformSpecific {
   missing_conditions: RuntimeConditionResult[];
   unsupported_conditions: RuntimeConditionResult[];
   conflicts: RuntimeConflict[];
+  runtime_evidence_bundle?: EvidenceBundle | null;
+  trust_assessment?: TrustAssessment | null;
 }
 
 function isOverallVerdict(v: unknown): v is OverallVerdict {
@@ -331,6 +454,10 @@ export function parseRuntimeV2PlatformSpecific(
       platformSpecific["unsupported_conditions"],
     ),
     conflicts: asConflictArray(platformSpecific["conflicts"]),
+    runtime_evidence_bundle: parseEvidenceBundle(
+      platformSpecific["runtime_evidence_bundle"],
+    ),
+    trust_assessment: parseTrustAssessment(platformSpecific["trust_assessment"]),
   };
 }
 
@@ -371,4 +498,53 @@ export function getStringMeta(
   if (!source) return null;
   const v = source[key];
   return typeof v === "string" ? v : null;
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/ask-v3  (LLM Assist v1 — deterministic-first)
+// ---------------------------------------------------------------------------
+
+/** Response from ``POST /api/ask-v3``; includes full deterministic trace. */
+export type AskAnswerStyle =
+  | "concise_operator"
+  | "controls_engineer"
+  | "detailed_reasoning";
+
+export interface AskV3ConversationContext {
+  current_selected_object?: string | null;
+  last_discussed_state?: string | null;
+  prior_runtime_snapshot_present?: boolean;
+  prior_sequence_discussion?: Record<string, unknown>;
+}
+
+export interface LLMAssistResponse {
+  answer: string;
+  confidence: string;
+  target_object_id: string | null;
+  detected_intent: string;
+  evidence_used: Record<string, unknown>;
+  warnings: string[];
+  deterministic_result: TraceResponse;
+}
+
+export interface SequenceSemanticSummary {
+  current_possible_states: Array<Record<string, unknown>>;
+  likely_waiting_conditions: Array<Record<string, unknown>>;
+  transition_conditions: Array<Record<string, unknown>>;
+  fault_conditions: Array<Record<string, unknown>>;
+  manual_override_conditions: Array<Record<string, unknown>>;
+  confidence: number;
+  unsupported_patterns: Array<Record<string, unknown>>;
+}
+
+export interface VersionImpactSummary {
+  operationally_significant_changes: string[];
+  possible_runtime_impacts: string[];
+  affected_equipment: string[];
+  affected_sequences: string[];
+  changed_states: string[];
+  changed_fault_behavior: string[];
+  risk_level: string;
+  confidence: number;
+  evidence: Record<string, unknown>;
 }

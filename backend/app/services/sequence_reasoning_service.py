@@ -637,13 +637,19 @@ def analyze_sequences(
                 f"{cand['tag_name']}: state-like tag; no qualifying writes found."
             )
 
-    return {
+    out = {
         "state_candidates": list(candidates.values()),
         "state_transitions": transitions,
         "case_branches": case_branches,
         "sequence_summary": summary_lines,
         "unsupported_sequence_patterns": unsupported,
     }
+    from app.services.evidence_service import build_sequence_evidence
+    from app.services.trustworthiness_service import assess_sequence_confidence
+
+    out["evidence_bundle"] = build_sequence_evidence(out).model_dump(mode="json")
+    out["trust_assessment"] = assess_sequence_confidence(out).model_dump(mode="json")
+    return out
 
 
 def filter_sequence_result_for_tag(

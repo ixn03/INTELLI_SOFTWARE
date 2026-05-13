@@ -1,49 +1,48 @@
+from __future__ import annotations
+
 from app.connectors.base import PlatformConnector
-from app.connectors.placeholders import UnsupportedConnector
+from app.connectors.deltav_fhx import DeltaVFHXConnector
+from app.connectors.honeywell_experion import HoneywellExperionConnector
 from app.connectors.rockwell_l5x import RockwellL5XConnector
+from app.connectors.siemens_tia import SiemensTIAConnector
 
 
-CONNECTORS: list[PlatformConnector] = [
+# Order is a deterministic tie-breaker when two connectors report the same confidence.
+_CONNECTORS: list[PlatformConnector] = [
     RockwellL5XConnector(),
-
-    # Placeholders are intentionally strict for now.
-    # Do not broadly match .xml or .csv yet because many vendors use those formats.
-    UnsupportedConnector(
-        "siemens_tia",
-        "Siemens TIA Portal",
-        (".zap16", ".zap17", ".zap18", ".zap19"),
-    ),
-    UnsupportedConnector(
-        "honeywell",
-        "Honeywell",
-        (".hwl", ".hwh", ".hsc"),
-    ),
-    UnsupportedConnector(
-        "deltav",
-        "DeltaV",
-        (".fhx",),
-    ),
+    DeltaVFHXConnector(),
+    SiemensTIAConnector(),
+    HoneywellExperionConnector(),
 ]
 
 
 def connector_catalog() -> list[dict[str, str]]:
-    return [
-        {
-            "platform": connector.platform,
-            "name": connector.display_name,
-        }
-        for connector in CONNECTORS
-    ]
+    rows: list[dict[str, str]] = []
+    for connector in _CONNECTORS:
+        ext = getattr(connector, "supported_extensions", ()) or ()
+        pv = getattr(connector, "parser_version", "0") or "0"
+        rows.append(
+            {
+                "platform": connector.platform,
+                "name": connector.display_name,
+                "display_name": connector.display_name,
+                "supported_extensions": ",".join(ext),
+                "parser_version": str(pv),
+            }
+        )
+    return rows
 
 
 def get_connector(filename: str, content: bytes) -> PlatformConnector:
     ranked = sorted(
-        ((connector.can_parse(filename, content), connector) for connector in CONNECTORS),
-        key=lambda item: item[0].confidence,
-        reverse=True,
+        (
+            (idx, connector.can_parse(filename, content), connector)
+            for idx, connector in enumerate(_CONNECTORS)
+        ),
+        key=lambda row: (-row[1].confidence, row[0]),
     )
 
-    match, connector = ranked[0]
+    _idx, match, connector = ranked[0]
 
     if match.confidence <= 0:
         raise ValueError("No INTELLI connector recognized this file yet.")

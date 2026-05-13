@@ -1,0 +1,7 @@
+{
+  "platform": "rockwell",
+  "language": "ladder_structured_text",
+  "expected_capabilities": ["ladder", "structured_text"],
+  "known_unsupported_features": [],
+  "parser_notes": "Synthetic fixture used for parser coverage inventory tests."
+}

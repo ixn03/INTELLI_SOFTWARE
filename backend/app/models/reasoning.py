@@ -84,6 +84,7 @@ class ControlObjectType(str, Enum):
     # --- FBD (schema placeholders for future diagram parsers) ---
     FBD_INPUT_PIN = "fbd_input_pin"
     FBD_OUTPUT_PIN = "fbd_output_pin"
+    FUNCTION_BLOCK_PIN = "function_block_pin"
     FBD_BLOCK_INSTANCE = "fbd_block_instance"
     FBD_PARAMETER_BINDING = "fbd_parameter_binding"
     CONTROL_MODULE = "control_module"
@@ -156,6 +157,7 @@ class RelationshipType(str, Enum):
     REFERENCES = "references"
     DEPENDS_ON = "depends_on"
     CONDITION_FOR = "condition_for"
+    ACTION_OF = "action_of"
     PERMITS = "permits"
     INHIBITS = "inhibits"
     COMMANDS = "commands"
@@ -174,6 +176,7 @@ class RelationshipType(str, Enum):
     TRACKS = "tracks"
     AFFECTS = "affects"
     # --- FBD / wiring (placeholders; emit only when parsers supply pins) ---
+    CONNECTS = "connects"
     SIGNAL_CONNECTS = "signal_connects"
     BINDS_PARAMETER = "binds_parameter"
     UNKNOWN = "unknown"
