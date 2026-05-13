@@ -377,6 +377,16 @@ def evaluate_trace_runtime_v2(
         "unsupported"
     ]
     trace_result.platform_specific["conflicts"] = conflicts
+    from app.services.evidence_service import build_runtime_evidence
+    from app.services.trustworthiness_service import assess_runtime_confidence
+
+    evidence = build_runtime_evidence(trace_result, runtime_snapshot)
+    trust = assess_runtime_confidence(trace_result)
+    trace_result.platform_specific["runtime_evidence_bundle"] = evidence.model_dump(
+        mode="json"
+    )
+    trace_result.platform_specific["trust_assessment"] = trust.model_dump(mode="json")
+    trace_result.platform_specific["confidence_score"] = trust.confidence_score
 
     return trace_result
 

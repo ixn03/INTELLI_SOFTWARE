@@ -174,6 +174,25 @@ def answer_question_v2(
             "runtime_evaluation_used": runtime_used,
         }
     )
+    from app.services.evidence_service import build_runtime_evidence, build_trace_evidence
+    from app.services.trustworthiness_service import (
+        assess_runtime_confidence,
+        assess_trace_confidence,
+    )
+
+    if runtime_used:
+        evidence = build_runtime_evidence(base, runtime_snapshot)
+        trust = assess_runtime_confidence(base)
+        base.platform_specific["evidence_bundle"] = evidence.model_dump(mode="json")
+    else:
+        evidence = build_trace_evidence(base)
+        trust = assess_trace_confidence(base, relationships)
+        base.platform_specific.setdefault(
+            "evidence_bundle",
+            evidence.model_dump(mode="json"),
+        )
+    base.platform_specific["trust_assessment"] = trust.model_dump(mode="json")
+    base.platform_specific["confidence_score"] = trust.confidence_score
     return base
 
 

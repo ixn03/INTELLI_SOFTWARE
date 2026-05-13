@@ -3,16 +3,24 @@
 import { useCallback, useMemo, useState } from "react";
 
 import type {
+  EvidenceBundle,
+  LLMAssistResponse,
   NormalizedControlObjectSummary,
+  SequenceSemanticSummary,
   TraceConclusion,
   TraceRelationship,
   TraceResponse,
 } from "@/types/reasoning";
 import {
+  asRecord,
+  evidenceBundleFromTrace,
   getStringMeta,
   getTraceV2Kind,
   isDesignTraceConclusion,
   isRuntimeV2Trace,
+  parseEvidenceBundle,
+  parseTrustAssessment,
+  trustFromTrace,
 } from "@/types/reasoning";
 
 import {
@@ -80,6 +88,9 @@ interface AnswerViewProps {
   onEvaluateRuntimeV2: (snapshot: Record<string, unknown>) => void;
   runtimeEvaluating: boolean;
   runtimeEvalError: string | null;
+
+  /** Present after a successful ``/api/ask-v3`` (deterministic-first assist). */
+  llmAssist: LLMAssistResponse | null;
 }
 
 export default function AnswerView(props: AnswerViewProps) {
@@ -97,6 +108,7 @@ export default function AnswerView(props: AnswerViewProps) {
     onEvaluateRuntimeV2,
     runtimeEvaluating,
     runtimeEvalError,
+    llmAssist,
   } = props;
 
   const [runtimeParseError, setRuntimeParseError] = useState<string | null>(
@@ -134,7 +146,7 @@ export default function AnswerView(props: AnswerViewProps) {
   }, [runtimeSnapshotText, onEvaluateRuntimeV2]);
 
   return (
-    <main className="flex h-full min-w-0 flex-1 flex-col gap-5 overflow-y-auto px-8 py-6">
+    <main className="flex h-full min-w-0 flex-1 flex-col gap-6 overflow-y-auto px-8 py-8">
       <SelectedObjectCard
         selectedObject={selectedObject}
         selectedObjectId={selectedObjectId}
@@ -179,13 +191,30 @@ export default function AnswerView(props: AnswerViewProps) {
 
       {trace ? (
         <>
+          {llmAssist ? (
+            <LlmAssistNaturalCard assist={llmAssist} askedQuestion={askedQuestion} />
+          ) : null}
+
           {askedQuestion ? (
             <RouterPill trace={trace} askedQuestion={askedQuestion} />
           ) : null}
 
           {isRuntimeV2Trace(trace) ? <OperationalVerdictCard trace={trace} /> : null}
 
-          <PrimaryAnswerCard trace={trace} />
+          {llmAssist ? (
+            <LlmAssistSuggestedCard assist={llmAssist} trace={trace} />
+          ) : null}
+
+          {llmAssist ? <LlmAssistStructuredEvidence assist={llmAssist} /> : null}
+
+          <TrustAssessmentCard trace={trace} assist={llmAssist} />
+          <WhyIntelliThinksThisCard trace={trace} assist={llmAssist} />
+          {llmAssist ? <SequenceSemanticsCard assist={llmAssist} /> : null}
+
+          <PrimaryAnswerCard
+            trace={trace}
+            variant={llmAssist ? "assist_secondary" : "default"}
+          />
           <ConditionsCard trace={trace} />
 
           {isRuntimeV2Trace(trace) ? (
@@ -361,11 +390,447 @@ function RouterPill({
   );
 }
 
+// --- Ask v3 (LLM Assist) presentation ------------------------------------
+
+function LlmAssistNaturalCard({
+  assist,
+  askedQuestion,
+}: {
+  assist: LLMAssistResponse;
+  askedQuestion: string | null;
+}) {
+  const conf = assist.confidence?.toLowerCase() ?? "low";
+  const tone: "success" | "warning" | "danger" | "neutral" =
+    conf === "high"
+      ? "success"
+      : conf === "medium"
+        ? "warning"
+        : conf === "low"
+          ? "danger"
+          : "neutral";
+  return (
+    <Card>
+      <CardHeader eyebrow="Assist answer" title="Engineering summary" />
+      <CardBody className="space-y-4">
+        {askedQuestion ? (
+          <p className="text-xs text-zinc-500">
+            <span className="text-zinc-600">Question: </span>
+            <span className="italic text-zinc-300">&ldquo;{askedQuestion}&rdquo;</span>
+          </p>
+        ) : null}
+        <p className="text-xl font-medium leading-snug tracking-tight text-zinc-50">
+          {assist.answer}
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge tone={tone} uppercase>
+            confidence: {assist.confidence}
+          </Badge>
+          <Badge tone="info" uppercase>
+            intent: {assist.detected_intent}
+          </Badge>
+          {assist.target_object_id ? (
+            <Badge tone="neutral" uppercase>
+              target id
+            </Badge>
+          ) : null}
+        </div>
+        {assist.target_object_id ? (
+          <p className="break-all font-mono text-xs text-zinc-400">
+            {assist.target_object_id}
+          </p>
+        ) : null}
+      </CardBody>
+    </Card>
+  );
+}
+
+function LlmAssistSuggestedCard({
+  assist,
+  trace,
+}: {
+  assist: LLMAssistResponse;
+  trace: TraceResponse;
+}) {
+  const warn = assist.warnings.filter(
+    (w) => !w.includes("llm_assist_disabled"),
+  );
+  const checks = trace.recommended_checks ?? [];
+  if (warn.length === 0 && checks.length === 0) return null;
+  return (
+    <Card>
+      <CardHeader eyebrow="Next steps" title="Suggested checks" />
+      <CardBody className="space-y-3">
+        {warn.length > 0 ? (
+          <ul className="list-disc space-y-1 pl-5 text-sm text-amber-100/95">
+            {warn.map((w, i) => (
+              <li key={`w-${i}`}>{w}</li>
+            ))}
+          </ul>
+        ) : null}
+        {checks.length > 0 ? (
+          <ul className="list-disc space-y-1 pl-5 text-sm text-zinc-200">
+            {checks.map((c, i) => (
+              <li key={`c-${i}`}>{c}</li>
+            ))}
+          </ul>
+        ) : null}
+      </CardBody>
+    </Card>
+  );
+}
+
+function describeUnknown(v: unknown): string {
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  const o = asRecord(v);
+  if (o) {
+    for (const key of [
+      "natural_language",
+      "statement",
+      "reason",
+      "detail",
+      "condition_summary",
+      "target_state",
+      "runtime_value",
+    ]) {
+      const value = o[key];
+      if (typeof value === "string" && value.trim()) return value;
+      if (typeof value === "number" || typeof value === "boolean") {
+        return `${key}: ${String(value)}`;
+      }
+    }
+    return JSON.stringify(o);
+  }
+  return String(v);
+}
+
+function asTextLines(v: unknown): string[] {
+  if (v === null || v === undefined) return [];
+  if (Array.isArray(v)) {
+    return v.map(describeUnknown).filter(Boolean);
+  }
+  if (typeof v === "string" && v.trim()) return [v.trim()];
+  if (typeof v === "object") return [describeUnknown(v)];
+  return [];
+}
+
+function LlmAssistStructuredEvidence({ assist }: { assist: LLMAssistResponse }) {
+  const ev = assist.evidence_used;
+  const blocking = asTextLines(ev.blocking_conditions);
+  const satisfied = asTextLines(ev.satisfied_conditions);
+  const missing = asTextLines(ev.missing_conditions);
+  const unsupported = asTextLines(ev.unsupported_conditions);
+  const seq = asTextLines(ev.sequence_summary);
+  const semantics = asRecord(ev.sequence_semantics);
+  const waiting = asTextLines(semantics?.likely_waiting_conditions);
+  const faults = asTextLines(semantics?.fault_conditions);
+  const manual = asTextLines(semantics?.manual_override_conditions);
+  const kn = asTextLines(ev.knowledge_notes);
+  const conc = asTextLines(ev.deterministic_conclusions);
+  const count =
+    blocking.length +
+    satisfied.length +
+    missing.length +
+    unsupported.length +
+    seq.length +
+    waiting.length +
+    faults.length +
+    manual.length +
+    kn.length +
+    conc.length;
+  if (count === 0) return null;
+  return (
+    <Accordion
+      eyebrow="Evidence"
+      title="Structured deterministic findings"
+      count={count}
+      defaultOpen={false}
+    >
+      <div className="space-y-4 text-sm text-zinc-200">
+        {blocking.length > 0 ? (
+          <EvidenceList title="Blocking conditions" lines={blocking} tone="rose" />
+        ) : null}
+        {satisfied.length > 0 ? (
+          <EvidenceList title="Satisfied conditions" lines={satisfied} tone="emerald" />
+        ) : null}
+        {missing.length > 0 ? (
+          <EvidenceList title="Missing runtime values" lines={missing} tone="amber" />
+        ) : null}
+        {unsupported.length > 0 ? (
+          <EvidenceList
+            title="Unsupported / too complex"
+            lines={unsupported}
+            tone="zinc"
+          />
+        ) : null}
+        {seq.length > 0 ? (
+          <EvidenceList title="Sequence / state" lines={seq} tone="sky" />
+        ) : null}
+        {waiting.length > 0 ? (
+          <EvidenceList title="Waiting / completion evidence" lines={waiting} tone="amber" />
+        ) : null}
+        {faults.length > 0 ? (
+          <EvidenceList title="Fault / interlock evidence" lines={faults} tone="rose" />
+        ) : null}
+        {manual.length > 0 ? (
+          <EvidenceList title="Manual / auto evidence" lines={manual} tone="sky" />
+        ) : null}
+        {kn.length > 0 ? (
+          <EvidenceList title="Knowledge notes" lines={kn} tone="zinc" />
+        ) : null}
+        {conc.length > 0 ? (
+          <EvidenceList title="Deterministic conclusions" lines={conc} tone="zinc" />
+        ) : null}
+      </div>
+    </Accordion>
+  );
+}
+
+function TrustAssessmentCard({
+  trace,
+  assist,
+}: {
+  trace: TraceResponse;
+  assist: LLMAssistResponse | null;
+}) {
+  const fromAssist = parseTrustAssessment(assist?.evidence_used?.trust_assessment);
+  const trust = fromAssist ?? trustFromTrace(trace);
+  if (!trust) return null;
+  const reasons = [
+    ...trust.uncertainty_reasons,
+    ...trust.unsupported_reasons,
+    ...trust.conflicting_reasons,
+    ...trust.missing_runtime_reasons,
+    ...trust.parser_coverage_reasons,
+  ];
+  const tone: "success" | "warning" | "danger" =
+    trust.confidence_score >= 0.8
+      ? "success"
+      : trust.confidence_score >= 0.55
+        ? "warning"
+        : "danger";
+  return (
+    <Card>
+      <CardHeader
+        eyebrow="Confidence"
+        title="Trustworthiness assessment"
+        trailing={
+          <Badge tone={tone} uppercase>
+            {Math.round(trust.confidence_score * 100)}%
+          </Badge>
+        }
+      />
+      <CardBody className="space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge tone={tone} uppercase>
+            {trust.recommendation_level.replaceAll("_", " ")}
+          </Badge>
+          <span className="text-xs text-zinc-500">
+            Deterministic evidence only. Lower confidence means INTELLI found
+            missing, conflicting, unsupported, or parser-limited evidence.
+          </span>
+        </div>
+        {reasons.length > 0 ? (
+          <ul className="list-disc space-y-1 pl-5 text-sm text-zinc-300">
+            {reasons.slice(0, 10).map((reason, i) => (
+              <li key={i}>{reason}</li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-sm text-zinc-400">
+            No conflicts, unsupported evidence, or missing runtime values were
+            reported for this answer.
+          </p>
+        )}
+      </CardBody>
+    </Card>
+  );
+}
+
+function WhyIntelliThinksThisCard({
+  trace,
+  assist,
+}: {
+  trace: TraceResponse;
+  assist: LLMAssistResponse | null;
+}) {
+  const fromAssist = parseEvidenceBundle(assist?.evidence_used?.evidence_bundle);
+  const bundle = fromAssist ?? evidenceBundleFromTrace(trace);
+  if (!bundle) return null;
+  return (
+    <Card>
+      <CardHeader
+        eyebrow="Why INTELLI thinks this"
+        title="Evidence bundle"
+        trailing={
+          <Badge tone={bundle.confidence >= 0.75 ? "success" : bundle.confidence >= 0.5 ? "warning" : "danger"} uppercase>
+            {Math.round(bundle.confidence * 100)}%
+          </Badge>
+        }
+      />
+      <CardBody className="space-y-4">
+        <p className="text-sm text-zinc-200">{bundle.conclusion}</p>
+        <EvidenceItemsSection
+          title="Supporting evidence"
+          items={bundle.supporting_evidence}
+          tone="emerald"
+        />
+        <EvidenceItemsSection
+          title="Conflicting evidence"
+          items={bundle.conflicting_evidence}
+          tone="rose"
+        />
+        <EvidenceItemsSection
+          title="Unsupported evidence"
+          items={bundle.unsupported_evidence}
+          tone="amber"
+        />
+        {bundle.warnings.length > 0 ? (
+          <EvidenceList title="Evidence warnings" lines={bundle.warnings} tone="amber" />
+        ) : null}
+      </CardBody>
+    </Card>
+  );
+}
+
+function EvidenceItemsSection({
+  title,
+  items,
+  tone,
+}: {
+  title: string;
+  items: EvidenceBundle["supporting_evidence"];
+  tone: "emerald" | "rose" | "amber";
+}) {
+  if (items.length === 0) return null;
+  const border =
+    tone === "emerald"
+      ? "border-emerald-900/40"
+      : tone === "rose"
+        ? "border-rose-900/40"
+        : "border-amber-900/40";
+  return (
+    <div className={`rounded-lg border ${border} bg-zinc-950/40 px-3 py-2`}>
+      <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500">
+        {title}
+      </p>
+      <ul className="space-y-2">
+        {items.slice(0, 8).map((item) => (
+          <li key={item.id || item.statement} className="text-sm text-zinc-200">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge tone="outline">{item.evidence_type}</Badge>
+              <Badge tone={item.unsupported ? "warning" : "neutral"}>
+                {Math.round(item.confidence * 100)}%
+              </Badge>
+              {item.deterministic ? <Badge tone="success">deterministic</Badge> : null}
+            </div>
+            <p className="mt-1">{item.statement}</p>
+            {item.source_location ? (
+              <p className="mt-1 break-all font-mono text-[11px] text-zinc-500">
+                {item.source_location}
+              </p>
+            ) : null}
+            {item.runtime_snapshot_keys.length > 0 ? (
+              <p className="mt-1 text-xs text-zinc-500">
+                Runtime keys: {item.runtime_snapshot_keys.join(", ")}
+              </p>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function SequenceSemanticsCard({ assist }: { assist: LLMAssistResponse }) {
+  const raw = asRecord(assist.evidence_used.sequence_semantics);
+  if (!raw) return null;
+  const summary = raw as unknown as SequenceSemanticSummary;
+  const transitionCount = Array.isArray(summary.transition_conditions)
+    ? summary.transition_conditions.length
+    : 0;
+  const waiting = asTextLines(summary.likely_waiting_conditions);
+  const faults = asTextLines(summary.fault_conditions);
+  const manual = asTextLines(summary.manual_override_conditions);
+  const unsupported = asTextLines(summary.unsupported_patterns);
+  if (transitionCount === 0 && waiting.length === 0 && faults.length === 0 && manual.length === 0 && unsupported.length === 0) {
+    return null;
+  }
+  return (
+    <Accordion
+      eyebrow="Sequence semantics"
+      title="Operational sequence evidence"
+      count={transitionCount + waiting.length + faults.length + manual.length + unsupported.length}
+      defaultOpen={false}
+    >
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge tone={summary.confidence >= 0.75 ? "success" : "warning"} uppercase>
+            confidence {Math.round((summary.confidence ?? 0) * 100)}%
+          </Badge>
+          <Badge tone="info">{transitionCount} transition conditions</Badge>
+        </div>
+        {waiting.length > 0 ? (
+          <EvidenceList title="Likely waiting / completion" lines={waiting} tone="amber" />
+        ) : null}
+        {faults.length > 0 ? (
+          <EvidenceList title="Fault-driven / interlock" lines={faults} tone="rose" />
+        ) : null}
+        {manual.length > 0 ? (
+          <EvidenceList title="Operator / auto-manual" lines={manual} tone="sky" />
+        ) : null}
+        {unsupported.length > 0 ? (
+          <EvidenceList title="Unsupported sequence patterns" lines={unsupported} tone="zinc" />
+        ) : null}
+      </div>
+    </Accordion>
+  );
+}
+
+function EvidenceList({
+  title,
+  lines,
+  tone,
+}: {
+  title: string;
+  lines: string[];
+  tone: "rose" | "emerald" | "amber" | "sky" | "zinc";
+}) {
+  const border =
+    tone === "rose"
+      ? "border-rose-900/40"
+      : tone === "emerald"
+        ? "border-emerald-900/40"
+        : tone === "amber"
+          ? "border-amber-900/40"
+          : tone === "sky"
+            ? "border-sky-900/40"
+            : "border-zinc-800/80";
+  return (
+    <div className={`rounded-lg border ${border} bg-zinc-950/40 px-3 py-2`}>
+      <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500">
+        {title}
+      </p>
+      <ul className="list-disc space-y-1 pl-4 text-zinc-200">
+        {lines.map((line, i) => (
+          <li key={i}>{line}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 // ===========================================================================
 // 2. Primary answer card -- the natural-language hero.
 // ===========================================================================
 
-function PrimaryAnswerCard({ trace }: { trace: TraceResponse }) {
+function PrimaryAnswerCard({
+  trace,
+  variant = "default",
+}: {
+  trace: TraceResponse;
+  variant?: "default" | "assist_secondary";
+}) {
   const v2Conclusions = useMemo(
     () =>
       trace.conclusions.filter(
@@ -387,8 +852,12 @@ function PrimaryAnswerCard({ trace }: { trace: TraceResponse }) {
   return (
     <Card>
       <CardHeader
-        eyebrow="Design trace"
-        title="What controls this?"
+        eyebrow={variant === "assist_secondary" ? "Deterministic" : "Design trace"}
+        title={
+          variant === "assist_secondary"
+            ? "Trace conclusions (source of truth)"
+            : "What controls this?"
+        }
       />
       <CardBody className="space-y-4">
         {heroStatement ? (
@@ -412,7 +881,7 @@ function PrimaryAnswerCard({ trace }: { trace: TraceResponse }) {
           </ul>
         ) : null}
 
-        {trace.recommended_checks.length > 0 ? (
+        {variant === "default" && trace.recommended_checks.length > 0 ? (
           <RecommendedChecks checks={trace.recommended_checks} />
         ) : null}
       </CardBody>
@@ -611,8 +1080,8 @@ function EvidenceAccordion({ trace }: { trace: TraceResponse }) {
     <div className="flex flex-col gap-3">
       {writers.length > 0 ? (
         <Accordion
-          eyebrow="Evidence"
-          title="What controls this object"
+          eyebrow="Logic graph"
+          title="Writers (driving logic)"
           count={writers.length}
         >
           <RelationshipList relationships={writers} />
@@ -620,8 +1089,8 @@ function EvidenceAccordion({ trace }: { trace: TraceResponse }) {
       ) : null}
       {readers.length > 0 ? (
         <Accordion
-          eyebrow="Evidence"
-          title="Where this object is used"
+          eyebrow="Logic graph"
+          title="Where this object is read"
           count={readers.length}
         >
           <RelationshipList relationships={readers} />

@@ -1,5 +1,4 @@
 from dataclasses import asdict
-import os
 from typing import Any, Optional
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
@@ -27,11 +26,18 @@ from app.services.sequence_reasoning_service import (
     analyze_sequences,
     filter_sequence_result_for_tag,
 )
+from app.services.sequence_semantics_service import analyze_sequence_semantics
 from app.models.reasoning import ControlObject, ConfidenceLevel
-from app.models.knowledge import KnowledgeItem, KnowledgeStatus, KnowledgeType
+from app.models.knowledge import (
+    KnowledgeItem,
+    KnowledgeStatus,
+    KnowledgeType,
+    KnowledgeVerification,
+)
 from app.services.knowledge_service import knowledge_service
 from app.services.version_compare_service import compare_projects
-from app.services.llm_orchestrator_service import answer_with_llm_assist, MockLlmProvider
+from app.services.version_intelligence_service import analyze_version_impact
+from app.services.llm_assist_service import answer_with_llm_assist
 from app.services.runtime_adapter_registry import get_adapter, list_adapter_descriptors
 
 
@@ -658,6 +664,21 @@ def sequence_trace_v1(request: SequenceTraceRequest) -> dict[str, Any]:
     return filter_sequence_result_for_tag(full, request.state_tag_id)
 
 
+class SequenceSemanticsRequest(BaseModel):
+    runtime_snapshot: Optional[dict[str, Any]] = None
+
+
+@router.post("/api/sequence-semantics")
+def sequence_semantics_v1(request: SequenceSemanticsRequest) -> dict[str, Any]:
+    _, normalized = _require_latest_normalized()
+    return analyze_sequence_semantics(
+        normalized["control_objects"],
+        normalized["relationships"],
+        normalized.get("execution_contexts") or [],
+        runtime_snapshot=request.runtime_snapshot,
+    ).model_dump(mode="json")
+
+
 # ---------------------------------------------------------------------------
 # Knowledge builder (v1)
 # ---------------------------------------------------------------------------
@@ -673,6 +694,8 @@ class KnowledgeCreateRequest(BaseModel):
     verified_by: Optional[str] = None
     status: KnowledgeStatus = KnowledgeStatus.PROPOSED
     evidence_links: list[str] = Field(default_factory=list)
+    version_range: Optional[str] = None
+    verification: KnowledgeVerification = Field(default_factory=KnowledgeVerification)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -680,8 +703,20 @@ class KnowledgePatchRequest(BaseModel):
     statement: Optional[str] = None
     status: Optional[KnowledgeStatus] = None
     verified_by: Optional[str] = None
+    rejected_by: Optional[str] = None
+    superseded_by: Optional[str] = None
     evidence_links: Optional[list[str]] = None
+    version_range: Optional[str] = None
+    verification: Optional[KnowledgeVerification] = None
     metadata: Optional[dict[str, Any]] = None
+
+
+class KnowledgeDecisionRequest(BaseModel):
+    actor: str
+    verification_reason: Optional[str] = None
+    plant_scope: Optional[str] = None
+    equipment_scope: Optional[str] = None
+    superseded_by: Optional[str] = None
 
 
 @router.post("/api/knowledge")
@@ -702,6 +737,8 @@ def create_knowledge(req: KnowledgeCreateRequest) -> dict[str, Any]:
         verified_by=req.verified_by,
         status=req.status,
         evidence_links=list(req.evidence_links),
+        version_range=req.version_range,
+        verification=req.verification,
         metadata=dict(req.metadata),
     )
     knowledge_service.create(item)
@@ -728,8 +765,50 @@ def patch_knowledge(item_id: str, req: KnowledgePatchRequest) -> dict[str, Any]:
         statement=req.statement,
         status=req.status,
         verified_by=req.verified_by,
+        rejected_by=req.rejected_by,
+        superseded_by=req.superseded_by,
         evidence_links=req.evidence_links,
+        version_range=req.version_range,
+        verification=req.verification,
         metadata=req.metadata,
+    )
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Knowledge item not found")
+    return updated.model_dump(mode="json")
+
+
+@router.post("/api/knowledge/{item_id}/approve")
+def approve_knowledge(item_id: str, req: KnowledgeDecisionRequest) -> dict[str, Any]:
+    updated = knowledge_service.approve(
+        item_id,
+        verified_by=req.actor,
+        verification_reason=req.verification_reason,
+        plant_scope=req.plant_scope,
+        equipment_scope=req.equipment_scope,
+    )
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Knowledge item not found")
+    return updated.model_dump(mode="json")
+
+
+@router.post("/api/knowledge/{item_id}/reject")
+def reject_knowledge(item_id: str, req: KnowledgeDecisionRequest) -> dict[str, Any]:
+    updated = knowledge_service.reject(
+        item_id,
+        rejected_by=req.actor,
+        verification_reason=req.verification_reason,
+    )
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Knowledge item not found")
+    return updated.model_dump(mode="json")
+
+
+@router.post("/api/knowledge/{item_id}/supersede")
+def supersede_knowledge(item_id: str, req: KnowledgeDecisionRequest) -> dict[str, Any]:
+    updated = knowledge_service.supersede(
+        item_id,
+        superseded_by=req.superseded_by or req.actor,
+        verification_reason=req.verification_reason,
     )
     if updated is None:
         raise HTTPException(status_code=404, detail="Knowledge item not found")
@@ -755,6 +834,16 @@ def compare_projects_endpoint(req: CompareProjectsRequest) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     diff = compare_projects(old_n, new_n)
     return asdict(diff)
+
+
+@router.post("/api/version-impact")
+def version_impact_endpoint(req: CompareProjectsRequest) -> dict[str, Any]:
+    try:
+        old_n = project_store.get_normalized(req.old_project_id)
+        new_n = project_store.get_normalized(req.new_project_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return asdict(analyze_version_impact(old_n, new_n))
 
 
 @router.post("/api/compare-latest-to-upload")
@@ -803,23 +892,52 @@ def runtime_read(req: RuntimeReadRequest) -> dict[str, Any]:
 class AskV3Request(BaseModel):
     question: str
     runtime_snapshot: Optional[dict[str, Any]] = None
+    current_selected_object: Optional[str] = None
+    last_discussed_state: Optional[str] = None
+    prior_runtime_snapshot: Optional[dict[str, Any]] = None
+    prior_sequence_discussion: Optional[dict[str, Any]] = None
+    answer_style: str = "controls_engineer"
 
 
-@router.post("/api/ask-v3")
-def ask_v3(request: AskV3Request) -> dict[str, Any]:
+class LLMAssistResponse(BaseModel):
+    """Structured ask-v3 payload: natural answer plus full deterministic trace."""
+
+    answer: str
+    confidence: str
+    target_object_id: Optional[str] = None
+    detected_intent: str
+    evidence_used: dict[str, Any] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+    deterministic_result: ReasoningTraceResult
+
+
+@router.post("/api/ask-v3", response_model=LLMAssistResponse)
+def ask_v3(request: AskV3Request) -> LLMAssistResponse:
+    """Deterministic-first assist; optional LLM rewrite when ``ENABLE_LLM_ASSIST`` is on."""
+
     _, normalized = _require_latest_normalized()
-    enable = os.environ.get("ENABLE_LLM_ASSIST", "false").lower() in (
-        "1",
-        "true",
-        "yes",
-    )
-    llm = MockLlmProvider() if enable else None
-    return answer_with_llm_assist(
+    raw = answer_with_llm_assist(
         question=request.question,
         control_objects=normalized["control_objects"],
         relationships=normalized["relationships"],
         execution_contexts=normalized.get("execution_contexts") or [],
         runtime_snapshot=request.runtime_snapshot,
-        llm=llm,
-        enable_llm=enable,
+        llm=None,
+        enable_llm=None,
+        conversation_context={
+            "current_selected_object": request.current_selected_object,
+            "last_discussed_state": request.last_discussed_state,
+            "prior_runtime_snapshot_present": bool(request.prior_runtime_snapshot),
+            "prior_sequence_discussion": request.prior_sequence_discussion or {},
+        },
+        answer_style=request.answer_style,
+    )
+    return LLMAssistResponse(
+        answer=raw["answer"],
+        confidence=raw["confidence"],
+        target_object_id=raw.get("target_object_id"),
+        detected_intent=raw.get("detected_intent", "unknown"),
+        evidence_used=dict(raw.get("evidence_used") or {}),
+        warnings=list(raw.get("warnings") or []),
+        deterministic_result=raw["deterministic_result"],
     )

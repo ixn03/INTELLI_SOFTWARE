@@ -45,6 +45,79 @@ class KnowledgeService:
         self._items[item_id] = updated
         return updated
 
+    def approve(
+        self,
+        item_id: str,
+        *,
+        verified_by: str,
+        verification_reason: Optional[str] = None,
+        plant_scope: Optional[str] = None,
+        equipment_scope: Optional[str] = None,
+    ) -> Optional[KnowledgeItem]:
+        item = self._items.get(item_id)
+        if item is None:
+            return None
+        verification = item.verification.model_copy(
+            update={
+                "verified_by": verified_by,
+                "verification_reason": verification_reason,
+                "plant_scope": plant_scope,
+                "equipment_scope": equipment_scope,
+            }
+        )
+        return self.patch(
+            item_id,
+            status=KnowledgeStatus.VERIFIED,
+            verified_by=verified_by,
+            verification=verification,
+        )
+
+    def reject(
+        self,
+        item_id: str,
+        *,
+        rejected_by: str,
+        verification_reason: Optional[str] = None,
+    ) -> Optional[KnowledgeItem]:
+        item = self._items.get(item_id)
+        if item is None:
+            return None
+        verification = item.verification.model_copy(
+            update={
+                "rejected_by": rejected_by,
+                "verification_reason": verification_reason,
+            }
+        )
+        return self.patch(
+            item_id,
+            status=KnowledgeStatus.REJECTED,
+            rejected_by=rejected_by,
+            verification=verification,
+        )
+
+    def supersede(
+        self,
+        item_id: str,
+        *,
+        superseded_by: str,
+        verification_reason: Optional[str] = None,
+    ) -> Optional[KnowledgeItem]:
+        item = self._items.get(item_id)
+        if item is None:
+            return None
+        verification = item.verification.model_copy(
+            update={
+                "superseded_by": superseded_by,
+                "verification_reason": verification_reason,
+            }
+        )
+        return self.patch(
+            item_id,
+            status=KnowledgeStatus.SUPERSEDED,
+            superseded_by=superseded_by,
+            verification=verification,
+        )
+
     def reset(self) -> None:
         self._items.clear()
 
@@ -61,7 +134,8 @@ def knowledge_rank_score(item: KnowledgeItem) -> tuple[int, str]:
         KnowledgeStatus.SUPERSEDED: 1,
         KnowledgeStatus.REJECTED: 0,
     }
-    return (order.get(item.status, 0), item.updated_at.isoformat())
+    source_bonus = 1 if (item.verified_by or item.verification.verified_by) else 0
+    return (order.get(item.status, 0), source_bonus, item.updated_at.isoformat())
 
 
 __all__ = ["KnowledgeService", "knowledge_service", "knowledge_rank_score"]

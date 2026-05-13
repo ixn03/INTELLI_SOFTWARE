@@ -10,6 +10,8 @@ import {
 } from "@/context/IntelliProjectContext";
 import type { ControlProject } from "@/types/intelli";
 import type {
+  AskAnswerStyle,
+  LLMAssistResponse,
   NormalizedControlObjectSummary,
   NormalizedSummaryResponse,
   TraceResponse,
@@ -105,8 +107,11 @@ export default function IntelliWorkspace() {
   const [traceError, setTraceError] = useState<string | null>(null);
 
   const [question, setQuestion] = useState("");
+  const [answerStyle, setAnswerStyle] =
+    useState<AskAnswerStyle>("controls_engineer");
   const [askLoading, setAskLoading] = useState(false);
   const [askedQuestion, setAskedQuestion] = useState<string | null>(null);
+  const [llmAssist, setLlmAssist] = useState<LLMAssistResponse | null>(null);
 
   const [runtimeSnapshotText, setRuntimeSnapshotText] = useState("{}");
   const [runtimeEvaluating, setRuntimeEvaluating] = useState(false);
@@ -271,6 +276,7 @@ export default function IntelliWorkspace() {
       setTraceVersion(null);
       setTraceError(null);
       setAskedQuestion(null);
+      setLlmAssist(null);
       setQuestion("");
       setRuntimeSnapshotText("{}");
       setRuntimeEvaluating(false);
@@ -314,6 +320,7 @@ export default function IntelliWorkspace() {
     setRuntimeEvalError(null);
     setTraceLoading(version);
     setAskedQuestion(null);
+    setLlmAssist(null);
     try {
       const endpoint = version === "v2" ? "/api/trace-v2" : "/api/trace-v1";
       const res = await axios.post<TraceResponse>(
@@ -354,39 +361,69 @@ export default function IntelliWorkspace() {
     setRuntimeEvalError(null);
     setAskLoading(true);
     setAskedQuestion(q);
+    setLlmAssist(null);
     const runtimeSnapshot = parseRuntimeSnapshotJson();
     try {
-      const res = await axios.post<TraceResponse>(
-        `${apiBase.replace(/\/$/, "")}/api/ask-v2`,
+      const res = await axios.post<LLMAssistResponse>(
+        `${apiBase.replace(/\/$/, "")}/api/ask-v3`,
         {
           question: q,
           runtime_snapshot: runtimeSnapshot ?? undefined,
+          current_selected_object: selectedObjectId || undefined,
+          last_discussed_state:
+            typeof trace?.platform_specific?.["last_discussed_state"] === "string"
+              ? trace.platform_specific["last_discussed_state"]
+              : undefined,
+          prior_runtime_snapshot: runtimeSnapshot ?? undefined,
+          prior_sequence_discussion:
+            trace?.platform_specific?.["sequence_semantics"] ?? undefined,
+          answer_style: answerStyle,
         },
       );
-      setTrace(res.data);
+      setLlmAssist(res.data);
+      setTrace(res.data.deterministic_result);
       setTraceVersion("v2");
-      const detected = res.data.platform_specific?.["detected_target_object_id"];
-      if (typeof detected === "string" && detected.length > 0) {
-        setSelectedObjectId(detected);
+      const tid = res.data.target_object_id;
+      if (typeof tid === "string" && tid.length > 0) {
+        setSelectedObjectId(tid);
       }
     } catch {
       try {
         const res = await axios.post<TraceResponse>(
-          `${apiBase.replace(/\/$/, "")}/api/ask-v1`,
+          `${apiBase.replace(/\/$/, "")}/api/ask-v2`,
           {
             question: q,
+            runtime_snapshot: runtimeSnapshot ?? undefined,
           },
         );
+        setLlmAssist(null);
         setTrace(res.data);
         setTraceVersion("v2");
         const detected = res.data.platform_specific?.["detected_target_object_id"];
         if (typeof detected === "string" && detected.length > 0) {
           setSelectedObjectId(detected);
         }
-      } catch (err) {
-        setTrace(null);
-        setTraceVersion(null);
-        setTraceError(extractIntelliError(err, "Could not route question"));
+      } catch {
+        try {
+          const res = await axios.post<TraceResponse>(
+            `${apiBase.replace(/\/$/, "")}/api/ask-v1`,
+            {
+              question: q,
+            },
+          );
+          setLlmAssist(null);
+          setTrace(res.data);
+          setTraceVersion("v2");
+          const detected = res.data.platform_specific?.["detected_target_object_id"];
+          if (typeof detected === "string" && detected.length > 0) {
+            setSelectedObjectId(detected);
+          }
+        } catch (err) {
+          setTrace(null);
+          setTraceVersion(null);
+          setLlmAssist(null);
+          setTraceError(extractIntelliError(err, "Could not route question"));
+        }
       }
     } finally {
       setAskLoading(false);
@@ -447,7 +484,9 @@ export default function IntelliWorkspace() {
     setTraceVersion(null);
     setTraceError(null);
     setAskedQuestion(null);
+    setLlmAssist(null);
     setQuestion("");
+    setAnswerStyle("controls_engineer");
     setRuntimeSnapshotText("{}");
     setRuntimeEvaluating(false);
     setRuntimeEvalError(null);
@@ -464,7 +503,7 @@ export default function IntelliWorkspace() {
             No project loaded
           </h1>
           <p className="mx-auto mt-2 max-w-md text-sm text-zinc-400">
-            Upload an L5X from the home page, or use the card below. The
+            Upload a supported control export from the home page, or use the card below. The
             backend keeps the most recently uploaded project in memory.
           </p>
         </div>
@@ -472,12 +511,12 @@ export default function IntelliWorkspace() {
           <label className="block cursor-pointer rounded-xl border border-dashed border-zinc-700/80 px-4 py-6 text-center">
             <input
               type="file"
-              accept=".l5x,.L5X,application/xml,text/xml"
+              accept=".l5x,.L5X,.xml,.XML,.fhx,.FHX,.scl,.SCL,.txt,.csv,.cl,.hwl,.hwh,.hsc,.epr,application/xml,text/xml,text/plain"
               onChange={(e) => setFile(e.target.files?.[0] ?? null)}
               className="sr-only"
             />
             <p className="text-sm text-zinc-200">
-              {file ? file.name : "Choose an L5X file"}
+              {file ? file.name : "Choose a control export"}
             </p>
           </label>
           <button
@@ -574,6 +613,8 @@ export default function IntelliWorkspace() {
           }}
           question={question}
           onQuestionChange={setQuestion}
+          answerStyle={answerStyle}
+          onAnswerStyleChange={setAnswerStyle}
           askLoading={askLoading}
           onAsk={() => void ask()}
         />
@@ -594,6 +635,7 @@ export default function IntelliWorkspace() {
           onEvaluateRuntimeV2={evaluateRuntimeV2}
           runtimeEvaluating={runtimeEvaluating}
           runtimeEvalError={runtimeEvalError}
+          llmAssist={llmAssist}
         />
       </div>
     </div>

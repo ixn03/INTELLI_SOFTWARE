@@ -8,6 +8,7 @@ import {
   useIntelliProject,
 } from "@/context/IntelliProjectContext";
 import { Button, Eyebrow, InlineError, LoadingLine } from "@/components/intelli/ui";
+import type { SequenceSemanticSummary } from "@/types/reasoning";
 
 type SequenceSummaryPayload = {
   project_id?: string;
@@ -16,6 +17,8 @@ type SequenceSummaryPayload = {
   case_branches: Array<Record<string, unknown>>;
   sequence_summary: string[];
   unsupported_sequence_patterns: Array<Record<string, unknown>>;
+  evidence_bundle?: Record<string, unknown>;
+  trust_assessment?: Record<string, unknown>;
 };
 
 function normalizeSequenceSummary(raw: unknown): SequenceSummaryPayload {
@@ -39,9 +42,29 @@ function normalizeSequenceSummary(raw: unknown): SequenceSummaryPayload {
   };
 }
 
+function normalizeSequenceSemantics(raw: unknown): SequenceSemanticSummary | null {
+  const d =
+    raw && typeof raw === "object"
+      ? (raw as Record<string, unknown>)
+      : null;
+  if (!d) return null;
+  const arr = (k: string) =>
+    Array.isArray(d[k]) ? (d[k] as Array<Record<string, unknown>>) : [];
+  return {
+    current_possible_states: arr("current_possible_states"),
+    likely_waiting_conditions: arr("likely_waiting_conditions"),
+    transition_conditions: arr("transition_conditions"),
+    fault_conditions: arr("fault_conditions"),
+    manual_override_conditions: arr("manual_override_conditions"),
+    confidence: typeof d.confidence === "number" ? d.confidence : 0.5,
+    unsupported_patterns: arr("unsupported_patterns"),
+  };
+}
+
 export default function SequencePage() {
   const { project, apiBase } = useIntelliProject();
   const [data, setData] = useState<SequenceSummaryPayload | null>(null);
+  const [semantics, setSemantics] = useState<SequenceSemanticSummary | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showRaw, setShowRaw] = useState(false);
@@ -83,8 +106,17 @@ export default function SequencePage() {
         throw new Error("Sequence summary response missing.");
       }
       setData(normalizeSequenceSummary(res.data));
+      try {
+        const semRes = await axios.post(`${directBase}/api/sequence-semantics`, {
+          runtime_snapshot: undefined,
+        });
+        setSemantics(normalizeSequenceSemantics(semRes.data));
+      } catch {
+        setSemantics(null);
+      }
     } catch (err) {
       setData(null);
+      setSemantics(null);
       let msg = extractIntelliError(err, "Could not load sequence summary");
       if (axios.isAxiosError(err) && err.response?.status === 404) {
         msg =
@@ -138,6 +170,14 @@ export default function SequencePage() {
             <h2 className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">
               Summary
             </h2>
+            {semantics ? (
+              <div className="mt-3 rounded-lg border border-zinc-800/80 bg-zinc-900/30 px-3 py-2 text-sm text-zinc-300">
+                Operational semantics confidence:{" "}
+                <span className="font-mono text-zinc-100">
+                  {Math.round(semantics.confidence * 100)}%
+                </span>
+              </div>
+            ) : null}
             {data.sequence_summary.length === 0 ? (
               <p className="mt-2 text-sm text-zinc-500">No sequence lines yet.</p>
             ) : (
@@ -148,6 +188,40 @@ export default function SequencePage() {
               </ul>
             )}
           </section>
+
+          {semantics ? (
+            <section>
+              <h2 className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">
+                Operational semantics
+              </h2>
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+                <SemanticBucket
+                  title="Current possible states"
+                  rows={semantics.current_possible_states}
+                  primaryKey="state_tag_name"
+                  secondaryKey="runtime_value"
+                />
+                <SemanticBucket
+                  title="Waiting / completion"
+                  rows={semantics.likely_waiting_conditions}
+                  primaryKey="state_tag_name"
+                  secondaryKey="reason"
+                />
+                <SemanticBucket
+                  title="Fault / interlock"
+                  rows={semantics.fault_conditions}
+                  primaryKey="state_tag_name"
+                  secondaryKey="reason"
+                />
+                <SemanticBucket
+                  title="Manual / auto interactions"
+                  rows={semantics.manual_override_conditions}
+                  primaryKey="state_tag_name"
+                  secondaryKey="reason"
+                />
+              </div>
+            </section>
+          ) : null}
 
           <section>
             <h2 className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">
@@ -244,6 +318,44 @@ export default function SequencePage() {
           </div>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function SemanticBucket({
+  title,
+  rows,
+  primaryKey,
+  secondaryKey,
+}: {
+  title: string;
+  rows: Array<Record<string, unknown>>;
+  primaryKey: string;
+  secondaryKey: string;
+}) {
+  return (
+    <div className="rounded-lg border border-zinc-800/80 bg-zinc-900/30 px-3 py-2">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-500">
+        {title} ({rows.length})
+      </p>
+      {rows.length === 0 ? (
+        <p className="mt-2 text-xs text-zinc-600">No deterministic evidence.</p>
+      ) : (
+        <ul className="mt-2 space-y-2 text-sm text-zinc-300">
+          {rows.slice(0, 8).map((row, i) => (
+            <li key={i}>
+              <span className="text-zinc-100">
+                {String(row[primaryKey] ?? row.state_tag_id ?? "state")}
+              </span>
+              {row[secondaryKey] !== undefined ? (
+                <p className="text-xs text-zinc-500">
+                  {String(row[secondaryKey])}
+                </p>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

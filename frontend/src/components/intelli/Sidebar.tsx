@@ -1,7 +1,9 @@
 "use client";
 
+import type { KeyboardEvent } from "react";
 import type { ControlProject } from "@/types/intelli";
 import type {
+  AskAnswerStyle,
   NormalizedControlObjectSummary,
   NormalizedSummaryResponse,
 } from "@/types/reasoning";
@@ -13,6 +15,7 @@ import {
   InlineError,
   LoadingLine,
   Stat,
+  TextArea,
   TextInput,
 } from "./ui";
 
@@ -28,8 +31,8 @@ import {
  *      paging; same query semantics as ``/api/control-objects``).
  *      Selecting an object fills the trace target in
  *      :file:`IntelliWorkspace.tsx`.
- *   4. Ask INTELLI (``/api/ask-v2`` with optional runtime snapshot;
- *      falls back to ``/api/ask-v1``).
+ *   4. Ask INTELLI (``/api/ask-v3`` with fallback to ``/api/ask-v2`` /
+ *      ``/api/ask-v1``; optional runtime snapshot from the main panel).
  *
  * The sidebar is pure presentation -- all loading, error handling,
  * and state lives in IntelliWorkspace. We only render what we're given.
@@ -74,6 +77,8 @@ interface SidebarProps {
   // Ask box
   question: string;
   onQuestionChange: (s: string) => void;
+  answerStyle: AskAnswerStyle;
+  onAnswerStyleChange: (s: AskAnswerStyle) => void;
   askLoading: boolean;
   onAsk: () => void;
 }
@@ -126,20 +131,20 @@ function UploadSection({
 
   return (
     <section className="flex flex-col gap-2">
-      <Eyebrow>Upload L5X</Eyebrow>
+      <Eyebrow>Upload control export</Eyebrow>
       <label className="block cursor-pointer rounded-xl border border-dashed border-zinc-700/80 bg-zinc-900/40 px-4 py-5 text-center transition hover:border-zinc-600">
         <span className="sr-only">L5X file</span>
         <input
           type="file"
-          accept=".l5x,.L5X,application/xml,text/xml"
+          accept=".l5x,.L5X,.xml,.XML,.fhx,.FHX,.scl,.SCL,.txt,.csv,.cl,.hwl,.hwh,.hsc,.epr,application/xml,text/xml,text/plain"
           onChange={(e) => onFileChange(e.target.files?.[0] ?? null)}
           className="sr-only"
         />
         <p className="text-sm text-zinc-200">
-          {uploadFile ? uploadFile.name : "Choose an L5X file"}
+          {uploadFile ? uploadFile.name : "Choose a control export"}
         </p>
         <p className="mt-1 text-[11px] text-zinc-500">
-          Rockwell Logix Designer export
+          L5X, Siemens XML, DeltaV FHX, Honeywell text/XML
         </p>
       </label>
       <Button
@@ -388,26 +393,35 @@ function AskSection({
   project,
   question,
   onQuestionChange,
+  answerStyle,
+  onAnswerStyleChange,
   askLoading,
   onAsk,
 }: SidebarProps) {
   if (!project) return null;
 
-  function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === "Enter" && !askLoading && question.trim()) {
+  function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      onAsk();
+      if (!askLoading && question.trim()) {
+        onAsk();
+      }
     }
   }
 
   return (
-    <section className="flex flex-col gap-2">
+    <section className="flex flex-col gap-2.5">
       <Eyebrow>Ask INTELLI</Eyebrow>
-      <TextInput
+      <TextArea
         value={question}
         onChange={onQuestionChange}
         onKeyDown={onKeyDown}
-        placeholder='e.g. "Why is Motor_Run not running?"'
+        rows={5}
+        placeholder={
+          'Try: "Why is Pump B not running?"\n' +
+          '"What state is this sequence waiting on?"\n' +
+          '"Where is Faults.Any used?"'
+        }
         ariaLabel="Ask INTELLI a question"
       />
       <Button
@@ -417,10 +431,23 @@ function AskSection({
       >
         {askLoading ? "Thinking..." : "Ask"}
       </Button>
+      <label className="flex flex-col gap-1 text-[11px] text-zinc-500">
+        Answer style
+        <select
+          value={answerStyle}
+          onChange={(e) => onAnswerStyleChange(e.target.value as AskAnswerStyle)}
+          className="rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1.5 text-xs text-zinc-200"
+        >
+          <option value="concise_operator">Concise operator</option>
+          <option value="controls_engineer">Controls engineer</option>
+          <option value="detailed_reasoning">Detailed reasoning</option>
+        </select>
+      </label>
       <p className="text-[11px] leading-snug text-zinc-500">
-        Uses ask-v2 (Trace v2, optional runtime diagnosis when a JSON
-        snapshot is set in the main panel). Falls back to ask-v1 if v2
-        fails. No LLM.
+        Uses ask-v3 (deterministic evidence, optional LLM wording). Enter
+        sends; Shift+Enter newline. Falls back to ask-v2 then ask-v1 if
+        needed. Add a JSON runtime snapshot in the panel for live-style
+        diagnosis.
       </p>
     </section>
   );

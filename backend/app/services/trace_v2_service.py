@@ -451,6 +451,14 @@ def trace_object_v2(
     base.platform_specific["natural_conclusion_count"] = len(
         natural_conclusions
     )
+    from app.services.evidence_service import build_trace_evidence
+    from app.services.trustworthiness_service import assess_trace_confidence
+
+    evidence = build_trace_evidence(base)
+    trust = assess_trace_confidence(base, relationships)
+    base.platform_specific["evidence_bundle"] = evidence.model_dump(mode="json")
+    base.platform_specific["trust_assessment"] = trust.model_dump(mode="json")
+    base.platform_specific["confidence_score"] = trust.confidence_score
 
     return base
 

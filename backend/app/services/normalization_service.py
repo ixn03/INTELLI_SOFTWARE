@@ -610,6 +610,7 @@ def _normalize_controller(
     execution_contexts: list[ExecutionContext],
 ) -> None:
 
+    source_platform = controller.platform or "rockwell"
     controller_id = _controller_id(controller.name)
 
     # Tag lookup keyed by (scope_key, name). scope_key is the program name
@@ -621,11 +622,12 @@ def _normalize_controller(
             id=controller_id,
             name=controller.name,
             object_type=ControlObjectType.CONTROLLER,
-            source_platform=controller.platform or "rockwell",
+            source_platform=source_platform,
             source_location=f"Controller:{controller.name}",
             confidence=ConfidenceLevel.HIGH,
             platform_specific={
                 "rockwell_platform": controller.platform,
+                "source_platform": source_platform,
                 "source_file": parsed_project.source_file,
                 "file_hash": parsed_project.file_hash,
                 "project_metadata": parsed_project.metadata or {},
@@ -645,6 +647,7 @@ def _normalize_controller(
                     f"Controller:{controller.name}/Tag:{tag.name}"
                 ),
                 parent_ids=[controller_id],
+                source_platform=source_platform,
             )
         )
         relationships.append(
@@ -653,7 +656,7 @@ def _normalize_controller(
                 target_id=tag_id,
                 relationship_type=RelationshipType.CONTAINS,
                 confidence=ConfidenceLevel.HIGH,
-                source_platform="rockwell",
+                source_platform=source_platform,
             )
         )
 
@@ -668,7 +671,7 @@ def _normalize_controller(
                 id=program_id,
                 name=program.name,
                 object_type=ControlObjectType.PROGRAM,
-                source_platform="rockwell",
+                source_platform=source_platform,
                 source_location=program_loc,
                 parent_ids=[controller_id],
                 confidence=ConfidenceLevel.HIGH,
@@ -680,7 +683,7 @@ def _normalize_controller(
                 target_id=program_id,
                 relationship_type=RelationshipType.CONTAINS,
                 confidence=ConfidenceLevel.HIGH,
-                source_platform="rockwell",
+                source_platform=source_platform,
             )
         )
 
@@ -694,6 +697,7 @@ def _normalize_controller(
                     tag_id=tag_id,
                     source_location=f"{program_loc}/Tag:{tag.name}",
                     parent_ids=[program_id, controller_id],
+                    source_platform=source_platform,
                 )
             )
             relationships.append(
@@ -702,7 +706,7 @@ def _normalize_controller(
                     target_id=tag_id,
                     relationship_type=RelationshipType.CONTAINS,
                     confidence=ConfidenceLevel.HIGH,
-                    source_platform="rockwell",
+                    source_platform=source_platform,
                 )
             )
 
@@ -714,6 +718,7 @@ def _normalize_controller(
                 program_id=program_id,
                 program_loc=program_loc,
                 routine=routine,
+                source_platform=source_platform,
                 tag_index=tag_index,
                 routine_index=routine_index,
                 control_objects=control_objects,
@@ -734,6 +739,7 @@ def _normalize_routine(
     program_id: str,
     program_loc: str,
     routine,
+    source_platform: str,
     tag_index: dict[tuple[str, str], str],
     routine_index: dict[tuple[str, str, str], str],
     control_objects: list[ControlObject],
@@ -749,7 +755,7 @@ def _normalize_routine(
             id=routine_id,
             name=routine.name,
             object_type=ControlObjectType.ROUTINE,
-            source_platform="rockwell",
+            source_platform=source_platform,
             source_location=routine_loc,
             parent_ids=[program_id, controller_id],
             attributes={
@@ -759,7 +765,9 @@ def _normalize_routine(
             confidence=ConfidenceLevel.HIGH,
             platform_specific={
                 "rockwell_metadata": routine.metadata or {},
+                "platform_metadata": routine.metadata or {},
                 "raw_logic_present": bool(routine.raw_logic),
+                **(routine.metadata or {}),
             },
         )
     )
@@ -769,7 +777,7 @@ def _normalize_routine(
             target_id=routine_id,
             relationship_type=RelationshipType.CONTAINS,
             confidence=ConfidenceLevel.HIGH,
-            source_platform="rockwell",
+            source_platform=source_platform,
         )
     )
 
@@ -781,11 +789,22 @@ def _normalize_routine(
             context_type=ExecutionContextType.ROUTINE,
             description=f"Routine scope for {routine_loc}",
             controller_id=controller_id,
-            source_platform="rockwell",
+            source_platform=source_platform,
             source_location=routine_loc,
             confidence=ConfidenceLevel.MEDIUM,
         )
     )
+
+    if routine.parse_status == "preserved_only":
+        routine_co = control_objects[-1]
+        ps_r = dict(routine_co.platform_specific or {})
+        ps_r["parse_status"] = "preserved_only"
+        ps_r["raw_logic_present"] = bool(routine.raw_logic)
+        if routine.metadata:
+            ps_r["connector_routine_metadata"] = dict(routine.metadata)
+        routine_co.platform_specific = ps_r
+        routine_co.confidence = ConfidenceLevel.LOW
+        return
 
     if routine.language == "ladder":
         _normalize_ladder_routine(
@@ -877,16 +896,25 @@ def _normalize_routine(
                 ),
                 parent_ids=[routine_id, program_id, controller_id],
                 confidence_override=low,
+                source_platform=source_platform,
             )
         )
+        instr_obj = control_objects[-1]
+        _apply_explicit_fbd_sfc_object_type(instr_obj, instruction, routine.language)
         relationships.append(
             Relationship(
                 source_id=routine_id,
                 target_id=instr_id,
                 relationship_type=RelationshipType.CONTAINS,
                 confidence=ConfidenceLevel.HIGH,
-                source_platform="rockwell",
+                source_platform=source_platform,
             )
+        )
+        _emit_explicit_fbd_sfc_relationships(
+            instruction=instruction,
+            instr_id=instr_id,
+            relationships=relationships,
+            source_platform=source_platform,
         )
 
 
@@ -2898,13 +2926,14 @@ def _tag_to_control_object(
     tag_id: str,
     source_location: str,
     parent_ids: Optional[list[str]] = None,
+    source_platform: str = "rockwell",
 ) -> ControlObject:
 
     return ControlObject(
         id=tag_id,
         name=tag.name,
         object_type=ControlObjectType.TAG,
-        source_platform="rockwell",
+        source_platform=source_platform,
         source_location=source_location,
         parent_ids=parent_ids or [],
         description=tag.description,
@@ -2921,6 +2950,7 @@ def _tag_to_control_object(
         platform_specific={
             "platform_source": tag.platform_source,
             "rockwell_metadata": tag.metadata or {},
+            "platform_metadata": tag.metadata or {},
         },
     )
 
@@ -2932,6 +2962,7 @@ def _instruction_to_control_object(
     parent_ids: list[str],
     *,
     confidence_override: Optional[ConfidenceLevel] = None,
+    source_platform: str = "rockwell",
 ) -> ControlObject:
 
     sem = INSTRUCTION_SEMANTICS.get(instruction.instruction_type)
@@ -2951,7 +2982,7 @@ def _instruction_to_control_object(
         id=instr_id,
         name=instruction.instruction_type,
         object_type=ControlObjectType.INSTRUCTION,
-        source_platform="rockwell",
+        source_platform=source_platform,
         source_location=source_location,
         parent_ids=parent_ids,
         attributes={
@@ -2968,10 +2999,119 @@ def _instruction_to_control_object(
             "raw_text": instruction.raw_text,
             "instruction_local_id": instruction.id,
             "rockwell_metadata": instruction.metadata or {},
+            "platform_metadata": instruction.metadata or {},
             "semantic_notes": sem.notes if sem else "",
             **one_shot_meta,
         },
     )
+
+
+def _apply_explicit_fbd_sfc_object_type(
+    obj: ControlObject,
+    instruction: ControlInstruction,
+    routine_language: Optional[str],
+) -> None:
+    metadata = instruction.metadata or {}
+    subtype = str(metadata.get("object_subtype") or "").lower()
+    language = str(instruction.language or routine_language or "").lower()
+
+    if subtype in {"function_block", "fbd_block", "fbd_block_instance"}:
+        obj.object_type = ControlObjectType.FUNCTION_BLOCK
+        obj.attributes["language"] = "fbd"
+        obj.attributes["object_subtype"] = "function_block"
+    elif subtype in {"function_block_pin", "pin", "fbd_pin"}:
+        obj.object_type = ControlObjectType.FUNCTION_BLOCK_PIN
+        obj.attributes["language"] = "fbd"
+        obj.attributes["object_subtype"] = "function_block_pin"
+    elif subtype in {"sfc_step", "step"}:
+        obj.object_type = ControlObjectType.SFC_STEP
+        obj.attributes["language"] = "sfc"
+        obj.attributes["object_subtype"] = "sfc_step"
+    elif subtype in {"sfc_transition", "transition"}:
+        obj.object_type = ControlObjectType.SFC_TRANSITION
+        obj.attributes["language"] = "sfc"
+        obj.attributes["object_subtype"] = "sfc_transition"
+    elif subtype in {"sfc_action", "action"}:
+        obj.object_type = ControlObjectType.SFC_ACTION
+        obj.attributes["language"] = "sfc"
+        obj.attributes["object_subtype"] = "sfc_action"
+    elif language == "fbd":
+        obj.attributes["language"] = "fbd"
+        obj.attributes.setdefault("object_subtype", "function_block")
+    elif language == "sfc":
+        obj.attributes["language"] = "sfc"
+        obj.attributes.setdefault("object_subtype", "unsupported")
+
+    ps = dict(obj.platform_specific or {})
+    ps["parse_status"] = metadata.get("parse_status", "unsupported")
+    for key in ("block_type", "block_name", "parameters", "pin", "direction"):
+        if key in metadata:
+            ps[key] = metadata[key]
+    obj.platform_specific = ps
+
+
+def _emit_explicit_fbd_sfc_relationships(
+    instruction: ControlInstruction,
+    instr_id: str,
+    relationships: list[Relationship],
+    source_platform: str,
+) -> None:
+    metadata = instruction.metadata or {}
+    for target in metadata.get("connects_to", []) or []:
+        relationships.append(
+            Relationship(
+                source_id=instr_id,
+                target_id=str(target),
+                relationship_type=RelationshipType.CONNECTS,
+                confidence=ConfidenceLevel.MEDIUM,
+                source_platform=source_platform,
+                platform_specific={"parse_status": "explicit_connection"},
+            )
+        )
+    for target in metadata.get("references", []) or []:
+        relationships.append(
+            Relationship(
+                source_id=instr_id,
+                target_id=str(target),
+                relationship_type=RelationshipType.REFERENCES,
+                confidence=ConfidenceLevel.LOW,
+                source_platform=source_platform,
+                platform_specific={"parse_status": "explicit_reference"},
+            )
+        )
+    for target in metadata.get("sequences_to", []) or []:
+        relationships.append(
+            Relationship(
+                source_id=instr_id,
+                target_id=str(target),
+                relationship_type=RelationshipType.SEQUENCES,
+                confidence=ConfidenceLevel.MEDIUM,
+                source_platform=source_platform,
+                platform_specific={"parse_status": "explicit_sequence"},
+            )
+        )
+    for target in metadata.get("condition_for", []) or []:
+        relationships.append(
+            Relationship(
+                source_id=instr_id,
+                target_id=str(target),
+                relationship_type=RelationshipType.CONDITION_FOR,
+                confidence=ConfidenceLevel.MEDIUM,
+                source_platform=source_platform,
+                platform_specific={"parse_status": "explicit_condition"},
+            )
+        )
+    for target in metadata.get("action_of", []) or []:
+        relationships.append(
+            Relationship(
+                source_id=instr_id,
+                target_id=str(target),
+                relationship_type=RelationshipType.ACTION_OF,
+                confidence=ConfidenceLevel.MEDIUM,
+                source_platform=source_platform,
+                platform_specific={"parse_status": "explicit_action"},
+            )
+        )
 
 
 # ---------------------------------------------------------------------------

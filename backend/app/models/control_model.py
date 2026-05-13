@@ -24,10 +24,23 @@ class ControlInstruction(BaseModel):
 
 class ControlRoutine(BaseModel):
     name: str
-    language: Optional[Literal["ladder", "structured_text", "function_block", "sfc", "unknown"]] = "unknown"
+    language: Optional[
+        Literal[
+            "ladder",
+            "structured_text",
+            "function_block",
+            "sfc",
+            "tia_ob",
+            "tia_fb",
+            "tia_fc",
+            "tia_db",
+            "unknown",
+        ]
+    ] = "unknown"
     instructions: List[ControlInstruction] = Field(default_factory=list)
     raw_logic: Optional[str] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    parse_status: Optional[Literal["parsed", "unsupported", "preserved_only"]] = None
 
 
 class ControlProgram(BaseModel):
