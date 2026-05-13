@@ -86,6 +86,8 @@ def _normalize_routine_language(type_raw: str) -> tuple[str, str]:
 class RockwellL5XConnector(PlatformConnector):
     platform = "rockwell"
     display_name = "Rockwell Studio 5000 L5X"
+    supported_extensions = (".l5x",)
+    parser_version = "1.0.0"
 
     def can_parse(self, filename: str, content: bytes) -> ConnectorMatch:
         if filename.lower().endswith(".l5x"):
@@ -206,6 +208,7 @@ class RockwellL5XConnector(PlatformConnector):
                 language="ladder",
                 instructions=instructions,
                 raw_logic="\n".join(raw_rungs) if raw_rungs else None,
+                parse_status="parsed",
                 metadata={
                     "rockwell_type": routine_element.get("Type"),
                     "rockwell_type_normalized": norm_type,
@@ -234,6 +237,7 @@ class RockwellL5XConnector(PlatformConnector):
                     routine_name,
                 ),
                 raw_logic=routine_text or None,
+                parse_status="parsed",
                 metadata={
                     "rockwell_type": routine_element.get("Type"),
                     "rockwell_type_normalized": norm_type,
@@ -245,6 +249,7 @@ class RockwellL5XConnector(PlatformConnector):
             language="unknown",
             instructions=[],
             raw_logic=None,
+            parse_status="unsupported",
             metadata={
                 "rockwell_type": routine_element.get("Type"),
                 "rockwell_type_normalized": norm_type,
