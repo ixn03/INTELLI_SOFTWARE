@@ -75,6 +75,19 @@ class InMemoryProjectStore:
     def latest_id(self) -> Optional[str]:
         return self._latest_project_id
 
+    def set_latest(self, project_id: str) -> None:
+        """Mark ``project_id`` as the active project for ``/api/*`` endpoints.
+
+        ``/upload`` already does this via :meth:`save`. This exists so the
+        frontend can restore a session with ``GET /projects/{id}`` and have
+        normalized-summary / control-objects follow that project instead of
+        whichever upload happened to be most recent in this process.
+        """
+
+        if project_id not in self._projects:
+            raise KeyError(f"Project {project_id} was not found.")
+        self._latest_project_id = project_id
+
     # -- Normalization memo -------------------------------------------
 
     def get_normalized(self, project_id: str) -> dict[str, Any]:

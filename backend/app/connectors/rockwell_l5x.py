@@ -9,6 +9,7 @@ from app.models.control_model import (
     ControlTag,
 )
 from app.parsers.ladder import extract_operand_tags, parse_ladder_rung_text
+from app.parsers.st_comments import strip_st_comments_for_parsing
 from app.parsers.structured_text import (
     extract_structured_text_tags,
     parse_structured_text,
@@ -39,23 +40,47 @@ def _tag_from_element(element: etree._Element, scope: str) -> ControlTag:
 
 
 def _extract_structured_text(routine_element: etree._Element) -> str:
-    lines: list[str] = []
+    """Join ST routine lines in document order; preserve comments and blank lines."""
 
-    for line_element in routine_element.findall(".//Line"):
-        if line_element.text and line_element.text.strip():
-            lines.append(line_element.text.strip())
+    line_elements = routine_element.findall(".//Line")
+    if line_elements:
 
-    if lines:
+        def _line_key(el: etree._Element) -> int:
+            try:
+                return int(el.get("Number") or 0)
+            except ValueError:
+                return 0
+
+        ordered = sorted(line_elements, key=_line_key)
+        lines: list[str] = []
+        for line_element in ordered:
+            t = line_element.text if line_element.text is not None else ""
+            lines.append(t.rstrip("\n\r"))
         return "\n".join(lines)
 
-    for text_element in routine_element.findall(".//Text"):
-        if text_element.text and text_element.text.strip():
-            lines.append(text_element.text.strip())
-
-    if lines:
-        return "\n".join(lines)
+    text_elements = routine_element.findall(".//Text")
+    if text_elements:
+        parts = [t.text.strip() for t in text_elements if t.text and t.text.strip()]
+        if parts:
+            return "\n".join(parts)
 
     return "".join(routine_element.itertext()).strip()
+
+
+def _normalize_routine_language(type_raw: str) -> tuple[str, str]:
+    """Map Rockwell ``Routine/@Type`` to ``ControlRoutine.language``.
+
+    Returns ``(language, normalized_lower)`` where ``normalized_lower``
+    is the Rockwell type string lowercased for metadata. Intentionally
+    unsupported: SFC / FBD / unknown AOI wrapper types -> ``unknown``.
+    """
+
+    low = type_raw.strip().lower().replace("-", "_")
+    if low in {"rll", "ladder", "ld"}:
+        return "ladder", low
+    if low in {"st", "structuredtext", "structured_text"}:
+        return "structured_text", low
+    return "unknown", low
 
 
 class RockwellL5XConnector(PlatformConnector):
@@ -100,7 +125,7 @@ class RockwellL5XConnector(PlatformConnector):
 
             program_tags = [
                 _tag_from_element(tag, program_name)
-                for tag in program_element.findall("./Tags/Tag")
+                for tag in program_element.findall(".//Tags/Tag")
                 if tag.get("Name")
             ]
 
@@ -137,29 +162,38 @@ class RockwellL5XConnector(PlatformConnector):
         return self._add_discovered_tags(project)
 
     def _parse_routine(self, routine_element: etree._Element) -> ControlRoutine:
-        routine_type = (
-            _attr(routine_element, "Type", "unknown")
-            .strip()
-            .lower()
-        )
+        type_raw = _attr(routine_element, "Type", "unknown")
+        language, norm_type = _normalize_routine_language(type_raw)
         routine_name = _attr(routine_element, "Name", "Unknown Routine")
 
-        if routine_type in {"rll", "ladder"}:
+        if language == "ladder":
 
             instructions = []
             raw_rungs: list[str] = []
 
-            for rung_element in routine_element.findall(".//Rung"):
+            rung_elements = routine_element.findall(".//Rung")
+
+            def _rung_sort_key(el: etree._Element) -> tuple[int, int]:
+                try:
+                    return (0, int(el.get("Number") or 0))
+                except ValueError:
+                    return (1, 0)
+
+            for rung_element in sorted(rung_elements, key=_rung_sort_key):
 
                 rung_number = int(
                     rung_element.get("Number") or 0
                 )
 
-                rung_text = rung_element.findtext("./Text") or ""
+                rung_text = rung_element.findtext(".//Text")
+                if rung_text is None:
+                    rung_text = ""
+                else:
+                    rung_text = rung_text.strip()
+
+                raw_rungs.append(rung_text)
 
                 if rung_text:
-                    raw_rungs.append(rung_text)
-
                     instructions.extend(
                         parse_ladder_rung_text(
                             rung_text,
@@ -171,28 +205,38 @@ class RockwellL5XConnector(PlatformConnector):
                 name=routine_name,
                 language="ladder",
                 instructions=instructions,
-                raw_logic="\n".join(raw_rungs) or None,
+                raw_logic="\n".join(raw_rungs) if raw_rungs else None,
                 metadata={
                     "rockwell_type": routine_element.get("Type"),
+                    "rockwell_type_normalized": norm_type,
                 },
             )
 
-        if "st" in routine_type:
+        if language == "structured_text":
 
             routine_text = _extract_structured_text(
                 routine_element
+            )
+
+            # Instruction-level ST parse strips comments so tag / call
+            # extraction is stable; ``raw_logic`` stays verbatim for audit.
+            st_for_instructions = (
+                strip_st_comments_for_parsing(routine_text)
+                if routine_text
+                else ""
             )
 
             return ControlRoutine(
                 name=routine_name,
                 language="structured_text",
                 instructions=parse_structured_text(
-                    routine_text,
+                    st_for_instructions,
                     routine_name,
                 ),
                 raw_logic=routine_text or None,
                 metadata={
                     "rockwell_type": routine_element.get("Type"),
+                    "rockwell_type_normalized": norm_type,
                 },
             )
 
@@ -203,6 +247,7 @@ class RockwellL5XConnector(PlatformConnector):
             raw_logic=None,
             metadata={
                 "rockwell_type": routine_element.get("Type"),
+                "rockwell_type_normalized": norm_type,
             },
         )
 

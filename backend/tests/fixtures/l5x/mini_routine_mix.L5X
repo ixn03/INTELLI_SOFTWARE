@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<RSLogix5000Content SchemaRevision="1.0" TargetName="Mini" TargetType="Controller">
+  <Controller Name="Mini_Ctrl">
+    <Tags/>
+    <Programs>
+      <Program Name="PRG_One">
+        <Tags/>
+        <Routines>
+          <Routine Name="R_Ladder" Type="RLL">
+            <RLLContent>
+              <Rung Number="0"><Text><![CDATA[XIC(A) OTE(B);]]></Text></Rung>
+              <Rung Number="1"><Text><![CDATA[]]></Text></Rung>
+              <Rung Number="2"><Text><![CDATA[XIC(S) [XIC(P1),XIC(P2)] OTE(Out);]]></Text></Rung>
+              <Rung Number="3"><Text><![CDATA[BST XIC(X) NXB XIC(Y) BND OTE(Z);]]></Text></Rung>
+              <Rung Number="4"><Text><![CDATA[ONS(Store,OutTag) OTE(Other);]]></Text></Rung>
+            </RLLContent>
+          </Routine>
+          <Routine Name="R_ST" Type="ST">
+            <Line Number="0"><![CDATA[(* block *)]]></Line>
+            <Line Number="1"><![CDATA[x := TRUE;]]></Line>
+            <Line Number="2"><![CDATA[IF x THEN]]></Line>
+            <Line Number="3"><![CDATA[    y := FALSE;]]></Line>
+            <Line Number="4"><![CDATA[END_IF;]]></Line>
+            <Line Number="5"><![CDATA[TONR(Tmr);]]></Line>
+          </Routine>
+        </Routines>
+      </Program>
+    </Programs>
+  </Controller>
+</RSLogix5000Content>

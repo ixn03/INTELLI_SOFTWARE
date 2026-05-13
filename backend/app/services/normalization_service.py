@@ -137,9 +137,10 @@ TODO(intelli/normalization): Tag role inference. Today
 """
 
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional
 
 from app.models.control_model import (
     ControlController,
@@ -157,15 +158,18 @@ from app.models.reasoning import (
     RelationshipType,
     WriteBehaviorType,
 )
+from app.parsers.st_expression import parse_st_expression
 from app.parsers.structured_text_blocks import (
     STAssignment,
     STBlock,
     STCaseBlock,
     STComparisonTerm,
+    STComplexBlock,
     STCondition,
     STConjunction,
     STExpressionParse,
     STIfBlock,
+    STIfElsifChain,
     STTerm,
     parse_structured_text_blocks,
 )
@@ -300,6 +304,12 @@ INSTRUCTION_SEMANTICS: dict[str, _InstructionSemantics] = {
         family=_InstructionFamily.STATEFUL_OUTPUT,
         write_operand_index=0,
         notes="Timer On Delay: counts up while rung true.",
+        implemented=True,
+    ),
+    "TONR": _InstructionSemantics(
+        family=_InstructionFamily.STATEFUL_OUTPUT,
+        write_operand_index=0,
+        notes="Retentive Timer On: same structure semantics as TON (ACC retained).",
         implemented=True,
     ),
     "TOF": _InstructionSemantics(
@@ -516,6 +526,25 @@ INSTRUCTION_SEMANTICS: dict[str, _InstructionSemantics] = {
 CONTROLLER_SCOPE_KEY = "__controller__"
 
 
+def _unsupported_ladder_instruction_inventory(
+    control_objects: list[ControlObject],
+) -> dict[str, int]:
+    """Count ladder instructions with no implemented semantic handler."""
+
+    counts: Counter[str] = Counter()
+    for o in control_objects:
+        if o.object_type != ControlObjectType.INSTRUCTION:
+            continue
+        attrs = o.attributes or {}
+        if attrs.get("language") != "ladder":
+            continue
+        if attrs.get("semantic_implemented"):
+            continue
+        key = str(attrs.get("instruction_type") or o.name or "?")
+        counts[key] += 1
+    return dict(sorted(counts.items()))
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -528,10 +557,11 @@ def normalize_l5x_project(parsed_project: ControlProject) -> dict:
     are freshly constructed.
 
     Returns:
-        A dict with three lists:
+        A dict with:
             * ``control_objects``    - list[ControlObject]
             * ``relationships``      - list[Relationship]
             * ``execution_contexts`` - list[ExecutionContext]
+            * ``normalization_metadata`` - e.g. unsupported ladder inventory
     """
 
     control_objects: list[ControlObject] = []
@@ -558,6 +588,11 @@ def normalize_l5x_project(parsed_project: ControlProject) -> dict:
         "control_objects": control_objects,
         "relationships": relationships,
         "execution_contexts": execution_contexts,
+        "normalization_metadata": {
+            "unsupported_ladder_instruction_inventory": (
+                _unsupported_ladder_instruction_inventory(control_objects)
+            ),
+        },
     }
 
 
@@ -788,6 +823,34 @@ def _normalize_routine(
         )
         return
 
+    # FBD / SFC: preserve routine + instructions with explicit unsupported
+    # parse status (no vendor diagram parser yet).
+    if routine.language in ("function_block", "sfc"):
+        routine_co = control_objects[-1]
+        ps_r = dict(routine_co.platform_specific)
+        ps_r["parse_status"] = "unsupported_language"
+        ps_r["raw_logic_present"] = bool(routine.raw_logic)
+        ps_r["language"] = routine.language
+        ps_r["schema_hints"] = {
+            "fbd_object_types": [
+                "function_block",
+                "fbd_input_pin",
+                "fbd_output_pin",
+                "fbd_block_instance",
+                "fbd_parameter_binding",
+            ],
+            "sfc_object_types": [
+                "sfc_step",
+                "sfc_transition",
+                "sfc_action",
+                "sfc_condition",
+                "active_step_tag",
+                "sequence_order",
+            ],
+        }
+        routine_co.platform_specific = ps_r
+        routine_co.confidence = ConfidenceLevel.LOW
+
     # Other non-ladder languages (FBD / SFC / unknown): still emit
     # instruction ControlObjects so the graph captures structure, but
     # do not emit cause/effect edges. See module-level TODOs.
@@ -799,6 +862,11 @@ def _normalize_routine(
             rung_number=None,
             instruction=instruction,
         )
+        low = (
+            ConfidenceLevel.LOW
+            if routine.language in ("function_block", "sfc")
+            else None
+        )
         control_objects.append(
             _instruction_to_control_object(
                 instruction=instruction,
@@ -808,6 +876,7 @@ def _normalize_routine(
                     f"{instruction.id or instruction.instruction_type}"
                 ),
                 parent_ids=[routine_id, program_id, controller_id],
+                confidence_override=low,
             )
         )
         relationships.append(
@@ -855,6 +924,7 @@ class _RungContext:
     relationships: list[Relationship] = field(default_factory=list)
     rung_has_branches: bool = False
     rung_branch_count: int = 1
+    branch_warnings: list[str] = field(default_factory=list)
 
 
 def _normalize_ladder_routine(
@@ -914,6 +984,13 @@ def _normalize_ladder_routine(
         rung_has_branches, rung_branch_count = _detect_rung_branches(
             rung_raw_text
         )
+        branch_warnings: list[str] = []
+        if (
+            rung_raw_text
+            and _BRANCH_BST_RE.search(rung_raw_text)
+            and not _BRANCH_BND_RE.search(rung_raw_text)
+        ):
+            branch_warnings.append("missing_bnd_after_bst")
         control_objects.append(
             ControlObject(
                 id=rung_id,
@@ -933,6 +1010,7 @@ def _normalize_ladder_routine(
                     "raw_rung_text": rung_raw_text,
                     "rung_has_branches": rung_has_branches,
                     "rung_branch_count": rung_branch_count,
+                    "branch_warnings": branch_warnings,
                 },
             )
         )
@@ -964,6 +1042,7 @@ def _normalize_ladder_routine(
             relationships=relationships,
             rung_has_branches=rung_has_branches,
             rung_branch_count=rung_branch_count,
+            branch_warnings=branch_warnings,
         )
 
         for instruction in rung_instructions:
@@ -1176,6 +1255,20 @@ def _normalize_st_block(
         )
         return
 
+    if isinstance(block, STIfElsifChain):
+        _emit_st_if_elsif_chain_edges(
+            block=block,
+            statement_id=statement_id,
+            statement_loc=statement_loc,
+            controller_name=controller_name,
+            program_name=program_name,
+            exec_ctx_id=exec_ctx_id,
+            tag_index=tag_index,
+            control_objects=control_objects,
+            relationships=relationships,
+        )
+        return
+
     if isinstance(block, STCaseBlock):
         _emit_st_case_edges(
             block=block,
@@ -1251,6 +1344,14 @@ def _make_st_statement_object(
             },
         )
     )
+    stmt_obj = control_objects[-1]
+    if isinstance(block, STComplexBlock):
+        ps = dict(stmt_obj.platform_specific)
+        if block.fragment_kind:
+            ps["fragment_kind"] = block.fragment_kind
+        if block.callee_name:
+            ps["callee_name"] = block.callee_name
+        stmt_obj.platform_specific = ps
     relationships.append(
         Relationship(
             source_id=routine_id,
@@ -1283,6 +1384,20 @@ def _st_block_summary(block: STBlock) -> tuple[str, str, str]:
             else "ok"
         )
         return "case", status, block.raw_text
+    if isinstance(block, STIfElsifChain):
+        bad = False
+        for cond, _ in block.branches:
+            if cond:
+                ex = parse_st_expression(cond)
+                if ex.too_complex:
+                    bad = True
+        return "if_elsif_chain", ("too_complex" if bad else "ok"), block.raw_text
+    if isinstance(block, STComplexBlock):
+        if block.fragment_kind and block.fragment_kind.startswith("loop_"):
+            return "loop", "too_complex", block.raw_text
+        if block.fragment_kind == "fb_invocation":
+            return "fb_invocation", "ok", block.raw_text
+        return "complex", "too_complex", block.raw_text
     return "complex", "too_complex", getattr(block, "raw_text", "")
 
 
@@ -1669,6 +1784,46 @@ def _emit_st_assignment_edges(
                         platform_specific=cond_platform,
                     )
                 )
+
+
+def _emit_st_if_elsif_chain_edges(
+    block: STIfElsifChain,
+    statement_id: str,
+    statement_loc: str,
+    controller_name: str,
+    program_name: str,
+    exec_ctx_id: str,
+    tag_index: dict[tuple[str, str], str],
+    control_objects: list[ControlObject],
+    relationships: list[Relationship],
+) -> None:
+    """Conservative IF/ELSIF/ELSE: each assignment gets branch gating when
+    the branch condition parses; ELSE has no parsed condition reads."""
+
+    for bi, (cond, assigns) in enumerate(block.branches):
+        expr = (
+            parse_st_expression(cond)
+            if cond
+            else None
+        )
+        for assignment in assigns:
+            _emit_st_assignment_edges(
+                assignment=assignment,
+                extra_conditions=[],
+                condition_source="if_elsif_chain",
+                statement_id=statement_id,
+                statement_loc=statement_loc,
+                statement_type="if_elsif_chain",
+                block_raw_text=block.raw_text,
+                controller_name=controller_name,
+                program_name=program_name,
+                exec_ctx_id=exec_ctx_id,
+                tag_index=tag_index,
+                control_objects=control_objects,
+                relationships=relationships,
+                branch_label=f"branch_{bi}",
+                gating_expression=expr,
+            )
 
 
 def _emit_st_if_edges(
@@ -2189,6 +2344,38 @@ def _handle_routine_call(
             ),
         )
     )
+    for idx, op in enumerate(instruction.operands[1:], start=1):
+        if not op or not _looks_like_tag_operand(op):
+            continue
+        tag_id = _resolve_tag_id_or_stub(
+            operand=op,
+            controller_name=ctx.controller_name,
+            program_name=ctx.program_name,
+            tag_index=ctx.tag_index,
+            control_objects=ctx.control_objects,
+        )
+        ctx.relationships.append(
+            Relationship(
+                source_id=ctx.rung_id,
+                target_id=tag_id,
+                relationship_type=RelationshipType.READS,
+                execution_context_id=ctx.exec_ctx_id,
+                logic_condition=ctx.rung_raw_text,
+                source_platform="rockwell",
+                source_location=ctx.rung_loc,
+                confidence=ConfidenceLevel.MEDIUM,
+                platform_specific=_rel_meta(
+                    ctx,
+                    instruction,
+                    operand=op,
+                    extras={
+                        "operand_index": idx,
+                        "operand_role": "jsr_parameter",
+                        "gating_kind": "jsr_parameter",
+                    },
+                ),
+            )
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -2457,10 +2644,12 @@ def _handle_one_shot(
     sem: _InstructionSemantics,
     ctx: _RungContext,
 ) -> None:
-    """ONS(StorageBit) / OSR(StorageBit, OutputBit) / OSF(StorageBit, OutputBit).
+    """ONS(StorageBit) / ONS(StorageBit, OutputBit) / OSR / OSF.
 
-    The storage bit is READ; the output bit (or, for ``ONS``, the
-    storage bit itself) is WRITTEN with ``write_behavior=PULSES``.
+    The storage bit is READ; the written pulse target is operand 0 for
+    single-argument ``ONS`` (storage is pulsed), or operand 1 when a
+    second tag is supplied (vendor-specific two-operand ``ONS`` form).
+    ``OSR`` / ``OSF`` always use operand 1 as the output bit.
     """
 
     storage_operand = _operand_at(instruction, sem.read_operand_indices[0])
@@ -2495,7 +2684,11 @@ def _handle_one_shot(
             )
         )
 
-    out_operand = _operand_at(instruction, sem.write_operand_index)
+    is_ons = instruction.instruction_type.upper() == "ONS"
+    ons_two_operand = is_ons and len(instruction.operands) >= 2
+    write_idx = 1 if ons_two_operand else sem.write_operand_index
+
+    out_operand = _operand_at(instruction, write_idx)
     if out_operand is None or not _looks_like_tag_operand(out_operand):
         return
     out_id = _resolve_tag_id_or_stub(
@@ -2522,9 +2715,9 @@ def _handle_one_shot(
                 operand=out_operand,
                 extras={
                     "operand_role": (
-                        "one_shot_storage"
-                        if instruction.instruction_type.upper() == "ONS"
-                        else "one_shot_output"
+                        "one_shot_output"
+                        if (not is_ons) or ons_two_operand
+                        else "one_shot_storage"
                     ),
                 },
             ),
@@ -2558,6 +2751,8 @@ _TIMER_COUNTER_MEMBERS: tuple[tuple[str, str], ...] = (
     (".EN", "enabled"),
     (".ACC", "accumulated_value"),
     (".PRE", "preset_value"),
+    (".CU", "count_up_enable"),
+    (".CD", "count_down_enable"),
 )
 
 
@@ -2611,32 +2806,40 @@ _BRANCH_BST_RE = re.compile(r"\bBST\b", re.IGNORECASE)
 _BRANCH_NXB_RE = re.compile(r"\bNXB\b", re.IGNORECASE)
 _BRANCH_BND_RE = re.compile(r"\bBND\b", re.IGNORECASE)
 
+# Logix parallel-OR bracket notation ``[XIC(a),XIC(b)]`` (coarse signal
+# only — we do not attribute operands to branch arms).
+_SQUARE_PARALLEL_RE = re.compile(
+    r"\[[^\]]*(?:XIC|XIO|OTE|OTL|OTU)\s*\([^\)]*\)[^\]]*,",
+    re.IGNORECASE,
+)
+
 
 def _detect_rung_branches(
     rung_raw_text: Optional[str],
 ) -> tuple[bool, int]:
     """Conservative branch detection: return ``(has_branches, count)``.
 
-    ``count`` is ``1`` when there are no branches, otherwise
-    ``num_NXB + 1`` -- one branch per ``NXB`` separator plus the
-    initial branch opened by ``BST``. This is a coarse signal: it
-    answers "are there parallel paths?" and roughly "how many?" but
-    deliberately does NOT attribute individual instructions to
-    individual branches. Per-instruction branch attribution requires
-    a real rung-text parser and is left as a future improvement.
+    ``BST`` / ``NXB`` / ``BND``: ``count`` is ``num_NXB + 1`` when a
+    closing ``BND`` exists; otherwise ``1`` when ``BST`` appears alone.
+
+    Square-bracket parallel OR (e.g. ``[XIC(A),XIC(B)]``) yields
+    ``(True, 2)`` when the heuristic matches. Full branch attribution
+    (which instruction sits on which path) remains unsupported.
     """
 
     if not rung_raw_text:
         return False, 1
-    if not _BRANCH_BST_RE.search(rung_raw_text):
-        return False, 1
-    if not _BRANCH_BND_RE.search(rung_raw_text):
-        # Unbalanced ``BST`` without a closing ``BND`` -- still flag
-        # the rung as branched, but signal one branch since we can't
-        # safely count separators.
-        return True, 1
-    nxb = len(_BRANCH_NXB_RE.findall(rung_raw_text))
-    return True, nxb + 1
+
+    if _BRANCH_BST_RE.search(rung_raw_text):
+        if not _BRANCH_BND_RE.search(rung_raw_text):
+            return True, 1
+        nxb = len(_BRANCH_NXB_RE.findall(rung_raw_text))
+        return True, nxb + 1
+
+    if _SQUARE_PARALLEL_RE.search(rung_raw_text):
+        return True, 2
+
+    return False, 1
 
 
 def _rel_meta(
@@ -2666,6 +2869,8 @@ def _rel_meta(
     if ctx.rung_has_branches:
         meta["rung_has_branches"] = True
         meta["rung_branch_count"] = ctx.rung_branch_count
+    if ctx.branch_warnings:
+        meta["branch_warnings"] = list(ctx.branch_warnings)
     if extras:
         meta.update(extras)
     return meta
@@ -2725,10 +2930,22 @@ def _instruction_to_control_object(
     instr_id: str,
     source_location: str,
     parent_ids: list[str],
+    *,
+    confidence_override: Optional[ConfidenceLevel] = None,
 ) -> ControlObject:
 
     sem = INSTRUCTION_SEMANTICS.get(instruction.instruction_type)
     family_value = sem.family.value if sem else _InstructionFamily.UNKNOWN.value
+    itype = instruction.instruction_type.upper()
+    one_shot_meta: dict[str, Any] = {}
+    if itype in {"ONS", "OSR", "OSF"}:
+        one_shot_meta = {
+            "one_shot_variant": itype,
+            "operand_count": len(instruction.operands),
+            "operands_roles": (
+                ["storage", "output"] if len(instruction.operands) >= 2 else ["storage"]
+            ),
+        }
 
     return ControlObject(
         id=instr_id,
@@ -2746,12 +2963,13 @@ def _instruction_to_control_object(
             "semantic_family": family_value,
             "semantic_implemented": bool(sem and sem.implemented),
         },
-        confidence=ConfidenceLevel.HIGH,
+        confidence=confidence_override or ConfidenceLevel.HIGH,
         platform_specific={
             "raw_text": instruction.raw_text,
             "instruction_local_id": instruction.id,
             "rockwell_metadata": instruction.metadata or {},
             "semantic_notes": sem.notes if sem else "",
+            **one_shot_meta,
         },
     )
 

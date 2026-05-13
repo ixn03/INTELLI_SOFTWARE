@@ -655,19 +655,40 @@ def _build_conditions_conclusion(
             "instruction_type": itype,
             "location": short_location,
             "conditions": [
-                {
-                    "natural_language": p.phrase,
-                    "instruction_type": p.instruction_type,
-                    **(
-                        {"tag": p.tag, "required_value": p.required_value}
-                        if p.tag is not None
-                        else {}
-                    ),
-                }
-                for p in phrases
+                _condition_dict_for_phrase(p) for p in phrases
             ],
         },
     )
+
+
+def _condition_dict_for_phrase(
+    phrase: "_LadderConditionPhrase",
+) -> dict:
+    """Serialize a single condition row for the writer_conditions metadata.
+
+    Only fields that meaningfully apply to the condition are added so
+    legacy consumers (e.g. runtime v1) that scan for ``tag`` /
+    ``required_value`` keep matching just those keys. Comparison
+    conditions also gain ``comparison_operator`` / ``compared_operands``
+    and timer-member XIC/XIO gain ``member`` -- runtime v2 reads these
+    instead of re-parsing the natural-language phrase.
+    """
+
+    out: dict = {
+        "natural_language": phrase.phrase,
+        "instruction_type": phrase.instruction_type,
+    }
+    if phrase.tag is not None:
+        out["tag"] = phrase.tag
+    if phrase.required_value is not None:
+        out["required_value"] = phrase.required_value
+    if phrase.member:
+        out["member"] = phrase.member
+    if phrase.comparison_operator:
+        out["comparison_operator"] = phrase.comparison_operator
+    if phrase.compared_operands:
+        out["compared_operands"] = list(phrase.compared_operands)
+    return out
 
 
 def _math_or_move_what_phrase(
@@ -1081,12 +1102,21 @@ class _LadderConditionPhrase:
     legacy per-tag breakdown alongside the natural phrase. They are
     ``None`` for comparison and one-shot phrases, which don't reduce
     to a single ``(tag, boolean)`` pair.
+
+    ``member`` / ``comparison_operator`` / ``compared_operands`` are
+    propagated when the underlying READS carries the corresponding
+    metadata. These fields are consumed by downstream runtime
+    evaluators (see :mod:`app.services.runtime_evaluation_v2_service`)
+    so they don't have to re-parse the natural-language phrase.
     """
 
     phrase: str
     instruction_type: str
     tag: Optional[str] = None
     required_value: Optional[bool] = None
+    member: Optional[str] = None
+    comparison_operator: Optional[str] = None
+    compared_operands: Optional[tuple[str, ...]] = None
 
 
 def _ladder_condition_phrases_for_rung(
@@ -1138,10 +1168,32 @@ def _ladder_condition_phrases_for_rung(
                 continue
             if instr_id:
                 seen_instructions.add(instr_id)
+            cmp_operator = meta.get("comparison_operator")
+            cmp_operands = meta.get("compared_operands")
+            # ``compared_operands`` may be a list[str] of length 2 for
+            # binary comparisons (EQU/NEQ/...) or 3 for LIM. We carry
+            # whatever shape the normalizer emits; downstream consumers
+            # decide how to interpret it.
+            operands_tuple = (
+                tuple(str(o) for o in cmp_operands)
+                if isinstance(cmp_operands, list) and cmp_operands
+                else None
+            )
+            # For binary comparisons, surface the LHS operand as the
+            # condition's ``tag`` so consumers that index by tag don't
+            # need to crack ``compared_operands`` themselves.
+            lhs_tag: Optional[str] = None
+            if operands_tuple and len(operands_tuple) == 2:
+                lhs_tag = operands_tuple[0]
             phrases.append(
                 _LadderConditionPhrase(
                     phrase=phrase_text,
                     instruction_type=itype,
+                    tag=lhs_tag,
+                    comparison_operator=(
+                        str(cmp_operator) if cmp_operator else None
+                    ),
+                    compared_operands=operands_tuple,
                 )
             )
             continue
@@ -1193,6 +1245,7 @@ def _ladder_condition_phrases_for_rung(
                 instruction_type=itype,
                 tag=tag_name,
                 required_value=bool(examined),
+                member=member if isinstance(member, str) else None,
             )
         )
 

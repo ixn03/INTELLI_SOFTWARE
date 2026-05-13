@@ -62,11 +62,16 @@ or sets ``too_complex=True`` on the relevant assignment / IF block,
 which the normalizer surfaces with
 ``st_parse_status="too_complex"``.
 
-The parser does not consume comments. The Rockwell L5X connector
-already strips ST line comments via its ``<Line>`` extraction, so by
-the time text reaches this parser comments are already gone in
-practice; if some slip through they will simply be folded into the
-adjacent statement's raw text, which is harmless for normalization.
+At parse entry, comments are removed via
+:func:`app.parsers.st_comments.strip_st_comments_for_parsing` so
+``IF`` / ``CASE`` keyword boundaries are not confused by ``(* ... *)``
+or ``//`` markers. Block ``raw_text`` values are therefore **comment-
+stripped** fragments; the connector still stores the verbatim export on
+``ControlRoutine.raw_logic`` for audit.
+
+``IF`` / ``ELSIF`` / ``ELSE`` chains are parsed into
+:class:`STIfElsifChain` when the outer splitter succeeds; otherwise the
+raw text is preserved as :class:`STComplexBlock`.
 
 Determinism
 -----------
@@ -81,6 +86,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional, Union
 
+from app.parsers.st_comments import strip_st_comments_for_parsing
+from app.parsers.st_if_elsif_split import parse_outer_if_elsif_else
 from app.parsers.st_expression import (
     STComparisonTerm,
     STConjunction,
@@ -155,6 +162,12 @@ _CASE_LABEL_RE = re.compile(
     """,
     re.IGNORECASE | re.VERBOSE,
 )
+
+# ``IF`` / ``END_IF`` for balanced outer-IF scanning. ``ELSIF`` is not
+# counted: any ``IF`` that contains ``ELSIF`` is emitted as
+# :class:`STComplexBlock` (multi-branch ``IF`` is unsupported in
+# :class:`STIfBlock` without a schema extension).
+_IF_ENDIF_KW = re.compile(r"\b(?:IF|END_IF)\b", re.IGNORECASE)
 
 
 # ---------------------------------------------------------------------------
@@ -268,6 +281,15 @@ class STCaseBlock:
 
 
 @dataclass(frozen=True)
+class STIfElsifChain:
+    """``IF`` / ``ELSIF`` / optional ``ELSE`` with per-branch assignments."""
+
+    branches: list[tuple[Optional[str], list[STAssignment]]]
+    raw_text: str
+    statement_index: int = 0
+
+
+@dataclass(frozen=True)
 class STComplexBlock:
     """Anything the parser couldn't recognize.
 
@@ -278,9 +300,142 @@ class STComplexBlock:
 
     raw_text: str
     statement_index: int = 0
+    fragment_kind: Optional[str] = None
+    callee_name: Optional[str] = None
 
 
-STBlock = Union[STAssignment, STIfBlock, STCaseBlock, STComplexBlock]
+STBlock = Union[STAssignment, STIfBlock, STIfElsifChain, STCaseBlock, STComplexBlock]
+
+
+def _matching_close_paren_st(s: str, open_paren: int) -> int:
+    depth = 0
+    j = open_paren
+    n = len(s)
+    while j < n:
+        ch = s[j]
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return j
+        j += 1
+    return -1
+
+
+def _find_balanced_loop_end(text: str, pos: int, open_kw: str, close_kw: str) -> int:
+    """Return index after optional ``;`` following ``close_kw``, or ``-1``."""
+
+    m0 = re.match(rf"\s*\b{open_kw}\b", text[pos:], re.IGNORECASE)
+    if not m0:
+        return -1
+    i = pos + m0.end()
+    depth = 1
+    n = len(text)
+    open_rx = re.compile(rf"\b{open_kw}\b", re.IGNORECASE)
+    close_rx = re.compile(rf"\b{close_kw}\b", re.IGNORECASE)
+    while i < n:
+        m_open = open_rx.search(text, i)
+        m_close = close_rx.search(text, i)
+        if m_close is None:
+            return -1
+        if m_open is not None and m_open.start() < m_close.start():
+            depth += 1
+            i = m_open.end()
+            continue
+        depth -= 1
+        i = m_close.end()
+        if depth == 0:
+            while i < n and text[i] in " \t\r\n":
+                i += 1
+            if i < n and text[i] == ";":
+                i += 1
+            return i
+    return -1
+
+
+def _try_consume_loop_block(
+    text: str, pos: int, stmt_idx: int
+) -> tuple[Optional[STComplexBlock], int]:
+    for open_kw, close_kw in (
+        ("FOR", "END_FOR"),
+        ("WHILE", "END_WHILE"),
+        ("REPEAT", "END_REPEAT"),
+    ):
+        end_idx = _find_balanced_loop_end(text, pos, open_kw, close_kw)
+        if end_idx == -1:
+            continue
+        raw = text[pos:end_idx].strip()
+        return (
+            STComplexBlock(
+                raw_text=raw,
+                statement_index=stmt_idx,
+                fragment_kind=f"loop_{open_kw.lower()}",
+            ),
+            end_idx,
+        )
+    return None, pos
+
+
+def _try_consume_fb_invocation(
+    text: str, pos: int, stmt_idx: int
+) -> tuple[Optional[STComplexBlock], int]:
+    m = re.match(r"\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(", text[pos:], re.IGNORECASE)
+    if not m:
+        return None, pos
+    open_paren = pos + m.end() - 1
+    close_paren = _matching_close_paren_st(text, open_paren)
+    if close_paren < 0:
+        return None, pos
+    j = close_paren + 1
+    while j < len(text) and text[j] in " \t\r\n":
+        j += 1
+    if j < len(text) and text[j] == ";":
+        raw = text[pos : j + 1].strip()
+        return (
+            STComplexBlock(
+                raw_text=raw,
+                statement_index=stmt_idx,
+                fragment_kind="fb_invocation",
+                callee_name=m.group(1),
+            ),
+            j + 1,
+        )
+    return None, pos
+
+
+def _find_matching_end_if(text: str, pos: int) -> int:
+    """Return index just after the ``END_IF`` that closes the ``IF`` at ``pos``.
+
+    ``pos`` must point at the start of an ``IF`` token. Returns ``-1``
+    when no balanced ``END_IF`` exists (malformed source).
+    """
+
+    depth = 0
+    for m in _IF_ENDIF_KW.finditer(text, pos):
+        if m.group(0).upper() == "IF":
+            depth += 1
+        else:
+            depth -= 1
+            if depth == 0:
+                return m.end()
+    return -1
+
+
+def _consume_end_if_trailer(text: str, end_after_end_if: int) -> int:
+    """Advance past optional whitespace and one ``;`` after ``END_IF``.
+
+    ``_IF_BLOCK_RE`` ends with ``\\bEND_IF\\b\\s*;?``; ``_find_matching_end_if``
+    returns the index immediately after the ``END_IF`` token. Align the two
+    so valid blocks are not misclassified as :class:`STComplexBlock`.
+    """
+
+    i = end_after_end_if
+    while i < len(text) and text[i] in " \t\r\n":
+        i += 1
+    if i < len(text) and text[i] == ";":
+        i += 1
+    return i
 
 
 # ---------------------------------------------------------------------------
@@ -302,7 +457,7 @@ def parse_structured_text_blocks(routine_text: Optional[str]) -> list[STBlock]:
     if not routine_text:
         return []
 
-    text = routine_text.strip()
+    text = strip_st_comments_for_parsing(routine_text).strip()
     if not text:
         return []
 
@@ -318,14 +473,88 @@ def parse_structured_text_blocks(routine_text: Optional[str]) -> list[STBlock]:
             if pos >= len(text):
                 break
 
-        # IF block.
+        # FOR / WHILE / REPEAT (preserve whole construct; no body edges).
+        lb, new_pos = _try_consume_loop_block(text, pos, stmt_idx)
+        if lb is not None:
+            blocks.append(lb)
+            pos = new_pos
+            stmt_idx += 1
+            continue
+
+        # Standalone FB-style call ``Name(...);`` (not ``IF`` / ``CASE``).
+        fb, new_pos = _try_consume_fb_invocation(text, pos, stmt_idx)
+        if fb is not None:
+            blocks.append(fb)
+            pos = new_pos
+            stmt_idx += 1
+            continue
+
+        # IF block (balanced ``IF`` … ``END_IF``; ``ELSIF`` -> chain or complex).
         if re.match(r"IF\b", text[pos:], re.IGNORECASE):
-            m = _IF_BLOCK_RE.match(text, pos)
-            if m:
-                blocks.append(_make_if_block(m, stmt_idx))
-                pos = m.end()
+            end = _find_matching_end_if(text, pos)
+            if end == -1:
+                end_semi = text.find(";", pos)
+                if end_semi == -1:
+                    blocks.append(
+                        STComplexBlock(
+                            raw_text=text[pos:].strip(),
+                            statement_index=stmt_idx,
+                        )
+                    )
+                    break
+                blocks.append(
+                    STComplexBlock(
+                        raw_text=text[pos : end_semi + 1].strip(),
+                        statement_index=stmt_idx,
+                    )
+                )
+                pos = end_semi + 1
                 stmt_idx += 1
                 continue
+
+            end_consumed = _consume_end_if_trailer(text, end)
+            block_src = text[pos:end_consumed].strip()
+            if re.search(r"\bELSIF\b", block_src, re.IGNORECASE):
+                segs = parse_outer_if_elsif_else(block_src)
+                if segs:
+                    built: list[tuple[Optional[str], list[STAssignment]]] = []
+                    for cond, body in segs:
+                        body_fix = body.strip()
+                        if body_fix and not body_fix.endswith(";"):
+                            body_fix = body_fix + ";"
+                        built.append((cond, _parse_body_assignments(body_fix)))
+                    blocks.append(
+                        STIfElsifChain(
+                            branches=built,
+                            raw_text=block_src,
+                            statement_index=stmt_idx,
+                        )
+                    )
+                else:
+                    blocks.append(
+                        STComplexBlock(
+                            raw_text=block_src,
+                            statement_index=stmt_idx,
+                        )
+                    )
+            else:
+                m_if = _IF_BLOCK_RE.match(text, pos)
+                if (
+                    m_if
+                    and m_if.start() == pos
+                    and m_if.end() == end_consumed
+                ):
+                    blocks.append(_make_if_block(m_if, stmt_idx))
+                else:
+                    blocks.append(
+                        STComplexBlock(
+                            raw_text=block_src,
+                            statement_index=stmt_idx,
+                        )
+                    )
+            pos = end_consumed
+            stmt_idx += 1
+            continue
 
         # CASE block.
         if re.match(r"CASE\b", text[pos:], re.IGNORECASE):
@@ -423,6 +652,18 @@ def _parse_assignment_text(
             target=target,
             raw_expression=rhs_clean,
             assigned_value=False,
+            conditions=[],
+            expression=None,
+            too_complex=False,
+            raw_text=raw_text,
+            statement_index=statement_index,
+        )
+
+    if re.fullmatch(r"-?\d+(?:\.\d+)?", rhs_clean):
+        return STAssignment(
+            target=target,
+            raw_expression=rhs_clean,
+            assigned_value=None,
             conditions=[],
             expression=None,
             too_complex=False,
@@ -621,7 +862,7 @@ def _parse_case_branches(
 __all__ = [
     "STBlock",
     "STAssignment",
-    "STIfBlock",
+    "STIfElsifChain",
     "STCaseBlock",
     "STCaseBranch",
     "STComplexBlock",

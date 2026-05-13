@@ -1,7 +1,5 @@
 "use client";
 
-import { useMemo } from "react";
-
 import type { ControlProject } from "@/types/intelli";
 import type {
   NormalizedControlObjectSummary,
@@ -26,13 +24,15 @@ import {
  *   1. Upload status (file name + "swap" button when a project is
  *      loaded; full upload card when not).
  *   2. Project summary (counts + minimal program/routine list).
- *   3. Object finder (search box + scrollable list of normalized
- *      control objects). Selecting an object fills the trace target
- *      in :file:`IntelliShell.tsx`.
- *   4. Ask INTELLI (free-text question -> POST /api/ask-v1).
+ *   3. Object finder (server-backed search via ``GET /api/normalized-summary``
+ *      paging; same query semantics as ``/api/control-objects``).
+ *      Selecting an object fills the trace target in
+ *      :file:`IntelliWorkspace.tsx`.
+ *   4. Ask INTELLI (``/api/ask-v2`` with optional runtime snapshot;
+ *      falls back to ``/api/ask-v1``).
  *
  * The sidebar is pure presentation -- all loading, error handling,
- * and state lives in IntelliShell. We only render what we're given.
+ * and state lives in IntelliWorkspace. We only render what we're given.
  */
 
 interface SidebarProps {
@@ -45,13 +45,27 @@ interface SidebarProps {
   uploadLoading: boolean;
   uploadError: string | null;
 
-  // Normalized summary
+  // Normalized summary (counts / light refresh)
   summary: NormalizedSummaryResponse | null;
   summaryLoading: boolean;
   summaryError: string | null;
   onLoadSummary: () => void;
 
-  // Object finder
+  // Object finder (server-side search via /api/normalized-summary paging)
+  objectList: NormalizedControlObjectSummary[];
+  objectListTotal: number;
+  objectListProjectTotal: number;
+  objectListFetchSucceeded: boolean;
+  objectListLoading: boolean;
+  objectListError: string | null;
+  hasActiveObjectFilter: boolean;
+  objectTypeFilter: string;
+  onObjectTypeFilter: (v: string) => void;
+  objectListOffset: number;
+  objectListHasPrev: boolean;
+  objectListHasNext: boolean;
+  onObjectListPrev: () => void;
+  onObjectListNext: () => void;
   search: string;
   onSearch: (s: string) => void;
   selectedObjectId: string;
@@ -202,43 +216,77 @@ function ObjectFinderSection({
   summaryLoading,
   summaryError,
   onLoadSummary,
+  objectList,
+  objectListTotal,
+  objectListProjectTotal,
+  objectListFetchSucceeded,
+  objectListLoading,
+  objectListError,
+  hasActiveObjectFilter,
+  objectTypeFilter,
+  onObjectTypeFilter,
+  objectListOffset,
+  objectListHasPrev,
+  objectListHasNext,
+  onObjectListPrev,
+  onObjectListNext,
   search,
   onSearch,
   selectedObjectId,
   onSelectObject,
 }: SidebarProps) {
-  const filteredObjects = useMemo<NormalizedControlObjectSummary[]>(() => {
-    if (!summary) return [];
-    const q = search.trim().toLowerCase();
-    if (!q) return summary.control_objects;
-    return summary.control_objects.filter((o) => {
-      const haystack = [
-        o.id,
-        o.name ?? "",
-        o.object_type,
-        o.source_location ?? "",
-      ]
-        .join(" ")
-        .toLowerCase();
-      return haystack.includes(q);
-    });
-  }, [summary, search]);
-
   if (!project) return null;
+
+  const projectWide =
+    summary?.control_object_count ?? objectListProjectTotal ?? 0;
+
+  const emptyMessage = (() => {
+    if (objectListLoading || objectListError) return null;
+    if (!objectListFetchSucceeded) return null;
+    if (objectList.length > 0) return null;
+
+    const pt = Math.max(projectWide, objectListProjectTotal, objectListTotal);
+
+    if (hasActiveObjectFilter && objectListTotal === 0 && pt > 0) {
+      return "No objects match the current filter.";
+    }
+    if (!hasActiveObjectFilter && pt > 0) {
+      return "Objects failed to load. Try refreshing.";
+    }
+    return "No control objects in the normalized graph.";
+  })();
 
   return (
     <section className="flex min-h-0 flex-1 flex-col gap-2">
       <div className="flex items-baseline justify-between gap-2">
         <Eyebrow>Find an object</Eyebrow>
-        {summary ? (
-          <span className="text-[10px] text-zinc-500">
-            {filteredObjects.length} / {summary.control_objects.length}
-            {summary.control_objects.length < summary.control_object_count
-              ? ` of ${summary.control_object_count}`
-              : ""}
-          </span>
-        ) : null}
+        <span className="text-[10px] text-zinc-500">
+          {objectListLoading
+            ? "…"
+            : `${objectList.length} shown · ${objectListTotal} match`}
+          {projectWide > 0 && projectWide !== objectListTotal ? (
+            <span className="text-zinc-600"> · {projectWide} total</span>
+          ) : null}
+        </span>
       </div>
+
+      <label className="sr-only" htmlFor="intelli-object-type">
+        Object type filter
+      </label>
+      <select
+        id="intelli-object-type"
+        value={objectTypeFilter}
+        onChange={(e) => onObjectTypeFilter(e.target.value)}
+        className="rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1.5 text-xs text-zinc-200"
+      >
+        <option value="">All types</option>
+        <option value="tag">Tags</option>
+        <option value="routine">Routines</option>
+        <option value="rung">Rungs</option>
+        <option value="instruction">Instructions</option>
+        <option value="controller">Controllers</option>
+        <option value="program">Programs</option>
+      </select>
 
       <TextInput
         value={search}
@@ -247,55 +295,87 @@ function ObjectFinderSection({
         ariaLabel="Search control objects"
       />
 
-      {summaryError ? <InlineError>{summaryError}</InlineError> : null}
+      {objectListFetchSucceeded &&
+      objectListTotal > 0 &&
+      (objectListHasPrev || objectListHasNext) ? (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-[10px] text-zinc-500">
+            {objectList.length > 0
+              ? `Rows ${objectListOffset + 1}–${objectListOffset + objectList.length} of ${objectListTotal} match`
+              : `Page · ${objectListTotal} match`}
+          </p>
+          <div className="flex gap-1.5">
+            <Button
+              tone="secondary"
+              type="button"
+              className="px-2.5 py-1 text-xs"
+              disabled={!objectListHasPrev || objectListLoading}
+              onClick={onObjectListPrev}
+            >
+              Previous
+            </Button>
+            <Button
+              tone="secondary"
+              type="button"
+              className="px-2.5 py-1 text-xs"
+              disabled={!objectListHasNext || objectListLoading}
+              onClick={onObjectListNext}
+            >
+              Next
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
+      {summaryError || objectListError ? (
+        <InlineError>{summaryError ?? objectListError}</InlineError>
+      ) : null}
 
       {!summary && !summaryLoading && !summaryError ? (
         <Button tone="secondary" onClick={onLoadSummary}>
-          Load objects
+          Load graph counts
         </Button>
       ) : null}
-      {summaryLoading ? <LoadingLine>Loading objects...</LoadingLine> : null}
-
-      {summary ? (
-        <div className="min-h-0 flex-1 overflow-auto rounded-xl border border-zinc-800/80 bg-zinc-950/40">
-          {filteredObjects.length === 0 ? (
-            <p className="px-3 py-4 text-xs text-zinc-500">
-              No objects match the current filter.
-            </p>
-          ) : (
-            <ul className="divide-y divide-zinc-800/70">
-              {filteredObjects.map((o) => {
-                const active = o.id === selectedObjectId;
-                return (
-                  <li key={o.id}>
-                    <button
-                      type="button"
-                      onClick={() => onSelectObject(o.id)}
-                      className={`block w-full px-3 py-2 text-left transition ${
-                        active
-                          ? "bg-zinc-800/80"
-                          : "hover:bg-zinc-900/60"
-                      }`}
-                    >
-                      <div className="flex items-baseline justify-between gap-2">
-                        <span className="truncate text-sm text-zinc-100">
-                          {o.name ?? o.id.split("/").pop()}
-                        </span>
-                        <Badge tone="outline" uppercase>
-                          {o.object_type}
-                        </Badge>
-                      </div>
-                      <p className="mt-0.5 truncate font-mono text-[10px] text-zinc-500">
-                        {o.id}
-                      </p>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </div>
+      {(summaryLoading && !summary) || objectListLoading ? (
+        <LoadingLine>Loading objects…</LoadingLine>
       ) : null}
+
+      <div className="min-h-[8rem] max-h-[min(22rem,50vh)] flex-1 overflow-y-auto overflow-x-hidden rounded-xl border border-zinc-800/80 bg-zinc-950/40">
+        {emptyMessage ? (
+          <p className="px-3 py-4 text-xs text-zinc-500">{emptyMessage}</p>
+        ) : (
+          <ul className="divide-y divide-zinc-800/70">
+            {objectList.map((o) => {
+              const active = o.id === selectedObjectId;
+              return (
+                <li key={o.id}>
+                  <button
+                    type="button"
+                    onClick={() => onSelectObject(o.id)}
+                    className={`block w-full px-3 py-2 text-left transition ${
+                      active
+                        ? "bg-zinc-800/80"
+                        : "hover:bg-zinc-900/60"
+                    }`}
+                  >
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="truncate text-sm text-zinc-100">
+                        {o.name ?? o.id.split("/").pop()}
+                      </span>
+                      <Badge tone="outline" uppercase>
+                        {o.object_type}
+                      </Badge>
+                    </div>
+                    <p className="mt-0.5 truncate font-mono text-[10px] text-zinc-500">
+                      {o.id}
+                    </p>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
     </section>
   );
 }
@@ -338,8 +418,9 @@ function AskSection({
         {askLoading ? "Thinking..." : "Ask"}
       </Button>
       <p className="text-[11px] leading-snug text-zinc-500">
-        Deterministic question router. No LLM. Detects intent from
-        keywords and routes to Trace v2.
+        Uses ask-v2 (Trace v2, optional runtime diagnosis when a JSON
+        snapshot is set in the main panel). Falls back to ask-v1 if v2
+        fails. No LLM.
       </p>
     </section>
   );

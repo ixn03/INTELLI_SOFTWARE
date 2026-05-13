@@ -1,8 +1,14 @@
 @import "tailwindcss";
 
 :root {
-  --background: #09090b; /* zinc-950 */
-  --foreground: #f4f4f5; /* zinc-100 */
+  --background: #0b1220;
+  --foreground: #e2e8f0;
+  --surface: #111a2e;
+  --surface-elevated: #162038;
+  --border: #243047;
+  --muted: #94a3b8;
+  --accent: #38bdf8;
+  --accent-strong: #0ea5e9;
 }
 
 @theme inline {
@@ -23,7 +29,7 @@ body {
 /* Slim, on-brand scrollbars on Webkit. Firefox honors scrollbar-color. */
 * {
   scrollbar-width: thin;
-  scrollbar-color: #3f3f46 transparent; /* zinc-700 over transparent track */
+  scrollbar-color: #334155 transparent;
 }
 *::-webkit-scrollbar {
   width: 10px;
@@ -33,13 +39,13 @@ body {
   background: transparent;
 }
 *::-webkit-scrollbar-thumb {
-  background-color: #27272a; /* zinc-800 */
+  background-color: #1e293b;
   border: 2px solid transparent;
   background-clip: content-box;
   border-radius: 9999px;
 }
 *::-webkit-scrollbar-thumb:hover {
-  background-color: #3f3f46; /* zinc-700 */
+  background-color: #334155;
   background-clip: content-box;
 }
 

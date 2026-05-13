@@ -1,15 +1,19 @@
 "use client";
 
-import { useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 import type {
   NormalizedControlObjectSummary,
-  NormalizedSummaryResponse,
   TraceConclusion,
   TraceRelationship,
   TraceResponse,
 } from "@/types/reasoning";
-import { getStringMeta, getTraceV2Kind } from "@/types/reasoning";
+import {
+  getStringMeta,
+  getTraceV2Kind,
+  isDesignTraceConclusion,
+  isRuntimeV2Trace,
+} from "@/types/reasoning";
 
 import {
   Accordion,
@@ -27,19 +31,29 @@ import {
   Stat,
 } from "./ui";
 
+import {
+  OperationalVerdictCard,
+  RuntimeConditionBreakdown,
+  RuntimeConflictsBanner,
+  RuntimeSnapshotPanel,
+  WriterPathResultsSection,
+} from "./RuntimeDiagnosisView";
+
 /**
  * Main panel -- shows the answer for the currently selected target.
  *
  * Layered top to bottom:
  *
- *   1. Selected-object card: name, type, source location, confidence.
- *   2. Trace answer card: hero natural-language sentence + the
- *      remaining v2 statements as bullets.
- *   3. Conditions card: gating conditions surfaced by writer_conditions
- *      and branch_warning conclusions.
- *   4. Writers / readers count strip.
- *   5. Evidence accordion: per-relationship technical breakdown.
- *   6. Debug accordion: raw JSON for the trace response.
+ *   1. Selected-object card + trace actions.
+ *   2. Runtime snapshot panel (diagnosis mode).
+ *   3. Operational verdict card when ``trace_version === "runtime_v2"``.
+ *   4. Design trace answer (natural-language Trace v2, excluding runtime
+ *      overlay conclusions).
+ *   5. Key conditions (writer_conditions / branch_warning).
+ *   6. Runtime condition breakdown, writer paths, conflicts (runtime v2).
+ *   7. Writers / readers count strip.
+ *   8. Evidence accordion.
+ *   9. Debug accordion (raw JSON hidden until expanded).
  *
  * Trace v2 is the default. A small "Trace v1" link in the header
  * triggers the raw v1 endpoint for advanced users.
@@ -50,7 +64,6 @@ type TraceVersion = "v1" | "v2";
 interface AnswerViewProps {
   selectedObject: NormalizedControlObjectSummary | null;
   selectedObjectId: string;
-  summary: NormalizedSummaryResponse | null;
 
   trace: TraceResponse | null;
   traceVersion: TraceVersion | null;
@@ -60,20 +73,65 @@ interface AnswerViewProps {
   askedQuestion: string | null;
 
   onRunTrace: (version: TraceVersion) => void;
+
+  /** Runtime v2 snapshot JSON (controlled). */
+  runtimeSnapshotText: string;
+  onRuntimeSnapshotTextChange: (text: string) => void;
+  onEvaluateRuntimeV2: (snapshot: Record<string, unknown>) => void;
+  runtimeEvaluating: boolean;
+  runtimeEvalError: string | null;
 }
 
 export default function AnswerView(props: AnswerViewProps) {
   const {
     selectedObject,
     selectedObjectId,
-    summary,
     trace,
     traceVersion,
     traceLoading,
     traceError,
     askedQuestion,
     onRunTrace,
+    runtimeSnapshotText,
+    onRuntimeSnapshotTextChange,
+    onEvaluateRuntimeV2,
+    runtimeEvaluating,
+    runtimeEvalError,
   } = props;
+
+  const [runtimeParseError, setRuntimeParseError] = useState<string | null>(
+    null,
+  );
+
+  const runtimePanelDisabled =
+    !selectedObjectId.trim() || traceLoading !== null;
+
+  const handleRuntimeEvaluate = useCallback(() => {
+    setRuntimeParseError(null);
+    const trimmed = runtimeSnapshotText.trim();
+    if (!trimmed) {
+      setRuntimeParseError("Enter a JSON object with tag values.");
+      return;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed) as unknown;
+    } catch {
+      setRuntimeParseError("Runtime snapshot JSON is invalid.");
+      return;
+    }
+    if (
+      parsed === null ||
+      typeof parsed !== "object" ||
+      Array.isArray(parsed)
+    ) {
+      setRuntimeParseError(
+        "Runtime snapshot must be a JSON object (not an array or primitive).",
+      );
+      return;
+    }
+    void onEvaluateRuntimeV2(parsed as Record<string, unknown>);
+  }, [runtimeSnapshotText, onEvaluateRuntimeV2]);
 
   return (
     <main className="flex h-full min-w-0 flex-1 flex-col gap-5 overflow-y-auto px-8 py-6">
@@ -84,7 +142,19 @@ export default function AnswerView(props: AnswerViewProps) {
         traceVersion={traceVersion}
         traceLoading={traceLoading}
         onRunTrace={onRunTrace}
-        summary={summary}
+      />
+
+      <RuntimeSnapshotPanel
+        value={runtimeSnapshotText}
+        onChange={(t) => {
+          onRuntimeSnapshotTextChange(t);
+          if (runtimeParseError) setRuntimeParseError(null);
+        }}
+        onEvaluate={handleRuntimeEvaluate}
+        disabled={runtimePanelDisabled}
+        evaluating={runtimeEvaluating}
+        parseError={runtimeParseError}
+        apiError={runtimeEvalError}
       />
 
       {traceError ? <InlineError>{traceError}</InlineError> : null}
@@ -99,14 +169,33 @@ export default function AnswerView(props: AnswerViewProps) {
         </Card>
       ) : null}
 
+      {runtimeEvaluating && trace ? (
+        <Card>
+          <CardBody>
+            <LoadingLine>Evaluating runtime snapshot…</LoadingLine>
+          </CardBody>
+        </Card>
+      ) : null}
+
       {trace ? (
         <>
           {askedQuestion ? (
             <RouterPill trace={trace} askedQuestion={askedQuestion} />
           ) : null}
 
+          {isRuntimeV2Trace(trace) ? <OperationalVerdictCard trace={trace} /> : null}
+
           <PrimaryAnswerCard trace={trace} />
           <ConditionsCard trace={trace} />
+
+          {isRuntimeV2Trace(trace) ? (
+            <>
+              <RuntimeConditionBreakdown trace={trace} />
+              <WriterPathResultsSection trace={trace} />
+              <RuntimeConflictsBanner trace={trace} />
+            </>
+          ) : null}
+
           <CountsStrip trace={trace} />
           <EvidenceAccordion trace={trace} />
           <DebugAccordion trace={trace} />
@@ -138,7 +227,6 @@ function SelectedObjectCard({
   traceVersion,
   traceLoading,
   onRunTrace,
-  summary,
 }: {
   selectedObject: NormalizedControlObjectSummary | null;
   selectedObjectId: string;
@@ -146,9 +234,8 @@ function SelectedObjectCard({
   traceVersion: TraceVersion | null;
   traceLoading: TraceVersion | null;
   onRunTrace: (version: TraceVersion) => void;
-  summary: NormalizedSummaryResponse | null;
 }) {
-  const targetReady = Boolean(selectedObjectId.trim() && summary);
+  const targetReady = Boolean(selectedObjectId.trim());
   const displayName =
     selectedObject?.name ??
     (selectedObjectId ? selectedObjectId.split("/").pop() ?? selectedObjectId : null);
@@ -198,6 +285,11 @@ function SelectedObjectCard({
               {traceVersion ? (
                 <Badge tone="info" uppercase>
                   trace {traceVersion}
+                </Badge>
+              ) : null}
+              {trace && isRuntimeV2Trace(trace) ? (
+                <Badge tone="success" uppercase>
+                  runtime v2
                 </Badge>
               ) : null}
             </div>
@@ -275,7 +367,11 @@ function RouterPill({
 
 function PrimaryAnswerCard({ trace }: { trace: TraceResponse }) {
   const v2Conclusions = useMemo(
-    () => trace.conclusions.filter((c) => getTraceV2Kind(c) !== null),
+    () =>
+      trace.conclusions.filter(
+        (c) =>
+          isDesignTraceConclusion(c) && getTraceV2Kind(c) !== null,
+      ),
     [trace.conclusions],
   );
 
@@ -291,8 +387,8 @@ function PrimaryAnswerCard({ trace }: { trace: TraceResponse }) {
   return (
     <Card>
       <CardHeader
-        eyebrow="What controls this?"
-        title="Trace answer"
+        eyebrow="Design trace"
+        title="What controls this?"
       />
       <CardBody className="space-y-4">
         {heroStatement ? (

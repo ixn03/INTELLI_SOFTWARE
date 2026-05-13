@@ -23,7 +23,7 @@ import Sidebar from "./Sidebar";
  *   - Object selection (synced with the sidebar list AND the
  *     /api/ask-v1 result's detected target).
  *   - Trace lifecycle (POST /api/trace-v1, /api/trace-v2,
- *     /api/ask-v1).
+ *     /api/ask-v1, /api/evaluate-runtime-v2).
  *
  * The :file:`Sidebar.tsx` and :file:`AnswerView.tsx` modules are
  * pure presentation: they receive props and emit events back through
@@ -31,7 +31,8 @@ import Sidebar from "./Sidebar";
  * single source of truth for "what is currently going on".
  */
 
-const API_BASE = "http://127.0.0.1:8000";
+const API_BASE =
+  process.env.NEXT_PUBLIC_INTELLI_API_BASE ?? "http://127.0.0.1:8000";
 
 interface UploadResponse {
   project_id: string;
@@ -73,6 +74,13 @@ export default function IntelliShell() {
   const [askLoading, setAskLoading] = useState(false);
   const [askedQuestion, setAskedQuestion] = useState<string | null>(null);
 
+  // --- Runtime evaluation v2 -------------------------------------------
+  const [runtimeSnapshotText, setRuntimeSnapshotText] = useState("{}");
+  const [runtimeEvaluating, setRuntimeEvaluating] = useState(false);
+  const [runtimeEvalError, setRuntimeEvalError] = useState<string | null>(
+    null,
+  );
+
   const selectedObject = useMemo(() => {
     if (!summary || !selectedObjectId) return null;
     return (
@@ -107,6 +115,9 @@ export default function IntelliShell() {
       setTraceError(null);
       setAskedQuestion(null);
       setQuestion("");
+      setRuntimeSnapshotText("{}");
+      setRuntimeEvaluating(false);
+      setRuntimeEvalError(null);
 
       const res = await axios.post<UploadResponse>(
         `${API_BASE}/upload`,
@@ -158,6 +169,9 @@ export default function IntelliShell() {
     setTraceError(null);
     setAskedQuestion(null);
     setQuestion("");
+    setRuntimeSnapshotText("{}");
+    setRuntimeEvaluating(false);
+    setRuntimeEvalError(null);
   }
 
   // ---------------------------------------------------------------------
@@ -188,6 +202,7 @@ export default function IntelliShell() {
       return;
     }
     setTraceError(null);
+    setRuntimeEvalError(null);
     setTraceLoading(version);
     setAskedQuestion(null);
     try {
@@ -218,6 +233,7 @@ export default function IntelliShell() {
     const q = question.trim();
     if (!q) return;
     setTraceError(null);
+    setRuntimeEvalError(null);
     setAskLoading(true);
     setAskedQuestion(q);
     try {
@@ -239,6 +255,40 @@ export default function IntelliShell() {
     }
   }
 
+  const evaluateRuntimeV2 = useCallback(
+    async (runtimeSnapshot: Record<string, unknown>) => {
+      if (!projectId) {
+        setRuntimeEvalError("Upload a project first.");
+        return;
+      }
+      const id = selectedObjectId.trim();
+      if (!id) {
+        setRuntimeEvalError("No object selected.");
+        return;
+      }
+      setRuntimeEvalError(null);
+      setRuntimeEvaluating(true);
+      try {
+        const res = await axios.post<TraceResponse>(
+          `${API_BASE}/api/evaluate-runtime-v2`,
+          {
+            target_object_id: id,
+            runtime_snapshot: runtimeSnapshot,
+          },
+        );
+        setTrace(res.data);
+        setTraceVersion("v2");
+      } catch (err) {
+        setRuntimeEvalError(
+          extractError(err, "Runtime evaluation failed."),
+        );
+      } finally {
+        setRuntimeEvaluating(false);
+      }
+    },
+    [projectId, selectedObjectId],
+  );
+
   // ---------------------------------------------------------------------
   // Layout: landing screen if there's no project, app shell otherwise.
   // ---------------------------------------------------------------------
@@ -256,7 +306,7 @@ export default function IntelliShell() {
   }
 
   return (
-    <div className="flex h-screen min-h-screen flex-col bg-zinc-950 text-zinc-100">
+    <div className="flex h-screen min-h-screen flex-col bg-[var(--background)] text-[var(--foreground)]">
       <TopHeader
         project={project}
         onResetUpload={resetUpload}
@@ -296,6 +346,14 @@ export default function IntelliShell() {
           traceError={traceError}
           askedQuestion={askedQuestion}
           onRunTrace={runTrace}
+          runtimeSnapshotText={runtimeSnapshotText}
+          onRuntimeSnapshotTextChange={(t) => {
+            setRuntimeSnapshotText(t);
+            setRuntimeEvalError(null);
+          }}
+          onEvaluateRuntimeV2={evaluateRuntimeV2}
+          runtimeEvaluating={runtimeEvaluating}
+          runtimeEvalError={runtimeEvalError}
         />
       </div>
     </div>
@@ -314,31 +372,31 @@ function TopHeader({
   onResetUpload: () => void;
 }) {
   return (
-    <header className="flex shrink-0 items-center justify-between gap-4 border-b border-zinc-800/80 bg-zinc-950/80 px-6 py-3 backdrop-blur">
+    <header className="flex shrink-0 items-center justify-between gap-4 border-b border-[var(--border)] bg-[var(--surface)]/95 px-6 py-3 backdrop-blur">
       <div className="flex items-center gap-3">
         <BrandMark />
         <div>
-          <p className="text-sm font-medium tracking-tight text-zinc-50">
+          <p className="text-sm font-medium tracking-tight text-slate-50">
             INTELLI
           </p>
-          <p className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">
+          <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">
             Controls Logic Intelligence
           </p>
         </div>
       </div>
       <div className="flex items-center gap-3">
         <div className="hidden text-right sm:block">
-          <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">
+          <p className="text-xs uppercase tracking-[0.18em] text-slate-500">
             Project
           </p>
-          <p className="truncate text-sm text-zinc-200">
+          <p className="truncate text-sm text-slate-200">
             {project.project_name || "Imported project"}
           </p>
         </div>
         <button
           type="button"
           onClick={onResetUpload}
-          className="rounded-lg border border-zinc-800 px-3 py-1.5 text-xs text-zinc-300 transition hover:border-zinc-700 hover:bg-zinc-900"
+          className="rounded-lg border border-sky-500/40 bg-sky-500/10 px-3 py-1.5 text-xs font-medium text-sky-200 transition hover:border-sky-400/60 hover:bg-sky-500/20"
         >
           Switch project
         </button>
@@ -353,9 +411,9 @@ function BrandMark() {
   return (
     <span
       aria-hidden
-      className="grid h-9 w-9 place-items-center rounded-lg border border-zinc-800 bg-zinc-900/80"
+      className="grid h-9 w-9 place-items-center rounded-lg border border-sky-500/30 bg-[var(--surface-elevated)] shadow-[0_0_20px_-8px_rgba(56,189,248,0.45)]"
     >
-      <span className="font-mono text-sm tracking-tight text-zinc-100">
+      <span className="font-mono text-sm tracking-tight text-sky-200">
         I.
       </span>
     </span>
@@ -380,29 +438,29 @@ function LandingScreen({
   uploadError: string | null;
 }) {
   return (
-    <main className="grid min-h-screen place-items-center bg-zinc-950 text-zinc-100">
+    <main className="grid min-h-screen place-items-center bg-[var(--background)] text-[var(--foreground)]">
       <div className="w-full max-w-xl px-6 py-10">
         <div className="mb-10">
-          <p className="text-[11px] uppercase tracking-[0.22em] text-zinc-500">
+          <p className="text-[11px] uppercase tracking-[0.22em] text-slate-500">
             INTELLI
           </p>
-          <h1 className="mt-2 text-4xl font-semibold tracking-tight text-zinc-50">
+          <h1 className="mt-2 text-4xl font-semibold tracking-tight text-slate-50">
             Controls Logic Intelligence
           </h1>
-          <p className="mt-3 max-w-md text-sm leading-relaxed text-zinc-400">
+          <p className="mt-3 max-w-md text-sm leading-relaxed text-slate-400">
             Upload a Rockwell L5X export to begin tracing logic, asking
             questions, and reviewing deterministic answers.
           </p>
         </div>
 
-        <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/50 p-6">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500">
+        <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)]/80 p-6 shadow-xl shadow-black/20">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
             Step 1
           </p>
-          <h2 className="mt-1 text-base font-medium text-zinc-50">
+          <h2 className="mt-1 text-base font-medium text-slate-50">
             Choose your L5X file
           </h2>
-          <label className="mt-4 block cursor-pointer rounded-xl border border-dashed border-zinc-700/80 bg-zinc-950/40 px-4 py-8 text-center transition hover:border-zinc-600 hover:bg-zinc-950/60">
+          <label className="mt-4 block cursor-pointer rounded-xl border border-dashed border-slate-600/80 bg-[var(--surface-elevated)]/50 px-4 py-8 text-center transition hover:border-sky-500/40 hover:bg-[var(--surface-elevated)]/80">
             <input
               type="file"
               accept=".l5x,.L5X,application/xml,text/xml"
@@ -411,10 +469,10 @@ function LandingScreen({
               }
               className="sr-only"
             />
-            <p className="text-sm text-zinc-200">
+            <p className="text-sm text-slate-200">
               {file ? file.name : "Click to select an L5X export"}
             </p>
-            <p className="mt-1 text-[11px] text-zinc-500">
+            <p className="mt-1 text-[11px] text-slate-500">
               .l5x · Rockwell Logix Designer
             </p>
           </label>
@@ -423,7 +481,7 @@ function LandingScreen({
             type="button"
             onClick={onUpload}
             disabled={uploadLoading || !file}
-            className="mt-4 inline-flex w-full items-center justify-center rounded-lg bg-zinc-100 px-4 py-2.5 text-sm font-medium text-zinc-900 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-40"
+            className="mt-4 inline-flex w-full items-center justify-center rounded-lg bg-gradient-to-r from-sky-500 to-sky-600 px-4 py-2.5 text-sm font-semibold text-slate-950 shadow-lg shadow-sky-900/30 transition hover:from-sky-400 hover:to-sky-500 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {uploadLoading ? "Uploading..." : "Upload and continue"}
           </button>
@@ -435,7 +493,7 @@ function LandingScreen({
           ) : null}
         </div>
 
-        <p className="mt-6 text-center text-[11px] text-zinc-500">
+        <p className="mt-6 text-center text-[11px] text-slate-500">
           No data is persisted. INTELLI works on the most recently
           uploaded file.
         </p>

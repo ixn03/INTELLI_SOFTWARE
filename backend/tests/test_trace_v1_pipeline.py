@@ -288,9 +288,11 @@ class TraceV1RouteFunctionTests(unittest.TestCase):
         self.assertGreater(summary.relationship_count, 0)
         self.assertGreaterEqual(summary.execution_context_count, 1)
 
-        # First-20 caps are honored.
-        self.assertLessEqual(len(summary.control_objects), 20)
-        self.assertLessEqual(len(summary.relationships), 20)
+        # Pagination caps (default limit 100).
+        self.assertLessEqual(len(summary.control_objects), 100)
+        self.assertLessEqual(len(summary.relationships), 100)
+        self.assertEqual(summary.returned_control_object_count, len(summary.control_objects))
+        self.assertEqual(summary.returned_relationship_count, len(summary.relationships))
 
         # Each summary row has the spec'd shape.
         for o in summary.control_objects:

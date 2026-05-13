@@ -76,6 +76,16 @@ class ControlObjectType(str, Enum):
     PID_LOOP = "pid_loop"
     SEQUENCE = "sequence"
     SFC_STEP = "sfc_step"
+    # --- SFC (schema placeholders for future chart parsers) ---
+    SFC_TRANSITION = "sfc_transition"
+    SFC_ACTION = "sfc_action"
+    SFC_CONDITION = "sfc_condition"
+    ACTIVE_STEP_TAG = "active_step_tag"
+    # --- FBD (schema placeholders for future diagram parsers) ---
+    FBD_INPUT_PIN = "fbd_input_pin"
+    FBD_OUTPUT_PIN = "fbd_output_pin"
+    FBD_BLOCK_INSTANCE = "fbd_block_instance"
+    FBD_PARAMETER_BINDING = "fbd_parameter_binding"
     CONTROL_MODULE = "control_module"
     EQUIPMENT_MODULE = "equipment_module"
     FUNCTION_BLOCK = "function_block"
@@ -163,6 +173,9 @@ class RelationshipType(str, Enum):
     OVERRIDES = "overrides"
     TRACKS = "tracks"
     AFFECTS = "affects"
+    # --- FBD / wiring (placeholders; emit only when parsers supply pins) ---
+    SIGNAL_CONNECTS = "signal_connects"
+    BINDS_PARAMETER = "binds_parameter"
     UNKNOWN = "unknown"
 
 
