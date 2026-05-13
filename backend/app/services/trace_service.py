@@ -216,18 +216,21 @@ def format_relationship_detail(
 
 
 _RUNG_PATTERN = re.compile(r"([^/]+)/Rung\[(\d+)\]")
+_STATEMENT_PATTERN = re.compile(r"([^/]+)/Statement\[(\d+)\]")
 _ROUTINE_LABELLED = re.compile(r"Routine:([^/]+)")
 
 
 def _extract_short_location(raw: Optional[str]) -> str:
     """Reduce a long source_location / source_id to a short, readable form.
 
-    Handles both shapes our normalizer emits:
+    Handles the shapes our normalizer emits:
 
         - ``"Controller:PLC01/Program:MainProgram/Routine:MotorRoutine/Rung[12]"``
           -> ``"MotorRoutine/Rung[12]"``
         - ``"rung::PLC01/MainProgram/MotorRoutine/Rung[12]"``
           -> ``"MotorRoutine/Rung[12]"``
+        - ``"Controller:PLC01/Program:MainProgram/Routine:CalcRoutine/Statement[3]"``
+          -> ``"CalcRoutine/Statement[3]"`` (Structured Text)
         - ``"Controller:PLC01/Program:MainProgram/Routine:CalcRoutine"``
           -> ``"CalcRoutine"``
 
@@ -238,13 +241,17 @@ def _extract_short_location(raw: Optional[str]) -> str:
     if not raw:
         return ""
 
-    match = _RUNG_PATTERN.search(raw)
-    if match:
-        routine_segment = match.group(1)
-        # Strip "Routine:" / "Rung:" / etc. label prefixes if present.
-        if ":" in routine_segment:
-            routine_segment = routine_segment.split(":", 1)[1]
-        return f"{routine_segment}/Rung[{match.group(2)}]"
+    for pattern, suffix in (
+        (_RUNG_PATTERN, "Rung"),
+        (_STATEMENT_PATTERN, "Statement"),
+    ):
+        match = pattern.search(raw)
+        if match:
+            routine_segment = match.group(1)
+            # Strip "Routine:" / "Rung:" / etc. label prefixes if present.
+            if ":" in routine_segment:
+                routine_segment = routine_segment.split(":", 1)[1]
+            return f"{routine_segment}/{suffix}[{match.group(2)}]"
 
     match = _ROUTINE_LABELLED.search(raw)
     if match:

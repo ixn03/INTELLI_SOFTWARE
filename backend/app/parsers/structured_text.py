@@ -2,10 +2,14 @@ import re
 from typing import Iterable
 
 from app.models.control_model import ControlInstruction
+from app.parsers.st_comments import strip_st_comments_for_parsing
 
 
-ASSIGNMENT_PATTERN = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_\[\].:]*)\s*:=\s*(.+?)\s*;?\s*$")
-FUNCTION_CALL_PATTERN = re.compile(r"\b([A-Z][A-Z0-9_]*)\s*\((.*?)\)", re.DOTALL)
+ASSIGNMENT_PATTERN = re.compile(
+    r"^\s*([A-Za-z_][A-Za-z0-9_\[\].:]*)\s*:=\s*(.+?)\s*;?\s*$",
+    re.DOTALL,
+)
+FUNCTION_CALL_PATTERN = re.compile(r"\b([A-Za-z][A-Za-z0-9_]*)\s*\((.*?)\)", re.DOTALL)
 COMPARISON_PATTERN = re.compile(r"(<>|>=|<=|=|>|<)")
 TAG_PATTERN = re.compile(r"\b[A-Za-z_][A-Za-z0-9_\[\].:]*\b")
 
@@ -15,6 +19,9 @@ ST_KEYWORDS = {
     "ELSIF",
     "ELSE",
     "END_IF",
+    "CASE",
+    "OF",
+    "END_CASE",
     "AND",
     "OR",
     "NOT",
@@ -29,20 +36,73 @@ FUNCTION_OUTPUT_OPERAND_INDEX = {
     "COP": 1,
     "CPT": 0,
     "TON": 0,
+    "TONR": 0,
     "TOF": 0,
     "RTO": 0,
     "CTU": 0,
     "CTD": 0,
+    # JSR name only in typical ST call form; parameters are not modeled.
+    "JSR": 0,
+    # ABS is an expression helper — no structured output tag index.
 }
+
+
+def _split_args_respecting_parens(arg_text: str) -> list[str]:
+    """Split function argument text on commas outside ``()`` and ``[]``."""
+
+    parts: list[str] = []
+    current: list[str] = []
+    depth = 0
+    for char in arg_text:
+        if char == "," and depth == 0:
+            piece = "".join(current).strip()
+            if piece:
+                parts.append(piece)
+            current = []
+            continue
+        if char in "([{":
+            depth += 1
+        elif char in ")]}" and depth > 0:
+            depth -= 1
+        current.append(char)
+    tail = "".join(current).strip()
+    if tail:
+        parts.append(tail)
+    return parts
+
+
+def _closing_paren_index(text: str, open_paren: int) -> int:
+    depth = 0
+    j = open_paren
+    n = len(text)
+    while j < n:
+        ch = text[j]
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return j
+        j += 1
+    return -1
 
 
 def parse_structured_text(
     routine_text: str,
     routine_name: str | None = None,
 ) -> list[ControlInstruction]:
+    """Parse ST into flat ``ControlInstruction`` rows (legacy / heuristic).
+
+    Control-flow topology for reasoning is taken from
+    :func:`app.parsers.structured_text_blocks.parse_structured_text_blocks`;
+    this function exists for tag discovery and coarse call inventory.
+    Comments are stripped using the same rules as the block parser.
+    """
+
+    scrubbed = strip_st_comments_for_parsing(routine_text)
     instructions: list[ControlInstruction] = []
 
-    for index, statement in enumerate(_split_statements(routine_text)):
+    for index, statement in enumerate(_split_statements(scrubbed)):
         normalized = statement.strip()
         if not normalized:
             continue
@@ -165,36 +225,42 @@ def _parse_function_calls(
 ) -> list[ControlInstruction]:
 
     instructions: list[ControlInstruction] = []
+    i = 0
+    n = len(statement)
+    head = re.compile(r"([A-Za-z][A-Za-z0-9_]*)\s*\(")
 
-    for match in FUNCTION_CALL_PATTERN.finditer(statement):
+    while i < n:
+        m = head.match(statement, i)
+        if not m:
+            i += 1
+            continue
 
-        function_name = match.group(1).strip()
+        name = m.group(1)
+        open_paren = m.end(0) - 1
+        close_p = _closing_paren_index(statement, open_paren)
+        if close_p == -1:
+            i += 1
+            continue
 
-        raw_args = match.group(2).strip()
-
-        operands = [
-            operand.strip()
-            for operand in raw_args.split(",")
-            if operand.strip()
-        ]
+        raw_args = statement[open_paren + 1 : close_p].strip()
+        operands = _split_args_respecting_parens(raw_args)
 
         output = None
-
-        output_index = FUNCTION_OUTPUT_OPERAND_INDEX.get(function_name)
-
-        if (
-            output_index is not None
-            and len(operands) > output_index
-        ):
-            output = operands[output_index]
+        output_index = FUNCTION_OUTPUT_OPERAND_INDEX.get(name)
+        if output_index is not None and len(operands) > output_index:
+            cand = operands[output_index]
+            if name == "JSR":
+                output = cand.strip()
+            elif _looks_like_tag_reference(cand):
+                output = cand
 
         instructions.append(
             ControlInstruction(
-                id=f"st_{index}_{function_name}",
-                instruction_type=function_name,
+                id=f"st_{index}_{name}_{i}",
+                instruction_type=name,
                 operands=operands,
                 output=output,
-                raw_text=match.group(0),
+                raw_text=statement[i : close_p + 1],
                 language="structured_text",
                 metadata={
                     "vendor": "rockwell",
@@ -204,29 +270,85 @@ def _parse_function_calls(
                 },
             )
         )
+        i = close_p + 1
 
     return instructions
 
 
 def _split_statements(routine_text: str) -> list[str]:
+    """Split ST into coarse statements for legacy instruction extraction.
+
+    Multi-line ``IF`` / ``ELSIF`` / ``ELSE`` / ``END_IF`` groups are split
+    so control-flow keywords remain visible to
+    :func:`_parse_control_flow`. Full boolean topology is **not**
+    reconstructed here — use :func:`parse_structured_text_blocks` for
+    that. This splitter only needs to be good enough for tag / call
+    heuristics on ``ControlInstruction`` lists.
+    """
 
     statements: list[str] = []
-
-    current = []
+    current: list[str] = []
 
     for line in routine_text.splitlines():
 
         stripped = line.strip()
-
         if not stripped:
+            continue
+
+        upper = stripped.upper()
+
+        if upper.startswith("IF ") and re.search(r"\bTHEN\s*$", stripped, re.IGNORECASE):
+            if current:
+                statements.append(" ".join(current))
+                current = []
+            statements.append(stripped)
+            continue
+
+        if upper.startswith("ELSIF ") and re.search(r"\bTHEN\s*$", stripped, re.IGNORECASE):
+            if current:
+                statements.append(" ".join(current))
+                current = []
+            statements.append(stripped)
+            continue
+
+        if upper.startswith("CASE ") and re.search(r"\bOF\s*$", stripped, re.IGNORECASE):
+            if current:
+                statements.append(" ".join(current))
+                current = []
+            statements.append(stripped)
+            continue
+
+        if upper.startswith("END_CASE"):
+            if current:
+                statements.append(" ".join(current))
+                current = []
+            statements.append(stripped)
+            continue
+
+        if re.match(r"^\d+\s*:", stripped):
+            if current:
+                statements.append(" ".join(current))
+                current = []
+            statements.append(stripped)
+            continue
+
+        if upper == "ELSE":
+            if current:
+                statements.append(" ".join(current))
+                current = []
+            statements.append(stripped)
+            continue
+
+        if upper.startswith("END_IF"):
+            if current:
+                statements.append(" ".join(current))
+                current = []
+            statements.append(stripped)
             continue
 
         current.append(stripped)
 
-        if stripped.endswith(";") or stripped.upper() in {
-            "ELSE",
-            "END_IF",
-        }:
+        if stripped.endswith(";"):
             statements.append(" ".join(current))
             current = []
 
