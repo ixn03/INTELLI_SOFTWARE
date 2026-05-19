@@ -302,6 +302,10 @@ class STBlockParserTests(unittest.TestCase):
         too_complex_seen = any(
             isinstance(b, STComplexBlock)
             or (isinstance(b, STAssignment) and b.too_complex)
+            or (
+                getattr(b, "too_complex_body", False)
+                and type(b).__name__ == "STLoopBlock"
+            )
             for b in blocks
         )
         self.assertTrue(

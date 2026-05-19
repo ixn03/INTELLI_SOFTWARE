@@ -46,6 +46,7 @@ from app.parsers.structured_text import (  # noqa: E402
 from app.parsers.structured_text_blocks import (  # noqa: E402
     STAssignment,
     STIfBlock,
+    STLoopBlock,
     parse_structured_text_blocks,
 )
 from app.services.normalization_service import (  # noqa: E402
@@ -653,10 +654,27 @@ class STNormalizationTooComplexExtendedTests(unittest.TestCase):
             "WHILE A < 10 DO A := A + 1; END_WHILE;",
             ["A"],
         )
-        # The point is just that the normalizer survives -- no
-        # specific edge contract is asserted here.
         output = normalize_l5x_project(project)
         self.assertIsInstance(output["relationships"], list)
+
+    def test_while_loop_simple_assignment_body(self) -> None:
+        blocks = parse_structured_text_blocks(
+            "WHILE Run DO Out := InA; END_WHILE;"
+        )
+        self.assertEqual(len(blocks), 1)
+        self.assertIsInstance(blocks[0], STLoopBlock)
+        loop = blocks[0]
+        self.assertEqual(loop.loop_kind, "WHILE")
+        self.assertEqual(len(loop.body_assignments), 1)
+        self.assertFalse(loop.too_complex_body)
+
+
+class STExpressionXorTests(unittest.TestCase):
+    def test_binary_xor_expands_to_dnf(self) -> None:
+        expr = parse_st_expression("A XOR B")
+        self.assertFalse(expr.too_complex)
+        self.assertEqual(expr.gating_logic_type, "xor")
+        self.assertEqual(len(expr.branches), 2)
 
 
 if __name__ == "__main__":

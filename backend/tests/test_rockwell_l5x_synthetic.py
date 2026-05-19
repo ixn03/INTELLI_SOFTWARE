@@ -54,7 +54,7 @@ _SYNTH_L5X = b"""<?xml version="1.0" encoding="UTF-8"?>
               <Line Number="9"><![CDATA[END_CASE;]]></Line>
             </STContent>
           </Routine>
-          <Routine Name="Unsupported" Type="SFC"/>
+          <Routine Name="EmptySfc" Type="SFC"/>
         </Routines>
       </Program>
     </Programs>
@@ -83,7 +83,7 @@ class TestRockwellL5XSynthetic(unittest.TestCase):
         prog = ctrl.programs[0]
         self.assertEqual(prog.name, "PRG1")
         names = {r.name: r for r in prog.routines}
-        self.assertEqual(set(names), {"RLadder", "AliasLadder", "StMain", "Unsupported"})
+        self.assertEqual(set(names), {"RLadder", "AliasLadder", "StMain", "EmptySfc"})
 
     def test_ladder_parallel_branch(self) -> None:
         prog = self._project.controllers[0].programs[0]
@@ -116,11 +116,12 @@ class TestRockwellL5XSynthetic(unittest.TestCase):
         self.assertTrue(any(type(b) is STIfBlock for b in blocks))
         self.assertTrue(any(type(b) is STCaseBlock for b in blocks))
 
-    def test_unknown_routine_type(self) -> None:
+    def test_empty_sfc_routine_unsupported_when_no_content(self) -> None:
         prog = self._project.controllers[0].programs[0]
-        unk = next(r for r in prog.routines if r.name == "Unsupported")
-        self.assertEqual(unk.language, "unknown")
-        self.assertEqual(unk.metadata.get("rockwell_type"), "SFC")
+        sfc = next(r for r in prog.routines if r.name == "EmptySfc")
+        self.assertEqual(sfc.language, "sfc")
+        self.assertEqual(sfc.parse_status, "unsupported")
+        self.assertEqual(sfc.metadata.get("rockwell_type"), "SFC")
 
     def test_discovered_operands(self) -> None:
         prog = self._project.controllers[0].programs[0]

@@ -8,7 +8,9 @@ from app.models.control_model import (
     ControlRoutine,
     ControlTag,
 )
+from app.parsers.fbd import extract_fbd_tags, parse_l5x_fbd_routine
 from app.parsers.ladder import extract_operand_tags, parse_ladder_rung_text
+from app.parsers.sfc import extract_sfc_tags, parse_l5x_sfc_routine
 from app.parsers.st_comments import strip_st_comments_for_parsing
 from app.parsers.structured_text import (
     extract_structured_text_tags,
@@ -80,6 +82,10 @@ def _normalize_routine_language(type_raw: str) -> tuple[str, str]:
         return "ladder", low
     if low in {"st", "structuredtext", "structured_text"}:
         return "structured_text", low
+    if low in {"fbd", "function_block", "functionblockdiagram"}:
+        return "function_block", low
+    if low in {"sfc", "sequential_function_chart"}:
+        return "sfc", low
     return "unknown", low
 
 
@@ -244,6 +250,44 @@ class RockwellL5XConnector(PlatformConnector):
                 },
             )
 
+        if language == "function_block":
+            instructions = parse_l5x_fbd_routine(routine_element)
+            raw_logic = etree.tostring(
+                routine_element,
+                encoding="unicode",
+                method="xml",
+            ).strip()
+            return ControlRoutine(
+                name=routine_name,
+                language="function_block",
+                instructions=instructions,
+                raw_logic=raw_logic or None,
+                parse_status="parsed" if instructions else "unsupported",
+                metadata={
+                    "rockwell_type": routine_element.get("Type"),
+                    "rockwell_type_normalized": norm_type,
+                },
+            )
+
+        if language == "sfc":
+            instructions = parse_l5x_sfc_routine(routine_element)
+            raw_logic = etree.tostring(
+                routine_element,
+                encoding="unicode",
+                method="xml",
+            ).strip()
+            return ControlRoutine(
+                name=routine_name,
+                language="sfc",
+                instructions=instructions,
+                raw_logic=raw_logic or None,
+                parse_status="parsed" if instructions else "unsupported",
+                metadata={
+                    "rockwell_type": routine_element.get("Type"),
+                    "rockwell_type_normalized": norm_type,
+                },
+            )
+
         return ControlRoutine(
             name=routine_name,
             language="unknown",
@@ -280,15 +324,16 @@ class RockwellL5XConnector(PlatformConnector):
                 for routine in program.routines:
 
                     if routine.language == "structured_text":
-
                         discovered.update(
                             extract_structured_text_tags(
                                 routine.instructions
                             )
                         )
-
+                    elif routine.language == "function_block":
+                        discovered.update(extract_fbd_tags(routine.instructions))
+                    elif routine.language == "sfc":
+                        discovered.update(extract_sfc_tags(routine.instructions))
                     else:
-
                         discovered.update(
                             extract_operand_tags(
                                 routine.instructions

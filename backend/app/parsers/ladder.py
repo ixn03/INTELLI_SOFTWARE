@@ -9,11 +9,22 @@ from app.models.control_model import ControlInstruction
 ROCKWELL_INSTRUCTION_PATTERN = re.compile(r"\b([A-Z][A-Z0-9_]+)\s*\(([^)]*)\)")
 
 BOOLEAN_OUTPUT_INSTRUCTIONS = {"OTE", "OTL", "OTU"}
-STATEFUL_OUTPUT_INSTRUCTIONS = {"TON", "TONR", "TOF", "RTO", "CTU", "CTD"}
+STATEFUL_OUTPUT_INSTRUCTIONS = {
+    "TON",
+    "TONR",
+    "TOF",
+    "RTO",
+    "CTU",
+    "CTD",
+    "CTUD",
+}
+RESET_INSTRUCTIONS = {"RES"}
 CONDITION_INSTRUCTIONS = {
     "XIC",
     "XIO",
     "ONS",
+    "OSR",
+    "OSF",
     "EQU",
     "NEQ",
     "GRT",
@@ -21,8 +32,17 @@ CONDITION_INSTRUCTIONS = {
     "LES",
     "LEQ",
     "LIM",
+    "CMP",
 }
-WRITE_INSTRUCTIONS = BOOLEAN_OUTPUT_INSTRUCTIONS | STATEFUL_OUTPUT_INSTRUCTIONS
+COMPARISON_INSTRUCTIONS = {"EQU", "NEQ", "GRT", "GEQ", "LES", "LEQ", "LIM", "CMP"}
+MATH_INSTRUCTIONS = {"ADD", "SUB", "MUL", "DIV", "MOD", "CPT", "AND", "OR", "XOR"}
+MOVE_INSTRUCTIONS = {"MOV", "COP", "BTR", "BTW", "BTS", "BTT"}
+CALL_INSTRUCTIONS = {"JSR", "SBR", "RET"}
+WRITE_INSTRUCTIONS = (
+    BOOLEAN_OUTPUT_INSTRUCTIONS
+    | STATEFUL_OUTPUT_INSTRUCTIONS
+    | RESET_INSTRUCTIONS
+)
 
 _BRANCH_KEYWORDS = frozenset({"BST", "NXB", "BND"})
 
@@ -168,8 +188,9 @@ def parse_ladder_rung_text(
     ) -> None:
         meta: dict = {
             "vendor": "rockwell",
-            "parser": "rockwell_rung_text_tokenizer_v2",
+            "parser": "rockwell_rung_text_tokenizer_v3",
             "instruction_role": _instruction_role(instruction_type),
+            "instruction_family": _instruction_family(instruction_type),
             "output_role": _output_role(instruction_type),
             "source_span": {
                 "start": 0,
@@ -192,8 +213,11 @@ def parse_ladder_rung_text(
             )
         )
 
+    branch_level = 0
+    branch_index = 0
+
     def scan_fragment(fragment: str, *, parallel_arm: bool) -> None:
-        nonlocal counter
+        nonlocal counter, branch_level, branch_index
         i = 0
         n = len(fragment)
         while i < n:
@@ -204,6 +228,13 @@ def parse_ladder_rung_text(
 
             kw = _branch_keyword_at(fragment, i)
             if kw:
+                if kw == "BST":
+                    branch_level += 1
+                    branch_index = 0
+                elif kw == "NXB":
+                    branch_index += 1
+                elif kw == "BND" and branch_level > 0:
+                    branch_level -= 1
                 append_instruction(
                     kw,
                     [],
@@ -211,6 +242,8 @@ def parse_ladder_rung_text(
                     extra_meta={
                         "branch_marker": True,
                         "parallel_branch_notation": "bst_nxb_bnd",
+                        "branch_level": branch_level,
+                        "branch_index": branch_index,
                     },
                 )
                 i += len(kw)
@@ -269,10 +302,14 @@ def parse_ladder_rung_text(
             extra: dict = {}
             if parallel_arm:
                 extra["parallel_arm"] = True
+            if branch_level > 0:
+                extra["branch_level"] = branch_level
+                extra["branch_index"] = branch_index
             meta = {
                 "vendor": "rockwell",
-                "parser": "rockwell_rung_text_tokenizer_v2",
+                "parser": "rockwell_rung_text_tokenizer_v3",
                 "instruction_role": _instruction_role(name),
+                "instruction_family": _instruction_family(name),
                 "output_role": _output_role(name),
                 "source_span": {"start": span_start, "end": span_end},
                 "rung_text": rung_text,
@@ -357,10 +394,46 @@ def _get_output_operand(instruction_type: str, operands: list[str]) -> str | Non
 def _instruction_role(instruction_type: str) -> str:
     if instruction_type in BOOLEAN_OUTPUT_INSTRUCTIONS:
         return "boolean_output"
+    if instruction_type in RESET_INSTRUCTIONS:
+        return "reset"
     if instruction_type in STATEFUL_OUTPUT_INSTRUCTIONS:
         return "stateful_output"
     if instruction_type in CONDITION_INSTRUCTIONS:
         return "condition"
+    if instruction_type in MATH_INSTRUCTIONS:
+        return "math"
+    if instruction_type in MOVE_INSTRUCTIONS:
+        return "move"
+    if instruction_type in CALL_INSTRUCTIONS:
+        return "call"
+    return "unknown"
+
+
+def _instruction_family(instruction_type: str) -> str:
+    """Coarse family label aligned with normalization registry groupings."""
+
+    if instruction_type in BOOLEAN_OUTPUT_INSTRUCTIONS:
+        return "boolean_output"
+    if instruction_type in RESET_INSTRUCTIONS:
+        return "reset"
+    if instruction_type in STATEFUL_OUTPUT_INSTRUCTIONS:
+        return "stateful_output"
+    if instruction_type in COMPARISON_INSTRUCTIONS:
+        return "comparison"
+    if instruction_type in MATH_INSTRUCTIONS:
+        return "math"
+    if instruction_type in MOVE_INSTRUCTIONS:
+        return "move_copy"
+    if instruction_type in CALL_INSTRUCTIONS:
+        return "routine_call"
+    if instruction_type in {"XIC", "XIO"}:
+        return "condition"
+    if instruction_type in {"ONS", "OSR", "OSF"}:
+        return "one_shot"
+    if instruction_type in _BRANCH_KEYWORDS:
+        return "branch_marker"
+    if instruction_type == "PARALLEL_BRANCH":
+        return "parallel_branch"
     return "unknown"
 
 

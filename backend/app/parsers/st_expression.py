@@ -229,6 +229,27 @@ def parse_st_expression(text: Optional[str]) -> STExpressionParse:
 
     stripped = _strip_balanced_outer_parens(raw)
 
+    xor_pieces = _split_top_level(stripped, "XOR")
+    if xor_pieces is not None and len(xor_pieces) == 2:
+        left_branches = _xor_operand_to_branches(xor_pieces[0])
+        right_branches = _xor_operand_to_branches(xor_pieces[1])
+        if (
+            left_branches is not None
+            and right_branches is not None
+            and len(left_branches) == 1
+            and len(right_branches) == 1
+        ):
+            branches = _combine_xor_branches(left_branches, right_branches)
+            if branches is not None:
+                result = _finalize_expression(branches, raw)
+                result = STExpressionParse(
+                    branches=result.branches,
+                    too_complex=result.too_complex,
+                    raw_text=result.raw_text,
+                    gating_logic_type="xor",
+                )
+                return result
+
     # Split on top-level OR; each piece becomes one branch.
     or_pieces = _split_top_level(stripped, "OR")
     if or_pieces is None:
@@ -247,6 +268,12 @@ def parse_st_expression(text: Optional[str]) -> STExpressionParse:
             )
         branches.append(conj_or_none)
 
+    return _finalize_expression(branches, raw)
+
+
+def _finalize_expression(
+    branches: list[STConjunction], raw: str
+) -> STExpressionParse:
     has_compare = any(
         any(isinstance(t, STComparisonTerm) for t in c.terms)
         for c in branches
@@ -266,6 +293,82 @@ def parse_st_expression(text: Optional[str]) -> STExpressionParse:
         raw_text=raw,
         gating_logic_type=gating,
     )
+
+
+def _xor_operand_to_branches(
+    text: str,
+) -> Optional[list[STConjunction]]:
+    """Parse one XOR operand into DNF branches (single conjunction allowed)."""
+
+    stripped = _strip_balanced_outer_parens(text.strip())
+    conj = _parse_conjunction(stripped)
+    if conj is not None:
+        return [conj]
+    or_pieces = _split_top_level(stripped, "OR")
+    if or_pieces is None:
+        return None
+    out: list[STConjunction] = []
+    for piece in or_pieces:
+        c = _parse_conjunction(piece)
+        if c is None:
+            return None
+        out.append(c)
+    return out
+
+
+def _negate_conjunction(conj: STConjunction) -> Optional[STConjunction]:
+    terms: list[STTerm] = []
+    for term in conj.terms:
+        if isinstance(term, STCondition):
+            terms.append(
+                STCondition(
+                    tag=term.tag,
+                    required_value=not term.required_value,
+                    natural_language=(
+                        f"{term.tag} is "
+                        f"{'TRUE' if not term.required_value else 'FALSE'}"
+                    ),
+                )
+            )
+        elif isinstance(term, STComparisonTerm):
+            inverted = _invert_comparison_operator(term.operator)
+            if inverted is None:
+                return None
+            terms.append(
+                STComparisonTerm(
+                    lhs=term.lhs,
+                    operator=inverted,
+                    rhs=term.rhs,
+                    lhs_is_tag=term.lhs_is_tag,
+                    rhs_is_tag=term.rhs_is_tag,
+                    natural_language=f"{term.lhs} {inverted} {term.rhs}",
+                )
+            )
+        else:
+            return None
+    return STConjunction(terms=terms)
+
+
+def _combine_xor_branches(
+    left: list[STConjunction],
+    right: list[STConjunction],
+) -> Optional[list[STConjunction]]:
+    """Expand ``left XOR right`` into ``(L AND NOT R) OR (NOT L AND R)``."""
+
+    combined: list[STConjunction] = []
+    for l_conj in left:
+        for r_conj in right:
+            neg_r = _negate_conjunction(r_conj)
+            if neg_r is None:
+                return None
+            combined.append(STConjunction(terms=[*l_conj.terms, *neg_r.terms]))
+    for r_conj in right:
+        for l_conj in left:
+            neg_l = _negate_conjunction(l_conj)
+            if neg_l is None:
+                return None
+            combined.append(STConjunction(terms=[*r_conj.terms, *neg_l.terms]))
+    return combined
 
 
 # ---------------------------------------------------------------------------

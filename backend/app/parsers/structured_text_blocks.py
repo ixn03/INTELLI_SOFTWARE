@@ -290,6 +290,17 @@ class STIfElsifChain:
 
 
 @dataclass(frozen=True)
+class STLoopBlock:
+    """A ``FOR`` / ``WHILE`` / ``REPEAT`` loop with extracted body assignments."""
+
+    loop_kind: str
+    body_assignments: list[STAssignment] = field(default_factory=list)
+    too_complex_body: bool = False
+    raw_text: str = ""
+    statement_index: int = 0
+
+
+@dataclass(frozen=True)
 class STComplexBlock:
     """Anything the parser couldn't recognize.
 
@@ -304,7 +315,14 @@ class STComplexBlock:
     callee_name: Optional[str] = None
 
 
-STBlock = Union[STAssignment, STIfBlock, STIfElsifChain, STCaseBlock, STComplexBlock]
+STBlock = Union[
+    STAssignment,
+    STIfBlock,
+    STIfElsifChain,
+    STCaseBlock,
+    STLoopBlock,
+    STComplexBlock,
+]
 
 
 def _matching_close_paren_st(s: str, open_paren: int) -> int:
@@ -354,9 +372,36 @@ def _find_balanced_loop_end(text: str, pos: int, open_kw: str, close_kw: str) ->
     return -1
 
 
+def _extract_loop_body(raw_loop: str, open_kw: str, close_kw: str) -> str:
+    """Return the inner body text between loop header and ``close_kw``."""
+
+    open_m = re.match(rf"\s*\b{open_kw}\b", raw_loop, re.IGNORECASE)
+    if not open_m:
+        return ""
+
+    body_start = open_m.end()
+    if open_kw in {"FOR", "WHILE"}:
+        do_m = re.search(r"\bDO\b", raw_loop, re.IGNORECASE)
+        if do_m:
+            body_start = do_m.end()
+        else:
+            return ""
+    elif open_kw == "REPEAT":
+        body_start = open_m.end()
+
+    close_m = re.search(rf"\b{close_kw}\b", raw_loop, re.IGNORECASE)
+    if not close_m:
+        return raw_loop[body_start:].strip()
+    if open_kw == "REPEAT":
+        until_m = re.search(r"\bUNTIL\b", raw_loop, re.IGNORECASE)
+        if until_m and until_m.start() < close_m.start():
+            return raw_loop[body_start : until_m.start()].strip()
+    return raw_loop[body_start : close_m.start()].strip()
+
+
 def _try_consume_loop_block(
     text: str, pos: int, stmt_idx: int
-) -> tuple[Optional[STComplexBlock], int]:
+) -> tuple[Optional[STLoopBlock], int]:
     for open_kw, close_kw in (
         ("FOR", "END_FOR"),
         ("WHILE", "END_WHILE"),
@@ -366,11 +411,24 @@ def _try_consume_loop_block(
         if end_idx == -1:
             continue
         raw = text[pos:end_idx].strip()
+        body = _extract_loop_body(raw, open_kw, close_kw)
+        body_fix = body.strip()
+        if body_fix and not body_fix.endswith(";"):
+            body_fix = body_fix + ";"
+        assignments = _parse_body_assignments(body_fix)
+        too_complex_body = bool(body.strip()) and not assignments
+        if body.strip() and assignments:
+            for assign in assignments:
+                if assign.too_complex:
+                    too_complex_body = True
+                    break
         return (
-            STComplexBlock(
+            STLoopBlock(
+                loop_kind=open_kw,
+                body_assignments=assignments,
+                too_complex_body=too_complex_body,
                 raw_text=raw,
                 statement_index=stmt_idx,
-                fragment_kind=f"loop_{open_kw.lower()}",
             ),
             end_idx,
         )
@@ -863,6 +921,7 @@ __all__ = [
     "STBlock",
     "STAssignment",
     "STIfElsifChain",
+    "STLoopBlock",
     "STCaseBlock",
     "STCaseBranch",
     "STComplexBlock",

@@ -170,6 +170,7 @@ from app.parsers.structured_text_blocks import (
     STExpressionParse,
     STIfBlock,
     STIfElsifChain,
+    STLoopBlock,
     STTerm,
     parse_structured_text_blocks,
 )
@@ -847,7 +848,12 @@ def _normalize_routine(
     if routine.language in ("function_block", "sfc"):
         routine_co = control_objects[-1]
         ps_r = dict(routine_co.platform_specific)
-        ps_r["parse_status"] = "unsupported_language"
+        if routine.parse_status == "parsed" and routine.instructions:
+            ps_r["parse_status"] = "parsed"
+            routine_co.confidence = ConfidenceLevel.MEDIUM
+        else:
+            ps_r["parse_status"] = "unsupported_language"
+            routine_co.confidence = ConfidenceLevel.LOW
         ps_r["raw_logic_present"] = bool(routine.raw_logic)
         ps_r["language"] = routine.language
         ps_r["schema_hints"] = {
@@ -868,7 +874,6 @@ def _normalize_routine(
             ],
         }
         routine_co.platform_specific = ps_r
-        routine_co.confidence = ConfidenceLevel.LOW
 
     # Other non-ladder languages (FBD / SFC / unknown): still emit
     # instruction ControlObjects so the graph captures structure, but
@@ -1297,6 +1302,25 @@ def _normalize_st_block(
         )
         return
 
+    if isinstance(block, STLoopBlock):
+        for assign in block.body_assignments:
+            _emit_st_assignment_edges(
+                assignment=assign,
+                extra_conditions=[],
+                condition_source="rhs",
+                statement_id=statement_id,
+                statement_loc=statement_loc,
+                statement_type="loop",
+                block_raw_text=block.raw_text,
+                controller_name=controller_name,
+                program_name=program_name,
+                exec_ctx_id=exec_ctx_id,
+                tag_index=tag_index,
+                control_objects=control_objects,
+                relationships=relationships,
+            )
+        return
+
     if isinstance(block, STCaseBlock):
         _emit_st_case_edges(
             block=block,
@@ -1420,6 +1444,14 @@ def _st_block_summary(block: STBlock) -> tuple[str, str, str]:
                 if ex.too_complex:
                     bad = True
         return "if_elsif_chain", ("too_complex" if bad else "ok"), block.raw_text
+    if isinstance(block, STLoopBlock):
+        status = "too_complex" if block.too_complex_body else "ok"
+        if not block.too_complex_body:
+            for assign in block.body_assignments:
+                if assign.too_complex:
+                    status = "too_complex"
+                    break
+        return f"loop_{block.loop_kind.lower()}", status, block.raw_text
     if isinstance(block, STComplexBlock):
         if block.fragment_kind and block.fragment_kind.startswith("loop_"):
             return "loop", "too_complex", block.raw_text
