@@ -1,0 +1,14 @@
+{
+  "platform": "rockwell",
+  "language": "structured_text",
+  "expected_capabilities": [
+    "structured_text",
+    "multi_routine_program",
+    "st_if_end_if_blocks",
+    "dotted_tag_naming",
+    "tag_extraction"
+  ],
+  "known_unsupported_features": [],
+  "parser_notes": "INTELLI-authored demo controller (TargetType=Controller, Owner=INTELLI) used to exercise multi-routine Structured-Text ingestion: 1 controller / 1 program (PRG_Process) / 5 ST routines (R01_FillLogic..R05_ResetLogic), 18 controller tags using dotted naming (System.AutoMode, Faults.AnyFault, Outputs.FillValve, etc.), 12 instructions at 100% known coverage, 10 ST blocks (0% too complex), 5 execution contexts. EXTENSION NOTE: the source file was distributed as 'INTELLI_Advanced_Process.L5X.txt'. The grader/connector select by extension+content and DO recognize the .txt form, but it was copied into the fixtures with a corrected .L5X extension so fixture tooling and metadata pairing behave normally. Content is unmodified aside from the rename.",
+  "source": "user-provided (Downloads/INTELLI_Advanced_Process.L5X.txt), copied with corrected .L5X extension."
+}

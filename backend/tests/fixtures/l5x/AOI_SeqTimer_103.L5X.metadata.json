@@ -1,0 +1,18 @@
+{
+  "platform": "rockwell",
+  "language": "ladder",
+  "expected_capabilities": [
+    "aoi_definition_present",
+    "aoi_definition_rll_body",
+    "aoi_parameters_present",
+    "aoi_local_tags_present",
+    "ladder_in_aoi_body"
+  ],
+  "known_unsupported_features": [
+    "aoi_definition_body_resolution",
+    "aoi_parameter_interface_extraction",
+    "aoi_local_tag_extraction"
+  ],
+  "parser_notes": "REAL third-party Add-On Instruction definition export (TargetType=AddOnInstructionDefinition, SoftwareRevision 24). The AOI 'AOI_SeqTimer' is a sequence/elapsed-time tracker with an 11-rung RLL (ladder) body using XIC/XIO/OTE/OTL/OTU/ONS/MOV/TON/ADD/GEQ/DIV/CPT, a full Parameters interface (Trigger, Milliseconds/Seconds/Minutes/Hours + Last* outputs, Part-To-Part timing), and LocalTags including two TIMER structures. Because the current connector only walks Programs/Program/Routines, this file currently parses to 1 controller / 0 programs / 0 routines / 0 instructions (no crash) - i.e. the entire AOI ladder body is invisible today. It is a clean regression target for AOI-definition body + parameter-interface resolution (Phase 2). Complements LiOH_DIW_TankSystem_Full.L5X (AOI defs with ST bodies) by exercising an RLL-bodied AOI definition. DE-IDENTIFIED (Phase 0 corpus hygiene) via tools/deidentify_l5x.py: removed real third-party provenance - Owner 'Microsoft, Microsoft'->'INTELLI', Vendor 'SHAWN HATTEY'->'INTELLI', EditedBy 'PARA\\shawn'->'INTELLI', CreatedBy 'Not Available'->'INTELLI', ExportDate neutralized, and the proprietary controller context name 'P_24315_VentraP552LDMToHousing' (real automotive customer program) renamed to 'INTELLI_AOI_Context'. All logic (rungs, instructions, parameters, local tags, AOI body) is byte-identical; parser grade (A) and instruction coverage verified unchanged before/after scrubbing.",
+  "source": "user-provided (Downloads/AOI_SeqTimer_103.L5X); logic preserved, identifier metadata de-identified in place (Phase 0)."
+}

@@ -709,6 +709,44 @@ class LadderBranchDetectionTests(unittest.TestCase):
             )
 
 
+class LadderLogicExpressionNormalizationTests(unittest.TestCase):
+    """Structured LogicExpression is attached to branched rung edges."""
+
+    def test_branched_rung_carries_resolved_logic_expression(self) -> None:
+        rung_text = "BST XIC(A) NXB XIC(B) BND OTE(C)"
+        instrs = [
+            _ladder_instr("r0_i0", "XIC", ["A"], rung=0,
+                          rung_text=rung_text),
+            _ladder_instr("r0_i1", "XIC", ["B"], rung=0,
+                          rung_text=rung_text),
+            _ladder_instr(
+                "r0_i2", "OTE", ["C"], rung=0, output="C",
+                rung_text=rung_text,
+            ),
+        ]
+        project = _make_project(
+            rungs=[(instrs, rung_text)],
+            program_tags=["A", "B", "C"],
+        )
+        output = normalize_l5x_project(project)
+        rung_obj = next(
+            o for o in output["control_objects"]
+            if o.object_type == ControlObjectType.RUNG
+        )
+        self.assertTrue(rung_obj.attributes.get("logic_expression_resolved"))
+        writes = _rels(output, RelationshipType.WRITES)
+        self.assertEqual(len(writes), 1)
+        self.assertIsNotNone(writes[0].logic_expression)
+        self.assertEqual(
+            writes[0].logic_expression.kind.value, "or"
+        )
+        self.assertTrue(
+            (writes[0].platform_specific or {}).get(
+                "logic_expression_resolved"
+            )
+        )
+
+
 # ---------------------------------------------------------------------------
 # Regression: existing XIC/XIO/OTE/OTL/OTU/TON/RES/JSR still work
 # ---------------------------------------------------------------------------

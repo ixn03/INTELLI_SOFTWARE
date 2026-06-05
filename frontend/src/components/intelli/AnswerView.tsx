@@ -146,7 +146,7 @@ export default function AnswerView(props: AnswerViewProps) {
   }, [runtimeSnapshotText, onEvaluateRuntimeV2]);
 
   return (
-    <main className="flex h-full min-w-0 flex-1 flex-col gap-6 overflow-y-auto px-8 py-8">
+    <main className="flex h-full min-w-0 flex-1 flex-col gap-6 overflow-y-auto bg-[radial-gradient(circle_at_top_right,rgba(8,145,178,0.12),transparent_34%),linear-gradient(180deg,rgba(15,23,42,0.58),rgba(2,6,23,0.96))] px-5 py-5 lg:px-8 lg:py-7">
       <SelectedObjectCard
         selectedObject={selectedObject}
         selectedObjectId={selectedObjectId}

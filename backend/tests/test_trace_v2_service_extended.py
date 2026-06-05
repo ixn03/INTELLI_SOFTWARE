@@ -29,10 +29,14 @@ from app.models.reasoning import (  # noqa: E402
     ConfidenceLevel,
     ControlObject,
     ControlObjectType,
+    LogicExpression,
+    LogicExpressionKind,
     Relationship,
     RelationshipType,
     WriteBehaviorType,
 )
+from app.parsers.ladder import parse_ladder_rung_text  # noqa: E402
+from app.parsers.ladder_logic import build_rung_logic_expression  # noqa: E402
 from app.services.trace_v2_service import trace_object_v2  # noqa: E402
 
 
@@ -115,6 +119,7 @@ def _writes(
     write_behavior: WriteBehaviorType | None = None,
     extras: dict | None = None,
     logic_condition: str | None = None,
+    logic_expression: LogicExpression | None = None,
 ) -> Relationship:
     meta: dict = {"instruction_type": instruction_type}
     if extras:
@@ -130,6 +135,7 @@ def _writes(
             f"/Rung[{rung_number}]"
         ),
         logic_condition=logic_condition,
+        logic_expression=logic_expression,
         platform_specific=meta,
         confidence=ConfidenceLevel.HIGH,
     )
@@ -701,6 +707,97 @@ class LadderBranchWarningTests(unittest.TestCase):
             == "branch_warning"
         ]
         self.assertEqual(warnings, [])
+
+
+class LadderLogicExpressionTraceTests(unittest.TestCase):
+    def test_resolved_branch_suppresses_warning(self) -> None:
+        rung = _rung("rung::R/0", "R", 0, has_branches=True, branch_count=2)
+        motor = _tag("tag::Motor", "Motor")
+        a = _tag("tag::A", "A")
+        b = _tag("tag::B", "B")
+        insts = parse_ladder_rung_text(
+            "BST XIC(A) NXB XIC(B) BND OTE(Motor);", rung_number=0
+        )
+        expr, _, resolved = build_rung_logic_expression(insts)
+        self.assertTrue(resolved)
+        rels = [
+            _writes(
+                rung.id,
+                motor.id,
+                "R",
+                0,
+                instruction_type="OTE",
+                write_behavior=WriteBehaviorType.SETS_TRUE,
+                extras={
+                    "rung_has_branches": True,
+                    "rung_branch_count": 2,
+                    "logic_expression_resolved": True,
+                },
+                logic_expression=expr,
+            ),
+        ]
+        result = trace_object_v2(motor.id, [rung, motor, a, b], rels)
+        warnings = [
+            c for c in result.conclusions
+            if (c.platform_specific or {}).get("trace_v2_kind")
+            == "branch_warning"
+        ]
+        self.assertEqual(warnings, [])
+
+    def test_unsatisfied_parallel_branch_terms(self) -> None:
+        rung = _rung("rung::R/0", "R", 0, has_branches=True, branch_count=2)
+        motor = _tag("tag::Motor", "Motor")
+        a = _tag("tag::A", "A")
+        b = _tag("tag::B", "B")
+        a.current_state = {"value": False}
+        b.current_state = {"value": False}
+        motor.current_state = {"value": False}
+        expr = LogicExpression(
+            kind=LogicExpressionKind.OR,
+            children=[
+                LogicExpression(
+                    kind=LogicExpressionKind.CONTACT,
+                    tag="A",
+                    examined_value=True,
+                    instruction_type="XIC",
+                    branch_index=0,
+                ),
+                LogicExpression(
+                    kind=LogicExpressionKind.CONTACT,
+                    tag="B",
+                    examined_value=True,
+                    instruction_type="XIC",
+                    branch_index=1,
+                ),
+            ],
+        )
+        rels = [
+            _writes(
+                rung.id,
+                motor.id,
+                "R",
+                0,
+                instruction_type="OTE",
+                write_behavior=WriteBehaviorType.SETS_TRUE,
+                extras={
+                    "rung_has_branches": True,
+                    "rung_branch_count": 2,
+                    "logic_expression_resolved": True,
+                },
+                logic_expression=expr,
+            ),
+        ]
+        result = trace_object_v2(
+            motor.id, [rung, motor, a, b], rels
+        )
+        unsatisfied = [
+            c for c in result.conclusions
+            if (c.platform_specific or {}).get("trace_v2_kind")
+            == "logic_expression_unsatisfied"
+        ]
+        self.assertEqual(len(unsatisfied), 1)
+        self.assertIn("A is TRUE", unsatisfied[0].statement)
+        self.assertIn("B is TRUE", unsatisfied[0].statement)
 
 
 # ===========================================================================

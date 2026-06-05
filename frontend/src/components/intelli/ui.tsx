@@ -36,7 +36,7 @@ export function Card({
 }) {
   return (
     <As
-      className={`rounded-2xl border border-zinc-800/80 bg-zinc-900/50 ${className}`}
+      className={`rounded-2xl border border-zinc-800/80 bg-zinc-950/55 shadow-lg shadow-black/10 ${className}`}
     >
       {children}
     </As>
@@ -114,10 +114,10 @@ export function Button({
 }) {
   const base =
     "inline-flex items-center justify-center gap-1.5 rounded-lg px-3.5 py-2 " +
-    "text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-40";
+    "text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/60 disabled:cursor-not-allowed disabled:opacity-40";
   const tones: Record<ButtonTone, string> = {
     primary:
-      "bg-zinc-100 text-zinc-900 hover:bg-white shadow-sm shadow-black/10",
+      "bg-cyan-300 text-cyan-950 hover:bg-cyan-200 shadow-sm shadow-cyan-950/20",
     secondary:
       "border border-zinc-700 bg-zinc-800/70 text-zinc-100 hover:bg-zinc-700/70",
     ghost: "text-zinc-300 hover:bg-zinc-800/60",
@@ -164,7 +164,7 @@ export function TextInput({
       onChange={(e) => onChange(e.target.value)}
       onKeyDown={onKeyDown}
       placeholder={placeholder}
-      className={`w-full rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-zinc-600 focus:outline-none focus:ring-1 focus:ring-zinc-600 ${className}`}
+      className={`w-full rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-cyan-300/50 focus:outline-none focus:ring-1 focus:ring-cyan-300/30 ${className}`}
     />
   );
 }
@@ -194,7 +194,7 @@ export function TextArea({
       onChange={(e) => onChange(e.target.value)}
       onKeyDown={onKeyDown}
       placeholder={placeholder}
-      className={`min-h-[5.5rem] w-full resize-y rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2.5 text-sm leading-relaxed text-zinc-100 placeholder:text-zinc-500 focus:border-zinc-600 focus:outline-none focus:ring-1 focus:ring-zinc-600 ${className}`}
+      className={`min-h-[5.5rem] w-full resize-y rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2.5 text-sm leading-relaxed text-zinc-100 placeholder:text-zinc-500 focus:border-cyan-300/50 focus:outline-none focus:ring-1 focus:ring-cyan-300/30 ${className}`}
     />
   );
 }

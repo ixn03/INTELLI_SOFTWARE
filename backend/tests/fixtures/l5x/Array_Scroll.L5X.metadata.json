@@ -1,0 +1,15 @@
+{
+  "platform": "rockwell",
+  "language": "structured_text",
+  "expected_capabilities": [
+    "aoi_definition_present",
+    "aoi_definition_st_body",
+    "aoi_parameters_present"
+  ],
+  "known_unsupported_features": [
+    "aoi_definition_body_resolution",
+    "aoi_parameter_interface_extraction"
+  ],
+  "parser_notes": "REAL Add-On Instruction definition export (TargetType=AddOnInstructionDefinition). The AOI 'Array_Scroll' scans a Boolean array and outputs the index of each TRUE element sequentially (HMI scroll / multi-state indicator helper) using a Structured-Text 'Logic' routine. Included to give the AOI-definition regression set an ST-bodied example to contrast with the RLL-bodied AOI_SeqTimer_103.L5X / A_Gauss_RNG.L5X. Current connector walks only Programs/Program/Routines, so this parses to 1 controller / 0 programs / 0 routines / 0 instructions (no crash) - the AOI ST body is invisible until Phase 2 AOI resolution. DE-IDENTIFIED (Phase 0 corpus hygiene) via tools/deidentify_l5x.py: removed real third-party provenance - Owner 'IT Support, Parkway Electric'->'INTELLI', CreatedBy/EditedBy 'PG\\brian.stilson'->'INTELLI', ExportDate neutralized. All logic (ST routine, parameters, local tags) is byte-identical; parser grade (A) and instruction coverage verified unchanged before/after scrubbing.",
+  "source": "user-provided (Downloads/Array_Scroll.L5X); logic preserved, identifier metadata de-identified in place (Phase 0)."
+}

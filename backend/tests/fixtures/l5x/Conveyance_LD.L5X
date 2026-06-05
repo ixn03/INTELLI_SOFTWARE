@@ -1,0 +1,221 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<RSLogix5000Content SchemaRevision="1.0" SoftwareRevision="32.00" TargetName="Conveyance_LD" TargetType="RoutineRoutine" ContainsContext="true" ExportDate="Tue May 12 10:00:00 2026" ExportOptions="References DecoratedData ForceProtectedEncoding AllProjDocTrans">
+<Controller Use="Context" Name="Conveyance_LD">
+<DataTypes Use="Context"/>
+<Modules Use="Context"/>
+<AddOnInstructionDefinitions Use="Context"/>
+<Tags Use="Context">
+<!-- Digital Inputs -->
+<Tag Name="START_PB" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[Start Pushbutton (NO)]]></Description>
+</Tag>
+<Tag Name="STOP_PB" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[Stop Pushbutton (NC - wired so 1=OK, 0=Stop pressed)]]></Description>
+</Tag>
+<Tag Name="EMERG_STOP" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[Emergency Stop (NC - wired so 1=OK, 0=Pressed)]]></Description>
+</Tag>
+<Tag Name="RESET_PB" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[Fault Reset Pushbutton]]></Description>
+</Tag>
+<Tag Name="LS_T1_LOAD" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[Limit Switch - Material at T1 Load Position]]></Description>
+</Tag>
+<Tag Name="LS_T1_DROP" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[Limit Switch - T1 at Drop Position]]></Description>
+</Tag>
+<Tag Name="LS_CL1_IN" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[Photo-eye - Material Entering Conveyance Line]]></Description>
+</Tag>
+<Tag Name="LS_CL1_OUT" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[Photo-eye - Material Exiting Conveyance Line]]></Description>
+</Tag>
+<Tag Name="LS_T2_PICK" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[Limit Switch - T2 at Pick Position]]></Description>
+</Tag>
+<Tag Name="LS_T2_DROP" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[Limit Switch - T2 at Discharge Position]]></Description>
+</Tag>
+<Tag Name="MTR_T1_OL" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[T1 Motor Overload (NC - 1=OK, 0=Tripped)]]></Description>
+</Tag>
+<Tag Name="MTR_T2_OL" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[T2 Motor Overload (NC - 1=OK, 0=Tripped)]]></Description>
+</Tag>
+<Tag Name="MTR_CL1_OL" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[Conveyance Line Motor Overload (NC)]]></Description>
+</Tag>
+<!-- Digital Outputs -->
+<Tag Name="T1_FWD" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[Transporter T1 Forward Output]]></Description>
+</Tag>
+<Tag Name="T1_REV" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[Transporter T1 Reverse Output]]></Description>
+</Tag>
+<Tag Name="T2_FWD" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[Transporter T2 Forward Output]]></Description>
+</Tag>
+<Tag Name="T2_REV" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[Transporter T2 Reverse Output]]></Description>
+</Tag>
+<Tag Name="CL1_RUN" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[Conveyance Line Motor Run Output]]></Description>
+</Tag>
+<Tag Name="LAMP_RUN" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[System Running Indicator Lamp]]></Description>
+</Tag>
+<Tag Name="LAMP_FAULT" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[System Fault Indicator Lamp]]></Description>
+</Tag>
+<!-- Internal Bits -->
+<Tag Name="SAFETY_OK" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[Master Safety Permissive]]></Description>
+</Tag>
+<Tag Name="SYS_RUN" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[System Running Seal-in]]></Description>
+</Tag>
+<Tag Name="FAULT" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[System Fault Latch]]></Description>
+</Tag>
+<Tag Name="STEP1_DONE" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[Step 1 Complete - T1 at drop]]></Description>
+</Tag>
+<Tag Name="STEP2_DONE" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[Step 2 Complete - Material at end of CL1]]></Description>
+</Tag>
+<Tag Name="STEP3_DONE" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[Step 3 Complete - T2 at discharge]]></Description>
+</Tag>
+<Tag Name="WDT_STEP1" TagType="Base" DataType="TIMER" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[Watchdog Timer - Step 1]]></Description>
+</Tag>
+<Tag Name="WDT_STEP2" TagType="Base" DataType="TIMER" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[Watchdog Timer - Step 2]]></Description>
+</Tag>
+<Tag Name="WDT_STEP3" TagType="Base" DataType="TIMER" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[Watchdog Timer - Step 3]]></Description>
+</Tag>
+</Tags>
+<Programs Use="Context">
+<Program Use="Context" Name="MainProgram">
+<Routines Use="Context">
+<Routine Use="Target" Name="Conveyance_LD" Type="RLL">
+<Description><![CDATA[Conveyance System - Ladder Logic - Transporters T1, T2 and Conveyance Line CL1]]></Description>
+<RLLContent>
+<Rung Number="0" Type="N">
+<Comment><![CDATA[========== RUNG 0: MASTER SAFETY PERMISSIVE ==========
+All safety devices must be OK (NC contacts = 1 when healthy)
+EMERG_STOP, Motor Overloads, and STOP_PB must all be true]]></Comment>
+<Text><![CDATA[XIC(EMERG_STOP)XIC(STOP_PB)XIC(MTR_T1_OL)XIC(MTR_T2_OL)XIC(MTR_CL1_OL)OTE(SAFETY_OK);]]></Text>
+</Rung>
+<Rung Number="1" Type="N">
+<Comment><![CDATA[========== RUNG 1: SYSTEM START/STOP SEAL-IN ==========
+Start pushbutton energizes SYS_RUN, sealed in through itself
+Drops out on loss of SAFETY_OK or active FAULT]]></Comment>
+<Text><![CDATA[XIC(SAFETY_OK)XIO(FAULT)[XIC(START_PB),XIC(SYS_RUN)]OTE(SYS_RUN);]]></Text>
+</Rung>
+<Rung Number="2" Type="N">
+<Comment><![CDATA[========== RUNG 2: FAULT LATCH ==========
+Latches a fault on any motor overload trip
+Cleared by RESET_PB only when safety is restored]]></Comment>
+<Text><![CDATA[[XIO(MTR_T1_OL),XIO(MTR_T2_OL),XIO(MTR_CL1_OL)]OTL(FAULT);]]></Text>
+</Rung>
+<Rung Number="3" Type="N">
+<Comment><![CDATA[========== RUNG 3: FAULT RESET ==========
+Operator reset, only when overloads have been cleared]]></Comment>
+<Text><![CDATA[XIC(RESET_PB)XIC(MTR_T1_OL)XIC(MTR_T2_OL)XIC(MTR_CL1_OL)OTU(FAULT);]]></Text>
+</Rung>
+<Rung Number="4" Type="N">
+<Comment><![CDATA[========== RUNG 4: STEP 1 - TRANSPORTER T1 FORWARD ==========
+T1 runs forward to pick up material when SYS_RUN, material is present,
+and step 1 not yet complete]]></Comment>
+<Text><![CDATA[XIC(SYS_RUN)XIC(LS_T1_LOAD)XIO(STEP1_DONE)XIO(FAULT)OTE(T1_FWD);]]></Text>
+</Rung>
+<Rung Number="5" Type="N">
+<Comment><![CDATA[========== RUNG 5: STEP 1 WATCHDOG ==========
+If T1 doesn't reach drop position within 10s, trip a fault]]></Comment>
+<Text><![CDATA[XIC(T1_FWD)TON(WDT_STEP1,10000,0);]]></Text>
+</Rung>
+<Rung Number="6" Type="N">
+<Comment><![CDATA[========== RUNG 6: STEP 1 COMPLETE LATCH ==========
+Latch step 1 done when T1 reaches drop position]]></Comment>
+<Text><![CDATA[XIC(T1_FWD)XIC(LS_T1_DROP)OTL(STEP1_DONE);]]></Text>
+</Rung>
+<Rung Number="7" Type="N">
+<Comment><![CDATA[========== RUNG 7: STEP 2 - CONVEYANCE LINE CL1 RUN ==========
+Line conveys material from T1 drop area to T2 pick area
+Anti-collision: T1 must NOT be moving forward]]></Comment>
+<Text><![CDATA[XIC(SYS_RUN)XIC(STEP1_DONE)XIO(STEP2_DONE)XIO(T1_FWD)XIO(FAULT)OTE(CL1_RUN);]]></Text>
+</Rung>
+<Rung Number="8" Type="N">
+<Comment><![CDATA[========== RUNG 8: STEP 2 WATCHDOG ==========
+If material doesn't reach end of line within 30s, fault]]></Comment>
+<Text><![CDATA[XIC(CL1_RUN)TON(WDT_STEP2,30000,0);]]></Text>
+</Rung>
+<Rung Number="9" Type="N">
+<Comment><![CDATA[========== RUNG 9: STEP 2 COMPLETE LATCH ==========
+Material detected at end of conveyance line]]></Comment>
+<Text><![CDATA[XIC(CL1_RUN)XIC(LS_CL1_OUT)OTL(STEP2_DONE);]]></Text>
+</Rung>
+<Rung Number="10" Type="N">
+<Comment><![CDATA[========== RUNG 10: STEP 3 - TRANSPORTER T2 FORWARD ==========
+T2 picks up material and runs to discharge position
+Interlock: material must be confirmed at end of CL1 (LS_T2_PICK)]]></Comment>
+<Text><![CDATA[XIC(SYS_RUN)XIC(STEP2_DONE)XIC(LS_T2_PICK)XIO(STEP3_DONE)XIO(FAULT)OTE(T2_FWD);]]></Text>
+</Rung>
+<Rung Number="11" Type="N">
+<Comment><![CDATA[========== RUNG 11: STEP 3 WATCHDOG ==========]]></Comment>
+<Text><![CDATA[XIC(T2_FWD)TON(WDT_STEP3,10000,0);]]></Text>
+</Rung>
+<Rung Number="12" Type="N">
+<Comment><![CDATA[========== RUNG 12: STEP 3 COMPLETE LATCH ==========
+T2 has reached the discharge position]]></Comment>
+<Text><![CDATA[XIC(T2_FWD)XIC(LS_T2_DROP)OTL(STEP3_DONE);]]></Text>
+</Rung>
+<Rung Number="13" Type="N">
+<Comment><![CDATA[========== RUNG 13: CYCLE RESET - T1 REVERSE ==========
+Return T1 home after the cycle completes]]></Comment>
+<Text><![CDATA[XIC(SYS_RUN)XIC(STEP3_DONE)XIO(LS_T1_LOAD)XIO(FAULT)OTE(T1_REV);]]></Text>
+</Rung>
+<Rung Number="14" Type="N">
+<Comment><![CDATA[========== RUNG 14: CYCLE RESET - T2 REVERSE ==========
+Return T2 home after the cycle completes]]></Comment>
+<Text><![CDATA[XIC(SYS_RUN)XIC(STEP3_DONE)XIO(LS_T2_PICK)XIO(FAULT)OTE(T2_REV);]]></Text>
+</Rung>
+<Rung Number="15" Type="N">
+<Comment><![CDATA[========== RUNG 15: CYCLE COMPLETE - UNLATCH STEPS ==========
+Both transporters home, ready for next cycle]]></Comment>
+<Text><![CDATA[XIC(STEP3_DONE)XIC(LS_T1_LOAD)XIC(LS_T2_PICK)OTU(STEP1_DONE);]]></Text>
+</Rung>
+<Rung Number="16" Type="N">
+<Comment><![CDATA[Unlatch step 2 done]]></Comment>
+<Text><![CDATA[XIC(STEP3_DONE)XIC(LS_T1_LOAD)XIC(LS_T2_PICK)OTU(STEP2_DONE);]]></Text>
+</Rung>
+<Rung Number="17" Type="N">
+<Comment><![CDATA[Unlatch step 3 done - this is intentionally last in chain]]></Comment>
+<Text><![CDATA[XIO(STEP1_DONE)XIO(STEP2_DONE)XIC(STEP3_DONE)XIC(LS_T1_LOAD)XIC(LS_T2_PICK)OTU(STEP3_DONE);]]></Text>
+</Rung>
+<Rung Number="18" Type="N">
+<Comment><![CDATA[========== RUNG 18: WATCHDOG FAULT TRIGGER ==========
+Any step watchdog timeout latches a system fault]]></Comment>
+<Text><![CDATA[[XIC(WDT_STEP1.DN),XIC(WDT_STEP2.DN),XIC(WDT_STEP3.DN)]OTL(FAULT);]]></Text>
+</Rung>
+<Rung Number="19" Type="N">
+<Comment><![CDATA[========== RUNG 19: RUN INDICATOR LAMP ==========]]></Comment>
+<Text><![CDATA[XIC(SYS_RUN)OTE(LAMP_RUN);]]></Text>
+</Rung>
+<Rung Number="20" Type="N">
+<Comment><![CDATA[========== RUNG 20: FAULT INDICATOR LAMP ==========]]></Comment>
+<Text><![CDATA[XIC(FAULT)OTE(LAMP_FAULT);]]></Text>
+</Rung>
+<Rung Number="21" Type="N">
+<Comment><![CDATA[========== RUNG 21: END ==========]]></Comment>
+<Text><![CDATA[END();]]></Text>
+</Rung>
+</RLLContent>
+</Routine>
+</Routines>
+</Program>
+</Programs>
+</Controller>
+</RSLogix5000Content>

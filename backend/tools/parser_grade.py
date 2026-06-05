@@ -41,6 +41,25 @@ from app.services.normalization_service import (  # noqa: E402
 )
 
 
+# Instruction tokens that are "known" to normalization even though they are
+# not cause/effect opcodes in INSTRUCTION_SEMANTICS: structured-text keywords
+# and ladder branch/structural markers. Counting these as "unknown" would
+# unfairly deflate the coverage score, so they are treated as recognized.
+_STRUCTURAL_KNOWN_TOKENS = frozenset(
+    {
+        "IF",
+        "ELSE",
+        "ELSIF",
+        "END_IF",
+        "ASSIGN",
+        "PARALLEL_BRANCH",
+        "BST",
+        "NXB",
+        "BND",
+    }
+)
+
+
 def _branch_markers(rung_text: str) -> int:
     if not rung_text:
         return 0
@@ -78,6 +97,30 @@ def grade_file(path: Path) -> dict:
     objs = norm["control_objects"]
     rels = norm["relationships"]
     exec_ctx = norm["execution_contexts"]
+    rung_objs = [o for o in objs if o.object_type == ControlObjectType.RUNG]
+    branched_rungs = sum(1 for r in rung_objs if r.attributes.get("has_branches"))
+    resolved_rungs = sum(
+        1 for r in rung_objs if r.attributes.get("logic_expression_resolved")
+    )
+    resolved_branched = sum(
+        1
+        for r in rung_objs
+        if r.attributes.get("has_branches")
+        and r.attributes.get("logic_expression_resolved")
+    )
+    rung_total = len(rung_objs)
+    card["ladder_rung_count"] = rung_total
+    card["branched_rung_count"] = branched_rungs
+    card["logic_expression_resolved_count"] = resolved_rungs
+    card["branched_rungs_resolved_count"] = resolved_branched
+    card["logic_expression_resolved_pct"] = (
+        round(100.0 * resolved_rungs / rung_total, 1) if rung_total else 0.0
+    )
+    card["branched_rungs_resolved_pct"] = (
+        round(100.0 * resolved_branched / branched_rungs, 1)
+        if branched_rungs
+        else 0.0
+    )
 
     platform = card["connector_selected"]
     card["controller_count"] = len(project.controllers)
@@ -87,6 +130,7 @@ def grade_file(path: Path) -> dict:
     inst_known = 0
     inst_unknown = 0
     inst_types: Counter[str] = Counter()
+    unknown_types: Counter[str] = Counter()
     unresolved_tags: Counter[str] = Counter()
     missing_raw: list[str] = []
     st_blocks_total = 0
@@ -94,6 +138,15 @@ def grade_file(path: Path) -> dict:
     branch_hits = 0
     tag_names = {t.name for c in project.controllers for p in c.programs for t in p.tags}
     tag_names |= {t.name for c in project.controllers for t in c.controller_tags}
+
+    # AOI instance calls are "known" when their definition is present:
+    # the normalizer resolves them into FUNCTION_BLOCK objects with typed
+    # parameter-binding edges, so they should not count as unknown opcodes.
+    aoi_names = {
+        d.name.upper()
+        for c in project.controllers
+        for d in getattr(c, "add_on_instruction_defs", [])
+    }
 
     for c in project.controllers:
         for p in c.programs:
@@ -113,16 +166,15 @@ def grade_file(path: Path) -> dict:
                 for ins in r.instructions:
                     it = (ins.instruction_type or "").upper()
                     inst_types[it] += 1
-                    if it in INSTRUCTION_SEMANTICS or it in (
-                        "IF",
-                        "ELSE",
-                        "ELSIF",
-                        "END_IF",
-                        "ASSIGN",
+                    if (
+                        it in INSTRUCTION_SEMANTICS
+                        or it in _STRUCTURAL_KNOWN_TOKENS
+                        or it in aoi_names
                     ):
                         inst_known += 1
                     else:
                         inst_unknown += 1
+                        unknown_types[it] += 1
                     for op in ins.operands:
                         if _looks_unresolved(op, tag_names):
                             unresolved_tags[op] += 1
@@ -143,17 +195,6 @@ def grade_file(path: Path) -> dict:
     card["tag_extraction_count"] = len(tag_names)
     card["known_instruction_hits"] = inst_known
     card["unknown_instruction_count"] = inst_unknown
-    known_set = set(INSTRUCTION_SEMANTICS) | {
-        "IF",
-        "ELSE",
-        "ELSIF",
-        "END_IF",
-        "ASSIGN",
-        "PARALLEL_BRANCH",
-        "BST",
-        "NXB",
-        "BND",
-    }
     denom = max(1, inst_known + inst_unknown)
     card["known_instruction_coverage_pct"] = round(100.0 * inst_known / denom, 1)
     card["st_block_count"] = st_blocks_total
@@ -226,7 +267,12 @@ def grade_file(path: Path) -> dict:
         min(1.0, len(rels) / max(1, 5 * len(objs))),
         3,
     )
-    card["top_unknown_instructions"] = [k for k, _ in inst_types.most_common(12)]
+    card["top_unknown_instructions"] = [
+        f"{name} (x{count})" for name, count in unknown_types.most_common(12)
+    ]
+    card["top_instruction_mix"] = [
+        f"{name} (x{count})" for name, count in inst_types.most_common(12)
+    ]
     card["top_unresolved_operands"] = [k for k, _ in unresolved_tags.most_common(12)]
     card["routines_missing_instructions"] = missing_raw
     card["recommendations"] = _recommendations(card, platform)
@@ -252,6 +298,11 @@ def grade_file(path: Path) -> dict:
 def _looks_unresolved(operand: str, known: set[str]) -> bool:
     op = operand.strip()
     if not op or op.startswith('"'):
+        return False
+    # Operands containing parentheses are nested instruction text (e.g. the
+    # raw arm strings on a PARALLEL_BRANCH like ``XIC(P1)``), not tag
+    # references — don't flag them as unresolved tags.
+    if "(" in op or ")" in op:
         return False
     head = op.split(".", 1)[0].split("[", 1)[0]
     return head not in known and op not in known
@@ -290,10 +341,139 @@ def _recommendations(card: dict, platform: str | None) -> list[str]:
     return out or ["Parser looks healthy for this file's declared surface metrics."]
 
 
+_WIDTH = 72
+
+
+def _fmt_list(items: list[str], empty: str = "(none)") -> str:
+    return ", ".join(str(i) for i in items) if items else empty
+
+
+def render_scorecard(card: dict) -> str:
+    """Render one file's scorecard as a human-readable block.
+
+    Designed to be skimmable by a controls engineer: it answers
+    "how much of this program does INTELLI actually understand, and
+    what doesn't it understand?" without reading raw JSON.
+    """
+
+    lines: list[str] = []
+    name = Path(card.get("file", "?")).name
+    lines.append("=" * _WIDTH)
+    lines.append(f"FILE: {name}")
+
+    # Early-exit cases (no connector / parse crash) carry an ``error``.
+    if card.get("error"):
+        lines.append(f"  Grade: {card.get('grade', '?')}  (could not fully grade)")
+        lines.append(f"  Connector: {card.get('connector_selected') or '(none selected)'}")
+        lines.append(f"  Error: {card['error']}")
+        for rec in card.get("recommendations", []):
+            lines.append(f"   - {rec}")
+        return "\n".join(lines)
+
+    connector = card.get("connector_display_name") or card.get("connector_selected") or "?"
+    lines.append(
+        f"  Connector: {connector} ({card.get('connector_selected')})"
+        f"        Grade: {card.get('grade', '?')}"
+    )
+    lines.append("-" * _WIDTH)
+
+    lines.append(
+        "  Structure:    "
+        f"{card.get('controller_count', 0)} controller(s) | "
+        f"{card.get('program_count', 0)} program(s) | "
+        f"{card.get('routine_count', 0)} routine(s) | "
+        f"~{card.get('rung_count_proxy', 0)} ladder rung(s)"
+    )
+    lines.append(f"  Tags:         {card.get('tag_object_count', 0)} tag(s)")
+    lines.append(
+        "  Instructions: "
+        f"{card.get('instruction_count', 0)} total | "
+        f"{card.get('known_instruction_hits', 0)} known "
+        f"({card.get('known_instruction_coverage_pct', 0.0)}%) | "
+        f"{card.get('unknown_instruction_count', 0)} unknown"
+    )
+    lines.append(
+        f"  Branches:     {card.get('branch_detection_count', 0)} branch marker(s) detected"
+    )
+    if card.get("ladder_rung_count", 0):
+        lines.append(
+            "  Logic trees:  "
+            f"{card.get('logic_expression_resolved_count', 0)}/"
+            f"{card.get('ladder_rung_count', 0)} rungs resolved "
+            f"({card.get('logic_expression_resolved_pct', 0.0)}%) | "
+            f"branched {card.get('branched_rungs_resolved_count', 0)}/"
+            f"{card.get('branched_rung_count', 0)} "
+            f"({card.get('branched_rungs_resolved_pct', 0.0)}%)"
+        )
+    if card.get("st_block_count", 0):
+        lines.append(
+            "  Struct. Text: "
+            f"{card.get('st_block_count', 0)} block(s) | "
+            f"{card.get('st_too_complex_pct', 0.0)}% too complex"
+        )
+    lines.append(
+        "  Graph:        "
+        f"{card.get('control_object_count', 0)} object(s) | "
+        f"{card.get('relationship_count', 0)} relationship(s) "
+        f"({card.get('supported_relationship_count', 0)} typed) | "
+        f"{card.get('execution_context_count', 0)} execution context(s)"
+    )
+    if card.get("fbd_object_count", 0) or card.get("sfc_step_count", 0):
+        lines.append(
+            "  FBD / SFC:    "
+            f"{card.get('fbd_object_count', 0)} FBD object(s) | "
+            f"{card.get('sfc_step_count', 0)} SFC step(s)"
+        )
+
+    lines.append("")
+    lines.append(f"  Unknown opcodes:     {_fmt_list(card.get('top_unknown_instructions', []))}")
+    lines.append(f"  Unresolved operands: {_fmt_list(card.get('top_unresolved_operands', []))}")
+    if card.get("routines_missing_instructions"):
+        lines.append(
+            f"  Routines w/ raw logic but 0 instructions: "
+            f"{_fmt_list(card['routines_missing_instructions'])}"
+        )
+
+    lines.append("")
+    lines.append("  Recommendations:")
+    for rec in card.get("recommendations", []):
+        lines.append(f"   - {rec}")
+
+    return "\n".join(lines)
+
+
+def render_summary(scorecards: list[dict]) -> str:
+    grades = Counter(s.get("grade", "?") for s in scorecards)
+    lines = ["=" * _WIDTH, "SUMMARY"]
+    lines.append(f"  Files graded: {len(scorecards)}")
+    lines.append(f"  Grade distribution: {dict(sorted(grades.items()))}")
+
+    graded = [s for s in scorecards if not s.get("error")]
+    if graded:
+        total_instr = sum(s.get("instruction_count", 0) for s in graded)
+        known_instr = sum(s.get("known_instruction_hits", 0) for s in graded)
+        pct = round(100.0 * known_instr / total_instr, 1) if total_instr else 0.0
+        lines.append(
+            f"  Aggregate instruction coverage: {known_instr}/{total_instr} ({pct}%)"
+        )
+        all_unknown = Counter()
+        for s in graded:
+            for entry in s.get("top_unknown_instructions", []):
+                opcode = entry.split(" ", 1)[0]
+                all_unknown[opcode] += 1
+        if all_unknown:
+            lines.append(
+                f"  Most common unknown opcodes across files: "
+                f"{_fmt_list([k for k, _ in all_unknown.most_common(15)])}"
+            )
+    lines.append("=" * _WIDTH)
+    return "\n".join(lines)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Grade INTELLI parser coverage.")
     ap.add_argument("folder", type=Path, help="Directory containing exported control files")
-    ap.add_argument("--json", action="store_true", help="Emit JSON only")
+    ap.add_argument("--json", action="store_true", help="Emit raw JSON instead of a readable scorecard")
     args = ap.parse_args()
     folder: Path = args.folder
     if not folder.is_dir():
@@ -321,11 +501,8 @@ def main() -> None:
         print(json.dumps(scorecards, indent=2))
         return
     for sc in scorecards:
-        print("=" * 72)
-        print(json.dumps(sc, indent=2))
-    print("=" * 72)
-    grades = Counter(s.get("grade", "?") for s in scorecards)
-    print("Summary grades:", dict(grades))
+        print(render_scorecard(sc))
+    print(render_summary(scorecards))
 
 
 if __name__ == "__main__":

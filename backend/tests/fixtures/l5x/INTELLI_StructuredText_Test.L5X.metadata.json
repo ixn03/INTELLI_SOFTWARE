@@ -1,0 +1,20 @@
+{
+  "platform": "rockwell",
+  "language": "structured_text",
+  "expected_capabilities": [
+    "structured_text",
+    "boolean_expression_assignment",
+    "if_else_end_if",
+    "case_of_end_case",
+    "comparison_expressions",
+    "boolean_logic_and_or_not"
+  ],
+  "known_unsupported_features": [
+    "no_ladder",
+    "no_aoi",
+    "no_udt",
+    "no_alias_tags",
+    "single_task_single_program"
+  ],
+  "parser_notes": "Real single-routine structured-text program supplied by the user. Exercises boolean assignment expressions, an IF/ELSE/END_IF mode block, comparison assignments (Level < Setpoint, Level > HighLevelSP), and a CASE/END_CASE state dispatch with an ELSE arm. Parser grades A with 100% known-instruction coverage; 5 ST blocks parsed at 0% too-complex. Primary value: structured-text IF/CASE depth for Phase 4. Lacks ladder, AOIs, UDTs, alias tags and multi-task structure. DE-IDENTIFIED (Phase 0 corpus hygiene) via tools/deidentify_l5x.py: header Owner='OpenAI' replaced with 'INTELLI' and ExportDate neutralized; logic byte-identical, parser grade (A) and 100% instruction coverage verified unchanged."
+}

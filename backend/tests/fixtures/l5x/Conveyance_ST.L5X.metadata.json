@@ -1,0 +1,15 @@
+{
+  "platform": "rockwell",
+  "language": "structured_text",
+  "expected_capabilities": [
+    "structured_text",
+    "udt_definition_present",
+    "st_if_case_blocks",
+    "tag_extraction"
+  ],
+  "known_unsupported_features": [
+    "udt_definition_member_typing"
+  ],
+  "parser_notes": "REAL-WORLD Structured-Text routine export (TargetType=Routine) for the same conveyance line as Conveyance_LD.L5X. Parses cleanly (grade A): 1 controller / 1 program / 1 routine, 44 tags, 81 instructions at 100% known coverage, 11 ST blocks with 0% flagged too-complex. Notably carries a user DataType definition CONVEYANCE_STATE (Class=User), so it is a good real ST + UDT example; the connector captures UDT-typed tags flatly but does not resolve the UDT member typing (Phase 2). Pairs with Conveyance_LD.L5X to cover both languages of one real machine.",
+  "source": "user-provided (Downloads/Conveyance ST.l5x), renamed to Conveyance_ST.L5X (space removed)."
+}

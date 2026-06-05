@@ -1,8 +1,548 @@
 {
-  "fixture_count": 1,
+  "fixture_count": 17,
   "fixtures": [
     {
-      "file": "tests\\fixtures\\l5x\\mini_routine_mix.L5X",
+      "file": "C:\\Users\\ianna\\OneDrive\\Documents\\INTELLI_SOFTWARE\\backend\\tests\\fixtures\\l5x\\A_Gauss_RNG.L5X",
+      "suffix": ".l5x",
+      "metadata": {
+        "platform": "rockwell",
+        "language": "ladder",
+        "expected_capabilities": [
+          "aoi_definition_present",
+          "aoi_definition_rll_body",
+          "nested_aoi_dependency",
+          "aoi_parameters_present",
+          "aoi_local_tags_present"
+        ],
+        "known_unsupported_features": [
+          "aoi_definition_body_resolution",
+          "aoi_parameter_interface_extraction",
+          "nested_aoi_dependency_resolution"
+        ],
+        "parser_notes": "REAL Add-On Instruction definition export (TargetType=AddOnInstructionDefinition). Target is A_Gauss_RNG, a Gaussian random-number generator, and the export carries its dependency AOI A_Uniform_RNG (a Linear Congruential Generator) - i.e. two AddOnInstructionDefinition elements, each with an RLL 'Logic' routine. Useful specifically because it exercises a NESTED AOI dependency (one AOI invoking another) plus integer math used for pseudo-random generation. As with the other AOI-definition exports, the current connector walks only Programs/Program/Routines, so this currently parses to 1 controller / 0 programs / 0 routines / 0 instructions (no crash); both AOI bodies and the inter-AOI dependency are invisible until Phase 2 AOI resolution lands. DE-IDENTIFIED (Phase 0 corpus hygiene) via tools/deidentify_l5x.py: removed real third-party provenance - Owner 'FAS, FAS'->'INTELLI', CreatedBy/EditedBy 'DOMAIN1\\carp'->'INTELLI', EditedBy 'FAS-ENG-PJC\\image'->'INTELLI', ExportDate neutralized. All logic (both AOI RLL bodies, parameters, local tags, nested dependency) is byte-identical; parser grade (A) and instruction coverage verified unchanged before/after scrubbing. (A residual technical comment 'default PJC/BTC/WA value' inside an LCG parameter description was left intact as logic documentation; flag for the user if those initials are considered identifying.)",
+        "source": "user-provided (Downloads/A_Gauss_RNG.L5X); logic preserved, identifier metadata de-identified in place (Phase 0)."
+      },
+      "parser_crashed": false,
+      "connector_selected": "rockwell",
+      "parse_success": true,
+      "control_object_count": 1,
+      "relationship_count": 0,
+      "instruction_coverage": 0,
+      "branch_coverage": 0,
+      "st_construct_coverage": 0,
+      "fbd_coverage": 0,
+      "sfc_coverage": 0,
+      "unresolved_tags": [],
+      "unsupported_constructs": [],
+      "coverage_gaps": []
+    },
+    {
+      "file": "C:\\Users\\ianna\\OneDrive\\Documents\\INTELLI_SOFTWARE\\backend\\tests\\fixtures\\l5x\\AOI_SeqTimer_103.L5X",
+      "suffix": ".l5x",
+      "metadata": {
+        "platform": "rockwell",
+        "language": "ladder",
+        "expected_capabilities": [
+          "aoi_definition_present",
+          "aoi_definition_rll_body",
+          "aoi_parameters_present",
+          "aoi_local_tags_present",
+          "ladder_in_aoi_body"
+        ],
+        "known_unsupported_features": [
+          "aoi_definition_body_resolution",
+          "aoi_parameter_interface_extraction",
+          "aoi_local_tag_extraction"
+        ],
+        "parser_notes": "REAL third-party Add-On Instruction definition export (TargetType=AddOnInstructionDefinition, SoftwareRevision 24). The AOI 'AOI_SeqTimer' is a sequence/elapsed-time tracker with an 11-rung RLL (ladder) body using XIC/XIO/OTE/OTL/OTU/ONS/MOV/TON/ADD/GEQ/DIV/CPT, a full Parameters interface (Trigger, Milliseconds/Seconds/Minutes/Hours + Last* outputs, Part-To-Part timing), and LocalTags including two TIMER structures. Because the current connector only walks Programs/Program/Routines, this file currently parses to 1 controller / 0 programs / 0 routines / 0 instructions (no crash) - i.e. the entire AOI ladder body is invisible today. It is a clean regression target for AOI-definition body + parameter-interface resolution (Phase 2). Complements LiOH_DIW_TankSystem_Full.L5X (AOI defs with ST bodies) by exercising an RLL-bodied AOI definition. DE-IDENTIFIED (Phase 0 corpus hygiene) via tools/deidentify_l5x.py: removed real third-party provenance - Owner 'Microsoft, Microsoft'->'INTELLI', Vendor 'SHAWN HATTEY'->'INTELLI', EditedBy 'PARA\\shawn'->'INTELLI', CreatedBy 'Not Available'->'INTELLI', ExportDate neutralized, and the proprietary controller context name 'P_24315_VentraP552LDMToHousing' (real automotive customer program) renamed to 'INTELLI_AOI_Context'. All logic (rungs, instructions, parameters, local tags, AOI body) is byte-identical; parser grade (A) and instruction coverage verified unchanged before/after scrubbing.",
+        "source": "user-provided (Downloads/AOI_SeqTimer_103.L5X); logic preserved, identifier metadata de-identified in place (Phase 0)."
+      },
+      "parser_crashed": false,
+      "connector_selected": "rockwell",
+      "parse_success": true,
+      "control_object_count": 1,
+      "relationship_count": 0,
+      "instruction_coverage": 0,
+      "branch_coverage": 0,
+      "st_construct_coverage": 0,
+      "fbd_coverage": 0,
+      "sfc_coverage": 0,
+      "unresolved_tags": [],
+      "unsupported_constructs": [],
+      "coverage_gaps": []
+    },
+    {
+      "file": "C:\\Users\\ianna\\OneDrive\\Documents\\INTELLI_SOFTWARE\\backend\\tests\\fixtures\\l5x\\Array_Scroll.L5X",
+      "suffix": ".l5x",
+      "metadata": {
+        "platform": "rockwell",
+        "language": "structured_text",
+        "expected_capabilities": [
+          "aoi_definition_present",
+          "aoi_definition_st_body",
+          "aoi_parameters_present"
+        ],
+        "known_unsupported_features": [
+          "aoi_definition_body_resolution",
+          "aoi_parameter_interface_extraction"
+        ],
+        "parser_notes": "REAL Add-On Instruction definition export (TargetType=AddOnInstructionDefinition). The AOI 'Array_Scroll' scans a Boolean array and outputs the index of each TRUE element sequentially (HMI scroll / multi-state indicator helper) using a Structured-Text 'Logic' routine. Included to give the AOI-definition regression set an ST-bodied example to contrast with the RLL-bodied AOI_SeqTimer_103.L5X / A_Gauss_RNG.L5X. Current connector walks only Programs/Program/Routines, so this parses to 1 controller / 0 programs / 0 routines / 0 instructions (no crash) - the AOI ST body is invisible until Phase 2 AOI resolution. DE-IDENTIFIED (Phase 0 corpus hygiene) via tools/deidentify_l5x.py: removed real third-party provenance - Owner 'IT Support, Parkway Electric'->'INTELLI', CreatedBy/EditedBy 'PG\\brian.stilson'->'INTELLI', ExportDate neutralized. All logic (ST routine, parameters, local tags) is byte-identical; parser grade (A) and instruction coverage verified unchanged before/after scrubbing.",
+        "source": "user-provided (Downloads/Array_Scroll.L5X); logic preserved, identifier metadata de-identified in place (Phase 0)."
+      },
+      "parser_crashed": false,
+      "connector_selected": "rockwell",
+      "parse_success": true,
+      "control_object_count": 1,
+      "relationship_count": 0,
+      "instruction_coverage": 0,
+      "branch_coverage": 0,
+      "st_construct_coverage": 0,
+      "fbd_coverage": 0,
+      "sfc_coverage": 0,
+      "unresolved_tags": [],
+      "unsupported_constructs": [],
+      "coverage_gaps": []
+    },
+    {
+      "file": "C:\\Users\\ianna\\OneDrive\\Documents\\INTELLI_SOFTWARE\\backend\\tests\\fixtures\\l5x\\Conveyance_LD.L5X",
+      "suffix": ".l5x",
+      "metadata": {
+        "platform": "rockwell",
+        "language": "ladder",
+        "expected_capabilities": [
+          "ladder",
+          "branch_logic_bst_nxb_bnd",
+          "parallel_branches",
+          "timers_counters",
+          "tag_extraction"
+        ],
+        "known_unsupported_features": [
+          "end_instruction_semantics"
+        ],
+        "parser_notes": "REAL-WORLD ladder routine export (TargetType=Routine) for a conveyance/material-handling line. Parses cleanly (grade A): 1 controller / 1 program / 1 routine, 32 tags, 88 instructions at 98.9% known coverage with 16 branch markers detected - a strong real branch-heavy ladder example. The single unknown opcode is END (x1), a routine-terminator token that normalization does not model as a cause/effect instruction; harmless but listed honestly. Numeric literals (0, 10000, 30000) show up as 'unresolved operands' because they are timer/counter presets, not tags. Complements Conveyance_ST.L5X (the ST sibling of the same machine).",
+        "source": "user-provided (Downloads/Conveyance LD.l5x), renamed to Conveyance_LD.L5X (space removed)."
+      },
+      "parser_crashed": false,
+      "connector_selected": "rockwell",
+      "parse_success": true,
+      "control_object_count": 145,
+      "relationship_count": 228,
+      "instruction_coverage": 88,
+      "branch_coverage": 13,
+      "st_construct_coverage": 0,
+      "fbd_coverage": 0,
+      "sfc_coverage": 0,
+      "unresolved_tags": [],
+      "unsupported_constructs": [],
+      "coverage_gaps": []
+    },
+    {
+      "file": "C:\\Users\\ianna\\OneDrive\\Documents\\INTELLI_SOFTWARE\\backend\\tests\\fixtures\\l5x\\Conveyance_ST.L5X",
+      "suffix": ".l5x",
+      "metadata": {
+        "platform": "rockwell",
+        "language": "structured_text",
+        "expected_capabilities": [
+          "structured_text",
+          "udt_definition_present",
+          "st_if_case_blocks",
+          "tag_extraction"
+        ],
+        "known_unsupported_features": [
+          "udt_definition_member_typing"
+        ],
+        "parser_notes": "REAL-WORLD Structured-Text routine export (TargetType=Routine) for the same conveyance line as Conveyance_LD.L5X. Parses cleanly (grade A): 1 controller / 1 program / 1 routine, 44 tags, 81 instructions at 100% known coverage, 11 ST blocks with 0% flagged too-complex. Notably carries a user DataType definition CONVEYANCE_STATE (Class=User), so it is a good real ST + UDT example; the connector captures UDT-typed tags flatly but does not resolve the UDT member typing (Phase 2). Pairs with Conveyance_LD.L5X to cover both languages of one real machine.",
+        "source": "user-provided (Downloads/Conveyance ST.l5x), renamed to Conveyance_ST.L5X (space removed)."
+      },
+      "parser_crashed": false,
+      "connector_selected": "rockwell",
+      "parse_success": true,
+      "control_object_count": 139,
+      "relationship_count": 259,
+      "instruction_coverage": 92,
+      "branch_coverage": 0,
+      "st_construct_coverage": 92,
+      "fbd_coverage": 0,
+      "sfc_coverage": 0,
+      "unresolved_tags": [],
+      "unsupported_constructs": [],
+      "coverage_gaps": []
+    },
+    {
+      "file": "C:\\Users\\ianna\\OneDrive\\Documents\\INTELLI_SOFTWARE\\backend\\tests\\fixtures\\l5x\\ext_logixlib_mbtcp_client_program.L5X",
+      "suffix": ".l5x",
+      "metadata": {
+        "platform": "rockwell",
+        "language": "ladder",
+        "expected_capabilities": [
+          "ladder",
+          "aoi_definitions",
+          "aoi_instances",
+          "udt",
+          "msg",
+          "gsv"
+        ],
+        "known_unsupported_features": [
+          "AOI instance opcode reported as unknown (MBTCP_CLIENT)",
+          "MSG x6 / GSV x1 / COP x37 logic lives inside the AOI definition body and is not extracted into program routines; the visible program has only 2 rungs",
+          "NOP rung counted as unknown opcode"
+        ],
+        "parser_notes": "REAL external fixture. Source: https://github.com/JeremyMedders/LogixLibraries (file src/ModbusTCP/v1/Dev_MBTCP_Client_Program.L5X). License: MIT. Studio 5000 v35 Program-scope export. Modbus-TCP client demo: 2 AOI definitions, 11 UDTs, 5 routines, MSG x6 (Modbus/CIP messaging) inside the AOI body. Grader: grade C (only 2 visible program instructions). Added for the Modbus protocol domain + MSG/UDT context and the MBTCP_CLIENT opcode; thin on program-level logic. Library/design-pattern code, not plant code; license-safe. De-identified: embedded personal/vendor identifiers in the L5X were scrubbed with tools/deidentify_l5x.py (Vendor/CreatedBy/EditedBy -> INTELLI, ExportDate neutralized, Controller context Name DEVPAC -> INTELLI_Context); CDATA logic left byte-identical (grade C / 0.0% coverage unchanged before and after). MIT source/license attribution above is retained here intentionally and was NOT scrubbed from metadata. Note: 'DEVPAC' string literals remain inside CDATA tag-data by design (scrubbing them would alter program logic)."
+      },
+      "parser_crashed": false,
+      "connector_selected": "rockwell",
+      "parse_success": true,
+      "control_object_count": 17,
+      "relationship_count": 16,
+      "instruction_coverage": 2,
+      "branch_coverage": 0,
+      "st_construct_coverage": 0,
+      "fbd_coverage": 0,
+      "sfc_coverage": 0,
+      "unresolved_tags": [],
+      "unsupported_constructs": [],
+      "coverage_gaps": []
+    },
+    {
+      "file": "C:\\Users\\ianna\\OneDrive\\Documents\\INTELLI_SOFTWARE\\backend\\tests\\fixtures\\l5x\\ext_logixlib_numeric_program.L5X",
+      "suffix": ".l5x",
+      "metadata": {
+        "platform": "rockwell",
+        "language": "ladder",
+        "expected_capabilities": [
+          "ladder",
+          "aoi_definitions",
+          "aoi_instances",
+          "udt",
+          "branching"
+        ],
+        "known_unsupported_features": [
+          "MOVE reported as unknown opcode (x12) - genuine INSTRUCTION_SEMANTICS gap worth registering, not an AOI",
+          "Numeric-conversion AOI instance opcodes reported as unknown (N_SINT, N_INT, N_DINT, N_LINT, N_USINT, N_UINT, N_UDINT, N_ULINT, N_REAL, N_ETHMACTOSTR, ...)",
+          "AOI definition body logic (ContainsContext) not extracted into routines/instructions",
+          "Integer literal operands (0,1,2) flagged as unresolved tags"
+        ],
+        "parser_notes": "REAL external fixture. Source: https://github.com/JeremyMedders/LogixLibraries (file src/Numeric/Numeric_Program.L5X). License: MIT. Studio 5000 v36 Program-scope export. Numeric/string-formatting library: 21 AOI definitions (N_* family), 7 UDTs, 22 routines, branch markers x28. Grader: grade C, low coverage (1/37) because the visible rung is dominated by MOVE + N_* AOI instance calls. Valuable specifically for surfacing the MOVE gap and the large numeric-AOI opcode family for Phase 1. Library/design-pattern code, not plant code; license-safe. De-identified: embedded personal/vendor identifiers in the L5X were scrubbed with tools/deidentify_l5x.py (Vendor/CreatedBy/EditedBy -> INTELLI, ExportDate neutralized, Controller context Name DEVPAC -> INTELLI_Context); CDATA logic left byte-identical (grade C / 2.7% coverage unchanged before and after). MIT source/license attribution above is retained here intentionally and was NOT scrubbed from metadata."
+      },
+      "parser_crashed": false,
+      "connector_selected": "rockwell",
+      "parse_success": true,
+      "control_object_count": 98,
+      "relationship_count": 97,
+      "instruction_coverage": 37,
+      "branch_coverage": 0,
+      "st_construct_coverage": 0,
+      "fbd_coverage": 0,
+      "sfc_coverage": 0,
+      "unresolved_tags": [],
+      "unsupported_constructs": [],
+      "coverage_gaps": []
+    },
+    {
+      "file": "C:\\Users\\ianna\\OneDrive\\Documents\\INTELLI_SOFTWARE\\backend\\tests\\fixtures\\l5x\\ext_logixlib_packml_state_program.L5X",
+      "suffix": ".l5x",
+      "metadata": {
+        "platform": "rockwell",
+        "language": "ladder",
+        "expected_capabilities": [
+          "ladder",
+          "aoi_instances",
+          "udt",
+          "indexed_addressing"
+        ],
+        "known_unsupported_features": [
+          "AOI instance opcodes are reported as unknown (OP_PERMISSIVE, OP_PACKMLSTATE) because user-defined AOI names are not in INSTRUCTION_SEMANTICS",
+          "AOI definition body logic (carried in ContainsContext) is not extracted into program routines/instructions",
+          "NOP rungs counted as unknown opcodes"
+        ],
+        "parser_notes": "REAL external fixture. Source: https://github.com/JeremyMedders/LogixLibraries (file src/Process/Dev_PackML_State_Program.L5X). License: MIT. Studio 5000 v35 Program-scope export (TargetType=Program, ContainsContext=true). PackML state-machine demo: 614 rungs, 25 routines, 622 tags, 5 AOI definitions, 1 UDT, JSR x17, heavy indexed/array addressing. Grader: grade A, ~96.9% known-instruction coverage (1192 instr). Library/design-pattern code by one author, not de-identified plant code, but genuinely complex and license-safe. De-identified: embedded personal/vendor identifiers in the L5X were scrubbed with tools/deidentify_l5x.py (Vendor/CreatedBy/EditedBy -> INTELLI, ExportDate neutralized, Controller context Name DEVPAC -> INTELLI_Context); CDATA logic left byte-identical (grade A / 96.9% coverage unchanged before and after). MIT source/license attribution above is retained here intentionally and was NOT scrubbed from metadata."
+      },
+      "parser_crashed": false,
+      "connector_selected": "rockwell",
+      "parse_success": true,
+      "control_object_count": 2448,
+      "relationship_count": 3608,
+      "instruction_coverage": 1192,
+      "branch_coverage": 0,
+      "st_construct_coverage": 0,
+      "fbd_coverage": 0,
+      "sfc_coverage": 0,
+      "unresolved_tags": [],
+      "unsupported_constructs": [],
+      "coverage_gaps": []
+    },
+    {
+      "file": "C:\\Users\\ianna\\OneDrive\\Documents\\INTELLI_SOFTWARE\\backend\\tests\\fixtures\\l5x\\ext_logixlib_pf525_program.L5X",
+      "suffix": ".l5x",
+      "metadata": {
+        "platform": "rockwell",
+        "language": "ladder_structured_text",
+        "expected_capabilities": [
+          "ladder",
+          "structured_text",
+          "aoi_instances",
+          "udt",
+          "io_modules",
+          "gsv_ssv",
+          "msg",
+          "indexed_addressing"
+        ],
+        "known_unsupported_features": [
+          "AOI instance opcodes reported as unknown (DVC_PF525, DVC_DISCRETEIN, SYS_ALARM, OP_INTERLOCK, OP_PERMISSIVE)",
+          "AOI definition body logic (ContainsContext) not extracted into program routines/instructions",
+          "NOP rungs counted as unknown opcodes"
+        ],
+        "parser_notes": "REAL external fixture. Source: https://github.com/JeremyMedders/LogixLibraries (file src/Device/Rockwell/PowerFlex 525/Dev_PF525_Program.L5X). License: MIT. Studio 5000 v35 Program-scope export with full context (3.2 MB). PowerFlex 525 drive control demo: ladder+ST mix (37 ST blocks), 85 program rungs, 29 routines, 162 tags, 15 AOI definitions, 19 UDTs, 3 I/O Modules, GSV x10/SSV x2/MSG x2/JSR x5. Grader: grade A, ~94% known-instruction coverage (215 instr). Large file because the full device/AOI dependency tree is bundled as import context. Library/design-pattern code, not plant code, but license-safe and the richest ladder+ST+module example found. De-identified: embedded personal/vendor identifiers in the L5X were scrubbed with tools/deidentify_l5x.py (Vendor/CreatedBy/EditedBy -> INTELLI, ExportDate neutralized, Controller context Name DEVPAC -> INTELLI_Context); CDATA logic left byte-identical (grade A / 94.0% coverage unchanged before and after). MIT source/license attribution above is retained here intentionally and was NOT scrubbed from metadata."
+      },
+      "parser_crashed": false,
+      "connector_selected": "rockwell",
+      "parse_success": true,
+      "control_object_count": 507,
+      "relationship_count": 701,
+      "instruction_coverage": 252,
+      "branch_coverage": 15,
+      "st_construct_coverage": 73,
+      "fbd_coverage": 0,
+      "sfc_coverage": 0,
+      "unresolved_tags": [],
+      "unsupported_constructs": [],
+      "coverage_gaps": []
+    },
+    {
+      "file": "C:\\Users\\ianna\\OneDrive\\Documents\\INTELLI_SOFTWARE\\backend\\tests\\fixtures\\l5x\\ext_logixlib_system_program.L5X",
+      "suffix": ".l5x",
+      "metadata": {
+        "platform": "rockwell",
+        "language": "ladder_structured_text",
+        "expected_capabilities": [
+          "ladder",
+          "structured_text",
+          "aoi_definitions",
+          "udt_nested",
+          "gsv_ssv",
+          "msg"
+        ],
+        "known_unsupported_features": [
+          "AOI instance opcodes reported as unknown (SYS, SYS_WALLCLOCK, SYS_ALARMCLASS, SYS_PORTCLASS, SYS_TCPIPCLASS, SYS_ENETLINKCLASS, SYS_PRECISIONTIME, SYS_NODECLASS)",
+          "AOI definition body logic (where the GSV x17/SSV x8/MSG x9 actually live) is not extracted into routines/instructions; the visible program has only ~9 rungs",
+          "Deep/nested UDT member resolution is not fully exercised by the grader"
+        ],
+        "parser_notes": "REAL external fixture. Source: https://github.com/JeremyMedders/LogixLibraries (file src/System/System_Program.L5X). License: MIT. Studio 5000 v35 Program-scope export with full context (1.7 MB). System/diagnostics library: 14 AOI definitions, 32 UDTs (deepest set found, incl. CIP types and ISA-18.2 alarm class), GSV x17/SSV x8/MSG x9 inside AOI bodies. Grader: grade C (thin visible program logic, all 9 program instructions are SYS_* AOI instances). Added primarily for AOI-definition-body + deep-UDT + GSV/SSV/MSG stress coverage and Phase 1 unknown-opcode inventory. Library/design-pattern code, not plant code; license-safe. De-identified: embedded personal/vendor identifiers in the L5X were scrubbed with tools/deidentify_l5x.py (Vendor/CreatedBy/EditedBy -> INTELLI, ExportDate neutralized, Controller context Name DEVPAC -> INTELLI_Context); CDATA logic left byte-identical (grade C / 0.0% coverage unchanged before and after). MIT source/license attribution above is retained here intentionally and was NOT scrubbed from metadata. Note: 'DEVPAC*' string literals remain inside CDATA tag-data by design (scrubbing them would alter program logic)."
+      },
+      "parser_crashed": false,
+      "connector_selected": "rockwell",
+      "parse_success": true,
+      "control_object_count": 46,
+      "relationship_count": 45,
+      "instruction_coverage": 9,
+      "branch_coverage": 0,
+      "st_construct_coverage": 0,
+      "fbd_coverage": 0,
+      "sfc_coverage": 0,
+      "unresolved_tags": [],
+      "unsupported_constructs": [],
+      "coverage_gaps": []
+    },
+    {
+      "file": "C:\\Users\\ianna\\OneDrive\\Documents\\INTELLI_SOFTWARE\\backend\\tests\\fixtures\\l5x\\INTELLI_Advanced_Process.L5X",
+      "suffix": ".l5x",
+      "metadata": {
+        "platform": "rockwell",
+        "language": "structured_text",
+        "expected_capabilities": [
+          "structured_text",
+          "multi_routine_program",
+          "st_if_end_if_blocks",
+          "dotted_tag_naming",
+          "tag_extraction"
+        ],
+        "known_unsupported_features": [],
+        "parser_notes": "INTELLI-authored demo controller (TargetType=Controller, Owner=INTELLI) used to exercise multi-routine Structured-Text ingestion: 1 controller / 1 program (PRG_Process) / 5 ST routines (R01_FillLogic..R05_ResetLogic), 18 controller tags using dotted naming (System.AutoMode, Faults.AnyFault, Outputs.FillValve, etc.), 12 instructions at 100% known coverage, 10 ST blocks (0% too complex), 5 execution contexts. EXTENSION NOTE: the source file was distributed as 'INTELLI_Advanced_Process.L5X.txt'. The grader/connector select by extension+content and DO recognize the .txt form, but it was copied into the fixtures with a corrected .L5X extension so fixture tooling and metadata pairing behave normally. Content is unmodified aside from the rename.",
+        "source": "user-provided (Downloads/INTELLI_Advanced_Process.L5X.txt), copied with corrected .L5X extension."
+      },
+      "parser_crashed": false,
+      "connector_selected": "rockwell",
+      "parse_success": true,
+      "control_object_count": 47,
+      "relationship_count": 80,
+      "instruction_coverage": 22,
+      "branch_coverage": 0,
+      "st_construct_coverage": 22,
+      "fbd_coverage": 0,
+      "sfc_coverage": 0,
+      "unresolved_tags": [],
+      "unsupported_constructs": [],
+      "coverage_gaps": []
+    },
+    {
+      "file": "C:\\Users\\ianna\\OneDrive\\Documents\\INTELLI_SOFTWARE\\backend\\tests\\fixtures\\l5x\\INTELLI_Ladder_Test.L5X",
+      "suffix": ".l5x",
+      "metadata": {
+        "platform": "rockwell",
+        "language": "ladder",
+        "expected_capabilities": [
+          "ladder",
+          "branch_logic_bst_nxb_bnd",
+          "one_shot_ons",
+          "set_reset_otl_otu",
+          "timers_ton",
+          "timer_reset_res",
+          "comparisons_les_geq_grt",
+          "math_add",
+          "move_mov",
+          "timer_done_bit_member_ref"
+        ],
+        "known_unsupported_features": [
+          "no_aoi",
+          "no_udt",
+          "no_alias_tags",
+          "no_sequencers",
+          "single_task_single_program"
+        ],
+        "parser_notes": "Real single-routine batch state machine (idle->fill->mix->discharge) supplied by the user. Exercises branched rung interlocks (BST/NXB/BND) for transitions and stop/high-level handling, a start one-shot, latch/unlatch state bits, TON fill/mix timers with .DN member reads, RES timer resets, LES/GEQ/GRT comparisons against level setpoints, MOV and ADD. Parser grades A with 100% known-instruction coverage and 51 branch markers detected. Primary value: ladder branch-logic and timer/comparison coverage for Phase 3. Lacks AOIs, UDTs, alias tags, sequencers and multi-task structure. DE-IDENTIFIED (Phase 0 corpus hygiene) via tools/deidentify_l5x.py: header Owner='OpenAI' replaced with 'INTELLI' and ExportDate neutralized; logic byte-identical, parser grade (A) and 100% instruction coverage verified unchanged."
+      },
+      "parser_crashed": false,
+      "connector_selected": "rockwell",
+      "parse_success": true,
+      "control_object_count": 88,
+      "relationship_count": 137,
+      "instruction_coverage": 50,
+      "branch_coverage": 13,
+      "st_construct_coverage": 0,
+      "fbd_coverage": 0,
+      "sfc_coverage": 0,
+      "unresolved_tags": [],
+      "unsupported_constructs": [],
+      "coverage_gaps": []
+    },
+    {
+      "file": "C:\\Users\\ianna\\OneDrive\\Documents\\INTELLI_SOFTWARE\\backend\\tests\\fixtures\\l5x\\INTELLI_StructuredText_Test.L5X",
+      "suffix": ".l5x",
+      "metadata": {
+        "platform": "rockwell",
+        "language": "structured_text",
+        "expected_capabilities": [
+          "structured_text",
+          "boolean_expression_assignment",
+          "if_else_end_if",
+          "case_of_end_case",
+          "comparison_expressions",
+          "boolean_logic_and_or_not"
+        ],
+        "known_unsupported_features": [
+          "no_ladder",
+          "no_aoi",
+          "no_udt",
+          "no_alias_tags",
+          "single_task_single_program"
+        ],
+        "parser_notes": "Real single-routine structured-text program supplied by the user. Exercises boolean assignment expressions, an IF/ELSE/END_IF mode block, comparison assignments (Level < Setpoint, Level > HighLevelSP), and a CASE/END_CASE state dispatch with an ELSE arm. Parser grades A with 100% known-instruction coverage; 5 ST blocks parsed at 0% too-complex. Primary value: structured-text IF/CASE depth for Phase 4. Lacks ladder, AOIs, UDTs, alias tags and multi-task structure. DE-IDENTIFIED (Phase 0 corpus hygiene) via tools/deidentify_l5x.py: header Owner='OpenAI' replaced with 'INTELLI' and ExportDate neutralized; logic byte-identical, parser grade (A) and 100% instruction coverage verified unchanged."
+      },
+      "parser_crashed": false,
+      "connector_selected": "rockwell",
+      "parse_success": true,
+      "control_object_count": 33,
+      "relationship_count": 63,
+      "instruction_coverage": 14,
+      "branch_coverage": 0,
+      "st_construct_coverage": 14,
+      "fbd_coverage": 0,
+      "sfc_coverage": 0,
+      "unresolved_tags": [],
+      "unsupported_constructs": [],
+      "coverage_gaps": []
+    },
+    {
+      "file": "C:\\Users\\ianna\\OneDrive\\Documents\\INTELLI_SOFTWARE\\backend\\tests\\fixtures\\l5x\\LiOH_DIW_TankSystem_Full.L5X",
+      "suffix": ".l5x",
+      "metadata": {
+        "platform": "rockwell",
+        "language": "structured_text",
+        "expected_capabilities": [
+          "structured_text",
+          "multi_routine_program",
+          "jsr_subroutine_dispatch",
+          "udt_definitions_present",
+          "udt_typed_tags",
+          "aoi_definition_present",
+          "aoi_definition_st_body",
+          "aoi_instance_typed_tags",
+          "aoi_instance_call_in_st",
+          "alias_tags_present",
+          "alias_io_module_mapping",
+          "task_definitions_present"
+        ],
+        "known_unsupported_features": [
+          "aoi_definition_body_resolution",
+          "aoi_instance_parameter_semantics",
+          "udt_definition_member_typing",
+          "alias_target_resolution",
+          "task_scheduling_model",
+          "complex_st_block_decomposition"
+        ],
+        "parser_notes": "REAL-WORLD full controller export (TargetType=Controller, ~57KB) for a lithium-hydroxide / DI-water tank dosing system. This is the strongest real AOI/UDT fixture in the corpus and is NOT a duplicate of LiOH_DIW_TankSystem_Ladder.L5X (that file is a ~8KB ladder-only subset). Contains three user DataTypes (PumpData, FaultBits, TankSetpoints), three Add-On Instruction definitions with Structured-Text bodies (AOI_PumpControl, AOI_RatioCtl, AOI_PumpAlt), seven AOI-instance-typed base tags, real AOI instance CALLS inside ST routines, ~30 alias tags mapping process I/O to module addresses (Local:1:I/O, Local:3:I.ChxData, Local:4:O.ChxData), a JSR subroutine dispatch chain from R00_Main into R01_Safety/R02_Alternator/R03_Ratio/R04_Sequencer/R05_Faults, and a PERIODIC MainTask. The current Rockwell connector walks only Programs/Program/Routines, so the AOI definition bodies, UDT member typing, alias targets, and Task scheduling are NOT resolved: the three AOI instance calls surface as unknown opcodes (AOI_PUMPCONTROL x4, AOI_PUMPALT x2, AOI_RATIOCTL x1 -> 92% instruction coverage, grade C) and several multi-line ST statements register as too-complex blocks (58.8%). This file is the primary regression target for Phase 2 (AOI/UDT/alias resolution). NOTE: author/vendor metadata is Vendor=ProcessEng and process tag naming may reflect a real plant; review for identifier sanitization before any external sharing.",
+        "source": "user-provided (Downloads/LiOH DIW TankSystem.l5x); renamed to LiOH_DIW_TankSystem_Full.L5X (original name contained a non-breaking space)."
+      },
+      "parser_crashed": false,
+      "connector_selected": "rockwell",
+      "parse_success": true,
+      "control_object_count": 195,
+      "relationship_count": 276,
+      "instruction_coverage": 104,
+      "branch_coverage": 0,
+      "st_construct_coverage": 104,
+      "fbd_coverage": 0,
+      "sfc_coverage": 0,
+      "unresolved_tags": [],
+      "unsupported_constructs": [],
+      "coverage_gaps": []
+    },
+    {
+      "file": "C:\\Users\\ianna\\OneDrive\\Documents\\INTELLI_SOFTWARE\\backend\\tests\\fixtures\\l5x\\LiOH_DIW_TankSystem_Ladder.L5X",
+      "suffix": ".l5x",
+      "metadata": {
+        "platform": "rockwell",
+        "language": "ladder",
+        "expected_capabilities": [
+          "ladder",
+          "multi_routine_program",
+          "subroutine_calls_jsr",
+          "state_machine_sequencer_idle_fill_mix_transfer_fault",
+          "one_shot_ons",
+          "set_reset_otl_otu",
+          "timers_ton",
+          "timer_done_bit_member_ref",
+          "dotted_member_style_tags",
+          "pump_alternation_pattern",
+          "fault_aggregation"
+        ],
+        "known_unsupported_features": [
+          "no_aoi",
+          "no_udt_definitions",
+          "no_alias_tags",
+          "no_branch_markers_bst_nxb_bnd",
+          "no_sequencer_instructions",
+          "no_explicit_tasks_section",
+          "single_program"
+        ],
+        "parser_notes": "Real LiOH/DIW tank batching program supplied by the user. Four ladder routines under one program: R00_Main dispatches via JSR to R01_Safety, R02_Sequencer and R03_Faults. Models a realistic idle->fill->mix->transfer->fault state machine with duty/standby pump alternation (AltLiOH/AltXfr selects), a TON mix timer with .DN read, ONS start one-shot, latch/unlatch state bits, and fault aggregation. Dotted tag names (Faults.EStop, AltLiOH.SelectA) are flat tags emulating UDT/structure member access but are NOT backed by real DataType definitions. Parser grades A with 100% known-instruction coverage and 4 execution contexts (one per routine). Primary value: multi-routine/JSR program structure and a clean sequencer state machine. Note: contains NO BST/NXB/BND branch markers, so it does not exercise parallel branch logic."
+      },
+      "parser_crashed": false,
+      "connector_selected": "rockwell",
+      "parse_success": true,
+      "control_object_count": 154,
+      "relationship_count": 233,
+      "instruction_coverage": 79,
+      "branch_coverage": 0,
+      "st_construct_coverage": 0,
+      "fbd_coverage": 0,
+      "sfc_coverage": 0,
+      "unresolved_tags": [],
+      "unsupported_constructs": [],
+      "coverage_gaps": []
+    },
+    {
+      "file": "C:\\Users\\ianna\\OneDrive\\Documents\\INTELLI_SOFTWARE\\backend\\tests\\fixtures\\l5x\\mini_routine_mix.L5X",
       "suffix": ".l5x",
       "metadata": {
         "platform": "rockwell",
@@ -22,6 +562,52 @@
       "instruction_coverage": 22,
       "branch_coverage": 7,
       "st_construct_coverage": 7,
+      "fbd_coverage": 0,
+      "sfc_coverage": 0,
+      "unresolved_tags": [],
+      "unsupported_constructs": [],
+      "coverage_gaps": []
+    },
+    {
+      "file": "C:\\Users\\ianna\\OneDrive\\Documents\\INTELLI_SOFTWARE\\backend\\tests\\fixtures\\l5x\\synthetic_aoi_udt_system.L5X",
+      "suffix": ".l5x",
+      "metadata": {
+        "platform": "rockwell",
+        "language": "ladder_structured_text",
+        "expected_capabilities": [
+          "ladder",
+          "structured_text",
+          "branch_logic_bst_nxb_bnd",
+          "start_stop_seal_in",
+          "permissive_and_estop_interlocks",
+          "timers_ton",
+          "one_shot_ons",
+          "counter_ctu",
+          "udt_typed_tags",
+          "udt_member_references",
+          "alias_tag_present",
+          "aoi_instance_call_present",
+          "multi_program",
+          "multi_task"
+        ],
+        "known_unsupported_features": [
+          "aoi_definition_body_resolution",
+          "aoi_instance_parameter_semantics",
+          "udt_definition_member_typing",
+          "alias_target_resolution",
+          "sequencer_sqo_semantics",
+          "task_scheduling_model"
+        ],
+        "parser_notes": "Synthetic but industrially-plausible tank/agitator/transfer-pump system authored to exercise features the real test corpus lacks. Contains a user-defined Valve_UDT and Motor_UDT, a MotorStarter Add-On Instruction definition plus an instance call, an alias tag (Start_PB -> HMI_Start), branched START/STOP seal-in interlocks with E-stop/permissive gating, TON/ONS/CTU instructions, UDT member references used as both BOOL and TIMER operands, an SQO step sequencer, and two Tasks/Programs (continuous ladder + periodic structured text). The current Rockwell connector only walks Programs/Program/Routines, so the AOI definition body, UDT definitions, alias targets, and Task scheduling are intentionally NOT resolved by the parser: the AOI instance call (MotorStarter) and the SQO sequencer surface as unknown opcodes, and UDT/alias tags are captured as flat tag references. These are the precise gaps Phase 2 (AOI/UDT resolution) and later phases must close; the fixture is the regression target for that work."
+      },
+      "parser_crashed": false,
+      "connector_selected": "rockwell",
+      "parse_success": true,
+      "control_object_count": 98,
+      "relationship_count": 144,
+      "instruction_coverage": 50,
+      "branch_coverage": 11,
+      "st_construct_coverage": 8,
       "fbd_coverage": 0,
       "sfc_coverage": 0,
       "unresolved_tags": [],

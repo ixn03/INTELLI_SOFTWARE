@@ -1,0 +1,152 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<RSLogix5000Content SchemaRevision="1.0"
+SoftwareRevision="35.00"
+TargetName="INTELLI_Advanced_Process"
+TargetType="Controller"
+ContainsContext="true"
+Owner="INTELLI">
+
+  <Controller Name="INTELLI_Advanced_Process">
+
+    <Tags>
+
+      <!-- MODES -->
+      <Tag Name="System.AutoMode" DataType="BOOL"/>
+      <Tag Name="System.ManualMode" DataType="BOOL"/>
+
+      <!-- COMMANDS -->
+      <Tag Name="Cmd.StartFill" DataType="BOOL"/>
+      <Tag Name="Cmd.StartTransfer" DataType="BOOL"/>
+      <Tag Name="Cmd.ResetFaults" DataType="BOOL"/>
+
+      <!-- LEVELS -->
+      <Tag Name="Level.TankA_Low" DataType="BOOL"/>
+      <Tag Name="Level.TankA_High" DataType="BOOL"/>
+      <Tag Name="Level.TankB_High" DataType="BOOL"/>
+
+      <!-- PRESSURE -->
+      <Tag Name="Pressure.TransferHigh" DataType="BOOL"/>
+
+      <!-- FAULTS -->
+      <Tag Name="Faults.FillFault" DataType="BOOL"/>
+      <Tag Name="Faults.TransferFault" DataType="BOOL"/>
+      <Tag Name="Faults.AnyFault" DataType="BOOL"/>
+
+      <!-- SAFETY -->
+      <Tag Name="Safety.EStop" DataType="BOOL"/>
+
+      <!-- OUTPUTS -->
+      <Tag Name="Outputs.FillValve" DataType="BOOL"/>
+      <Tag Name="Outputs.TransferPump" DataType="BOOL"/>
+      <Tag Name="Outputs.AlarmHorn" DataType="BOOL"/>
+
+      <!-- STATES -->
+      <Tag Name="State.Filling" DataType="BOOL"/>
+      <Tag Name="State.Transferring" DataType="BOOL"/>
+
+    </Tags>
+
+    <Programs>
+
+      <Program Name="PRG_Process">
+
+        <Routines>
+
+          <!-- FILL LOGIC -->
+          <Routine Name="R01_FillLogic" Type="ST">
+            <STContent>
+              <Line>
+State.Filling :=
+    System.AutoMode
+    AND Cmd.StartFill
+    AND NOT Level.TankA_High
+    AND NOT Faults.AnyFault
+    AND NOT Safety.EStop;
+              </Line>
+
+              <Line>
+Outputs.FillValve := State.Filling;
+              </Line>
+            </STContent>
+          </Routine>
+
+          <!-- TRANSFER LOGIC -->
+          <Routine Name="R02_TransferLogic" Type="ST">
+            <STContent>
+              <Line>
+State.Transferring :=
+    System.AutoMode
+    AND Cmd.StartTransfer
+    AND NOT Level.TankA_Low
+    AND NOT Level.TankB_High
+    AND NOT Faults.AnyFault
+    AND NOT Safety.EStop;
+              </Line>
+
+              <Line>
+Outputs.TransferPump :=
+    State.Transferring
+    AND NOT Pressure.TransferHigh;
+              </Line>
+            </STContent>
+          </Routine>
+
+          <!-- FAULT LOGIC -->
+          <Routine Name="R03_FaultLogic" Type="ST">
+            <STContent>
+              <Line>
+Faults.FillFault :=
+    Outputs.FillValve
+    AND Level.TankA_High;
+              </Line>
+
+              <Line>
+Faults.TransferFault :=
+    Outputs.TransferPump
+    AND Pressure.TransferHigh;
+              </Line>
+
+              <Line>
+Faults.AnyFault :=
+    Faults.FillFault
+    OR Faults.TransferFault
+    OR Safety.EStop;
+              </Line>
+            </STContent>
+          </Routine>
+
+          <!-- ALARM LOGIC -->
+          <Routine Name="R04_AlarmLogic" Type="ST">
+            <STContent>
+              <Line>
+Outputs.AlarmHorn := Faults.AnyFault;
+              </Line>
+            </STContent>
+          </Routine>
+
+          <!-- FAULT RESET -->
+          <Routine Name="R05_ResetLogic" Type="ST">
+            <STContent>
+              <Line>
+IF Cmd.ResetFaults THEN
+    Faults.FillFault := FALSE;
+END_IF;
+              </Line>
+
+              <Line>
+IF Cmd.ResetFaults THEN
+    Faults.TransferFault := FALSE;
+END_IF;
+              </Line>
+            </STContent>
+          </Routine>
+
+        </Routines>
+
+      </Program>
+
+    </Programs>
+
+  </Controller>
+
+</RSLogix5000Content>

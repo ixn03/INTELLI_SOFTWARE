@@ -1,0 +1,27 @@
+{
+  "platform": "rockwell",
+  "language": "ladder",
+  "expected_capabilities": [
+    "ladder",
+    "multi_routine_program",
+    "subroutine_calls_jsr",
+    "state_machine_sequencer_idle_fill_mix_transfer_fault",
+    "one_shot_ons",
+    "set_reset_otl_otu",
+    "timers_ton",
+    "timer_done_bit_member_ref",
+    "dotted_member_style_tags",
+    "pump_alternation_pattern",
+    "fault_aggregation"
+  ],
+  "known_unsupported_features": [
+    "no_aoi",
+    "no_udt_definitions",
+    "no_alias_tags",
+    "no_branch_markers_bst_nxb_bnd",
+    "no_sequencer_instructions",
+    "no_explicit_tasks_section",
+    "single_program"
+  ],
+  "parser_notes": "Real LiOH/DIW tank batching program supplied by the user. Four ladder routines under one program: R00_Main dispatches via JSR to R01_Safety, R02_Sequencer and R03_Faults. Models a realistic idle->fill->mix->transfer->fault state machine with duty/standby pump alternation (AltLiOH/AltXfr selects), a TON mix timer with .DN read, ONS start one-shot, latch/unlatch state bits, and fault aggregation. Dotted tag names (Faults.EStop, AltLiOH.SelectA) are flat tags emulating UDT/structure member access but are NOT backed by real DataType definitions. Parser grades A with 100% known-instruction coverage and 4 execution contexts (one per routine). Primary value: multi-routine/JSR program structure and a clean sequencer state machine. Note: contains NO BST/NXB/BND branch markers, so it does not exercise parallel branch logic."
+}

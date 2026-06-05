@@ -1,0 +1,18 @@
+{
+  "platform": "rockwell",
+  "language": "ladder",
+  "expected_capabilities": [
+    "aoi_definition_present",
+    "aoi_definition_rll_body",
+    "nested_aoi_dependency",
+    "aoi_parameters_present",
+    "aoi_local_tags_present"
+  ],
+  "known_unsupported_features": [
+    "aoi_definition_body_resolution",
+    "aoi_parameter_interface_extraction",
+    "nested_aoi_dependency_resolution"
+  ],
+  "parser_notes": "REAL Add-On Instruction definition export (TargetType=AddOnInstructionDefinition). Target is A_Gauss_RNG, a Gaussian random-number generator, and the export carries its dependency AOI A_Uniform_RNG (a Linear Congruential Generator) - i.e. two AddOnInstructionDefinition elements, each with an RLL 'Logic' routine. Useful specifically because it exercises a NESTED AOI dependency (one AOI invoking another) plus integer math used for pseudo-random generation. As with the other AOI-definition exports, the current connector walks only Programs/Program/Routines, so this currently parses to 1 controller / 0 programs / 0 routines / 0 instructions (no crash); both AOI bodies and the inter-AOI dependency are invisible until Phase 2 AOI resolution lands. DE-IDENTIFIED (Phase 0 corpus hygiene) via tools/deidentify_l5x.py: removed real third-party provenance - Owner 'FAS, FAS'->'INTELLI', CreatedBy/EditedBy 'DOMAIN1\\carp'->'INTELLI', EditedBy 'FAS-ENG-PJC\\image'->'INTELLI', ExportDate neutralized. All logic (both AOI RLL bodies, parameters, local tags, nested dependency) is byte-identical; parser grade (A) and instruction coverage verified unchanged before/after scrubbing. (A residual technical comment 'default PJC/BTC/WA value' inside an LCG parameter description was left intact as logic documentation; flag for the user if those initials are considered identifying.)",
+  "source": "user-provided (Downloads/A_Gauss_RNG.L5X); logic preserved, identifier metadata de-identified in place (Phase 0)."
+}

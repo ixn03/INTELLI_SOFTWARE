@@ -1,0 +1,11 @@
+{
+  "platform": "rockwell",
+  "language": "ladder_structured_text",
+  "expected_capabilities": ["ladder", "structured_text", "aoi_instances", "udt", "io_modules", "gsv_ssv", "msg", "indexed_addressing"],
+  "known_unsupported_features": [
+    "AOI instance opcodes reported as unknown (DVC_PF525, DVC_DISCRETEIN, SYS_ALARM, OP_INTERLOCK, OP_PERMISSIVE)",
+    "AOI definition body logic (ContainsContext) not extracted into program routines/instructions",
+    "NOP rungs counted as unknown opcodes"
+  ],
+  "parser_notes": "REAL external fixture. Source: https://github.com/JeremyMedders/LogixLibraries (file src/Device/Rockwell/PowerFlex 525/Dev_PF525_Program.L5X). License: MIT. Studio 5000 v35 Program-scope export with full context (3.2 MB). PowerFlex 525 drive control demo: ladder+ST mix (37 ST blocks), 85 program rungs, 29 routines, 162 tags, 15 AOI definitions, 19 UDTs, 3 I/O Modules, GSV x10/SSV x2/MSG x2/JSR x5. Grader: grade A, ~94% known-instruction coverage (215 instr). Large file because the full device/AOI dependency tree is bundled as import context. Library/design-pattern code, not plant code, but license-safe and the richest ladder+ST+module example found. De-identified: embedded personal/vendor identifiers in the L5X were scrubbed with tools/deidentify_l5x.py (Vendor/CreatedBy/EditedBy -> INTELLI, ExportDate neutralized, Controller context Name DEVPAC -> INTELLI_Context); CDATA logic left byte-identical (grade A / 94.0% coverage unchanged before and after). MIT source/license attribution above is retained here intentionally and was NOT scrubbed from metadata."
+}

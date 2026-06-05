@@ -85,7 +85,7 @@ interface SidebarProps {
 
 export default function Sidebar(props: SidebarProps) {
   return (
-    <aside className="flex h-full w-full max-w-[360px] flex-col gap-5 border-r border-zinc-800/80 bg-zinc-950/60 px-5 py-6">
+    <aside className="flex h-full w-full max-w-[410px] flex-col gap-4 border-r border-white/10 bg-[linear-gradient(180deg,rgba(9,9,11,0.92),rgba(3,7,18,0.98))] px-4 py-5 shadow-2xl shadow-black/20">
       <UploadSection {...props} />
       <ProjectSummarySection {...props} />
       <ObjectFinderSection {...props} />
@@ -109,9 +109,14 @@ function UploadSection({
 }: SidebarProps) {
   if (project) {
     return (
-      <section>
-        <Eyebrow>Project</Eyebrow>
-        <div className="mt-2 flex items-center justify-between gap-2 rounded-xl border border-zinc-800/80 bg-zinc-900/60 px-3 py-2">
+      <section className="rounded-2xl border border-zinc-800/80 bg-zinc-900/45 p-3">
+        <div className="flex items-center justify-between gap-3">
+          <Eyebrow>Project</Eyebrow>
+          <Badge tone="success" uppercase>
+            loaded
+          </Badge>
+        </div>
+        <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-cyan-400/20 bg-cyan-400/[0.04] px-3 py-3">
           <div className="min-w-0">
             <p className="truncate text-sm font-medium text-zinc-100">
               {project.project_name || "Imported project"}
@@ -130,9 +135,9 @@ function UploadSection({
   }
 
   return (
-    <section className="flex flex-col gap-2">
+    <section className="flex flex-col gap-2 rounded-2xl border border-zinc-800/80 bg-zinc-900/45 p-3">
       <Eyebrow>Upload control export</Eyebrow>
-      <label className="block cursor-pointer rounded-xl border border-dashed border-zinc-700/80 bg-zinc-900/40 px-4 py-5 text-center transition hover:border-zinc-600">
+      <label className="block cursor-pointer rounded-xl border border-dashed border-cyan-400/25 bg-cyan-400/[0.035] px-4 py-5 text-center transition hover:border-cyan-300/50">
         <span className="sr-only">L5X file</span>
         <input
           type="file"
@@ -179,8 +184,13 @@ function ProjectSummarySection({
   );
 
   return (
-    <section>
-      <Eyebrow>Project summary</Eyebrow>
+    <section className="rounded-2xl border border-zinc-800/80 bg-zinc-900/35 p-3">
+      <div className="flex items-center justify-between gap-3">
+        <Eyebrow>Graph summary</Eyebrow>
+        <Badge tone={summary ? "success" : "outline"} uppercase>
+          {summary ? "normalized" : "pending"}
+        </Badge>
+      </div>
       <div className="mt-2 flex flex-wrap gap-1.5">
         <Stat
           value={project.controllers.length}
@@ -262,7 +272,7 @@ function ObjectFinderSection({
   })();
 
   return (
-    <section className="flex min-h-0 flex-1 flex-col gap-2">
+    <section className="flex min-h-0 flex-1 flex-col gap-2 rounded-2xl border border-zinc-800/80 bg-zinc-900/35 p-3">
       <div className="flex items-baseline justify-between gap-2">
         <Eyebrow>Find an object</Eyebrow>
         <span className="text-[10px] text-zinc-500">
@@ -410,8 +420,13 @@ function AskSection({
   }
 
   return (
-    <section className="flex flex-col gap-2.5">
-      <Eyebrow>Ask INTELLI</Eyebrow>
+    <section className="flex flex-col gap-2.5 rounded-2xl border border-cyan-400/20 bg-cyan-400/[0.04] p-3">
+      <div className="flex items-center justify-between gap-3">
+        <Eyebrow>Ask INTELLI</Eyebrow>
+        <Badge tone="info" uppercase>
+          evidence first
+        </Badge>
+      </div>
       <TextArea
         value={question}
         onChange={onQuestionChange}

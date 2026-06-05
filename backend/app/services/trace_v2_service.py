@@ -50,12 +50,16 @@ from app.models.reasoning import (
     ControlObject,
     ControlObjectType,
     ExecutionContext,
+    LogicExpression,
+    LogicExpressionKind,
     Relationship,
     RelationshipType,
     TraceResult,
     TruthConclusion,
     TruthContextType,
 )
+from app.parsers.ladder_logic import logic_expression_to_text
+from app.services.logic_expression_eval import TagValue, find_blocking_terms
 from app.services.structured_text_extraction import (
     STExtractionResult,
     extract_simple_st_conditions,
@@ -536,7 +540,14 @@ def _build_ladder_writer_conclusions(
         rels_by_source=rels_by_source,
         obj_by_id=obj_by_id,
     )
-    if not phrases and writer.logic_condition:
+    if writer.logic_expression is not None:
+        structured = _logic_expression_condition_phrases(
+            writer.logic_expression,
+            obj_by_id=obj_by_id,
+        )
+        if structured:
+            phrases = structured
+    elif not phrases and writer.logic_condition:
         # Fallback uses the same "<tag> is TRUE/FALSE" wording as the
         # normalized-reads path so the test contract for the
         # conditions clause stays consistent regardless of source.
@@ -568,6 +579,15 @@ def _build_ladder_writer_conclusions(
                 phrases=phrases,
             )
         )
+
+    unsatisfied = _unsatisfied_logic_conclusion_for_writer(
+        writer=writer,
+        target_name=target_name,
+        short_location=short_location,
+        obj_by_id=obj_by_id,
+    )
+    if unsatisfied is not None:
+        out.append(unsatisfied)
 
     # 3) Branch warning -- emitted last so it reads as a caveat
     # appended to the explanation of the writer.
@@ -1300,6 +1320,35 @@ def _xic_xio_phrase(
     return f"{tag_name}'s {member_phrase} {suffix}"
 
 
+def _comparison_operator_symbol(itype: str) -> Optional[str]:
+    return {
+        "EQU": "=",
+        "NEQ": "<>",
+        "GRT": ">",
+        "GEQ": ">=",
+        "LES": "<",
+        "LEQ": "<=",
+    }.get(itype.upper())
+
+
+def _comparison_phrase_from_operands(
+    itype: str,
+    operands: list[str],
+) -> Optional[str]:
+    operator = _comparison_operator_symbol(itype)
+    if not operator:
+        return None
+    if itype == "LIM" and len(operands) == 3:
+        low, test, high = operands
+        return f"{test} must be between {low} and {high}"
+    if len(operands) < 2:
+        return None
+    verb = _COMPARISON_VERB.get(operator)
+    if verb is None:
+        return f"{operands[0]} {operator} {operands[1]}"
+    return f"{operands[0]} {verb} {operands[1]}"
+
+
 def _comparison_phrase_from_read(
     relationship: Relationship,
     meta: dict,
@@ -1369,6 +1418,152 @@ _BRANCH_WARNING_TEXT = (
 )
 
 
+def _logic_expression_condition_phrases(
+    expr: LogicExpression,
+    *,
+    obj_by_id: dict[str, ControlObject],
+) -> list[_LadderConditionPhrase]:
+    """Build condition phrases from a structured logic tree."""
+
+    phrases: list[_LadderConditionPhrase] = []
+    for leaf in _iter_logic_expression_leaves(expr):
+        if leaf.kind == LogicExpressionKind.COMPARE:
+            itype = (leaf.instruction_type or "").upper()
+            operands = list(leaf.operands)
+            phrase_text = _comparison_phrase_from_operands(itype, operands)
+            if phrase_text is None:
+                continue
+            lhs_tag = operands[0] if operands else None
+            cmp_operator = _comparison_operator_symbol(itype)
+            phrases.append(
+                _LadderConditionPhrase(
+                    phrase=phrase_text,
+                    instruction_type=itype,
+                    tag=lhs_tag,
+                    comparison_operator=cmp_operator,
+                    compared_operands=(
+                        tuple(str(o) for o in operands) if operands else None
+                    ),
+                )
+            )
+            continue
+        if leaf.kind != LogicExpressionKind.CONTACT:
+            continue
+        tag = leaf.tag
+        if not tag:
+            continue
+        required = leaf.examined_value
+        if required is None:
+            required = (leaf.instruction_type or "").upper() == "XIC"
+        tag_name = tag
+        for obj in obj_by_id.values():
+            if obj.name == tag:
+                tag_name = obj.name
+                break
+        phrases.append(
+            _LadderConditionPhrase(
+                phrase=_xic_xio_phrase(
+                    tag_name=tag_name,
+                    required_value=bool(required),
+                    member=None,
+                    member_semantic=None,
+                ),
+                instruction_type=(leaf.instruction_type or "XIC").upper(),
+                tag=tag,
+                required_value=bool(required),
+            )
+        )
+    return phrases
+
+
+def _iter_logic_expression_leaves(
+    expr: LogicExpression,
+) -> list[LogicExpression]:
+    if expr.kind in (
+        LogicExpressionKind.AND,
+        LogicExpressionKind.OR,
+        LogicExpressionKind.NOT,
+    ):
+        out: list[LogicExpression] = []
+        for child in expr.children:
+            out.extend(_iter_logic_expression_leaves(child))
+        return out
+    return [expr]
+
+
+def _unsatisfied_logic_conclusion_for_writer(
+    *,
+    writer: Relationship,
+    target_name: str,
+    short_location: str,
+    obj_by_id: dict[str, ControlObject],
+) -> TruthConclusion | None:
+    """When tag runtime states are known, explain failing gating terms."""
+
+    expr = writer.logic_expression
+    if expr is None:
+        return None
+    meta = writer.platform_specific or {}
+    if not meta.get("logic_expression_resolved"):
+        return None
+
+    tag_values: dict[str, TagValue] = {}
+    for obj in obj_by_id.values():
+        if obj.object_type != ControlObjectType.TAG or not obj.name:
+            continue
+        state = obj.current_state or {}
+        value = state.get("value")
+        if isinstance(value, bool):
+            tag_values[obj.name] = value
+        elif isinstance(value, (int, float)):
+            tag_values[obj.name] = value
+
+    if not tag_values:
+        return None
+
+    blocking = find_blocking_terms(expr, tag_values)
+    false_terms = [t for t in blocking if t.reason == "false"]
+    if not false_terms:
+        return None
+
+    term_text = _oxford_join([t.display or t.tag or "?" for t in false_terms])
+    branch_bits = [
+        f"branch {t.branch_index + 1}"
+        for t in false_terms
+        if t.branch_index is not None
+    ]
+    branch_note = ""
+    if branch_bits:
+        branch_note = f" (parallel {', '.join(sorted(set(branch_bits)))})"
+
+    return TruthConclusion(
+        statement=(
+            f"{target_name} is not satisfied in {short_location} because "
+            f"{term_text}{branch_note}."
+        ),
+        subject_ids=[writer.target_id, writer.source_id],
+        truth_context=TruthContextType.COMPOSITE_TRUTH,
+        confidence=ConfidenceLevel.MEDIUM,
+        recommended_checks=[
+            f"Verify the failing gating terms on {short_location}.",
+        ],
+        platform_specific={
+            "trace_v2_kind": "logic_expression_unsatisfied",
+            "location": short_location,
+            "unsatisfied_terms": [
+                {
+                    "tag": t.tag,
+                    "required_value": t.required_value,
+                    "branch_index": t.branch_index,
+                    "display": t.display,
+                }
+                for t in false_terms
+            ],
+            "logic_expression_text": logic_expression_to_text(expr),
+        },
+    )
+
+
 def _branch_warning_conclusion_for_writer(
     writer: Relationship,
     short_location: str,
@@ -1384,6 +1579,8 @@ def _branch_warning_conclusion_for_writer(
 
     meta = writer.platform_specific or {}
     if not meta.get("rung_has_branches"):
+        return None
+    if meta.get("logic_expression_resolved"):
         return None
     branch_count = meta.get("rung_branch_count")
     return TruthConclusion(

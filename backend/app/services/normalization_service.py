@@ -66,11 +66,10 @@ Scope today (what this module emits)
       timer/counter member (``.DN`` / ``.TT`` / ``.EN`` / ``.ACC`` /
       ``.PRE``). ``.DN`` -> ``done``, etc.
     - ``rung_has_branches`` / ``rung_branch_count`` whenever the rung
-      contains ``BST`` / ``NXB`` / ``BND`` tokens. This is a
-      conservative signal: we tell consumers that parallel paths
-      exist and how many top-level separators were seen, but we
-      deliberately do not attribute individual instructions to
-      individual branches.
+      contains ``BST`` / ``NXB`` / ``BND`` tokens. When a structured
+      :class:`~app.models.reasoning.LogicExpression` is resolved for the
+      rung, ``logic_expression_resolved`` is also set and branch paths
+      are represented in the universal boolean tree on each edge.
 * One ``ExecutionContext`` per routine
   (``ExecutionContextType.ROUTINE``); cause/effect edges reference it
   via ``execution_context_id``.
@@ -79,8 +78,9 @@ Out of scope today (registered with implemented=False so the inventory
 is captured and future passes can implement them):
 
 * PID / control loops (``PID``).
-* Per-branch attribution of instructions (we flag a rung as branched
-  but do not say which branch a given XIC belongs to).
+* Per-branch attribution of instructions when ``LogicExpression`` cannot
+  be resolved (unclosed ``BST``, ambiguous notation) — resolved rungs
+  carry a structured boolean tree instead.
 
 Public entry point
 ------------------
@@ -120,10 +120,29 @@ TODO(intelli/normalization): Sequential Function Chart (SFC)
     normalization. SFC steps become ``ControlObjectType.SFC_STEP``,
     transitions become ``Relationship`` edges of type ``SEQUENCES`` or
     ``CONDITION_FOR``.
-TODO(intelli/normalization): Add-On Instruction (AOI) handling.
-    Instances should resolve InOut / Input / Output parameters into
-    REFERENCES / READS / WRITES against the binding tags. Needs L5X
-    connector cooperation to expose AddOnInstructionDefinition.
+Add-On Instruction (AOI) handling (NEW — universal LogicBlock)
+    An AOI instance call is normalized as a vendor-neutral **LogicBlock**:
+    the call's ``INSTRUCTION`` ControlObject is retyped to
+    ``FUNCTION_BLOCK`` and its operands are resolved against the
+    ``AddOnInstructionDef`` parameter list by position. Operand 0 is the
+    backing/instance tag (instance ``REFERENCES`` it); the remaining
+    operands bind to the AOI's call parameters (Required parameters in
+    declared order, excluding the system EnableIn/EnableOut). Direction
+    maps universally: ``Input`` -> instance ``READS`` bound tag,
+    ``Output`` -> instance ``WRITES`` bound tag, ``InOut`` -> ``READS`` +
+    ``WRITES``. The instance is linked to its internal logic routine via
+    ``CALLS`` when the connector exposed it. This is the *same* shape a
+    Siemens FB will use (``Rockwell AOI`` and ``Siemens FB`` both ->
+    ``FUNCTION_BLOCK`` + typed parameter bindings). When no definition is
+    found, behavior is unchanged (structural-only, unknown). Deferred:
+    extracting the AOI body's own instructions into edges.
+Alias / UDT resolution (NEW)
+    Alias tags emit a ``REFERENCES`` edge (alias -> base) so trace follows
+    the alias to the real signal; relationships referencing an alias carry
+    ``alias_for`` metadata. Operands that access a UDT member
+    (``Valve_DIW.Cmd``) resolve to the base tag (existing behavior) and now
+    additionally carry ``udt_type`` / ``udt_member`` / ``udt_member_type``
+    metadata when the ``DataTypeDef`` is known.
 TODO(intelli/normalization): Branch-aware ladder logic. A rung's
     parallel branches all contribute to its boolean condition, but we
     currently treat the rung text as a single condition string. A
@@ -143,10 +162,12 @@ from enum import Enum
 from typing import Any, Optional
 
 from app.models.control_model import (
+    AddOnInstructionDef,
     ControlController,
     ControlInstruction,
     ControlProject,
     ControlTag,
+    DataTypeDef,
 )
 from app.models.reasoning import (
     ConfidenceLevel,
@@ -154,9 +175,14 @@ from app.models.reasoning import (
     ControlObjectType,
     ExecutionContext,
     ExecutionContextType,
+    LogicExpression,
     Relationship,
     RelationshipType,
     WriteBehaviorType,
+)
+from app.parsers.ladder_logic import (
+    build_rung_logic_expression,
+    logic_expression_to_text,
 )
 from app.parsers.st_expression import parse_st_expression
 from app.parsers.structured_text_blocks import (
@@ -207,7 +233,9 @@ class _InstructionFamily(str, Enum):
     ROUTINE_CALL = "routine_call"      # JSR
     ONE_SHOT = "one_shot"              # ONS, OSR, OSF
     CONTROL_LOOP = "control_loop"      # PID
-    UNKNOWN = "unknown"                # AOI / vendor / unrecognized
+    NO_OP = "no_op"                    # NOP (recognized; emits no edges)
+    LOGIC_BLOCK = "logic_block"        # AOI instance call -> universal LogicBlock
+    UNKNOWN = "unknown"                # vendor / unrecognized
 
 
 @dataclass(frozen=True)
@@ -473,6 +501,22 @@ INSTRUCTION_SEMANTICS: dict[str, _InstructionSemantics] = {
         notes="Move: Dest = Source.",
         implemented=True,
     ),
+    "MOVE": _InstructionSemantics(
+        family=_InstructionFamily.MOVE_COPY,
+        read_operand_indices=(0,),
+        write_operand_index=1,
+        write_behavior=WriteBehaviorType.MOVES_VALUE,
+        notes=(
+            "Move (verbose mnemonic, ``MOVE(Source, Dest)``): same data "
+            "flow as MOV. Seen in the logixlib numeric library as a "
+            "self-move (``MOVE(X, X)``) that refreshes a string output "
+            "after an AOI writes it. Treated as a genuine move-style "
+            "opcode, NOT an AOI: no AddOnInstructionDefinition named MOVE "
+            "exists in the corpus and the two-operand source/dest shape "
+            "mirrors MOV exactly."
+        ),
+        implemented=True,
+    ),
     "COP": _InstructionSemantics(
         family=_InstructionFamily.MOVE_COPY,
         read_operand_indices=(0,),
@@ -520,6 +564,18 @@ INSTRUCTION_SEMANTICS: dict[str, _InstructionSemantics] = {
     "PID": _InstructionSemantics(
         family=_InstructionFamily.CONTROL_LOOP,
         notes="PID closed-loop control block.",
+    ),
+
+    # ---- No-operation -----------------------------------------------------
+    # NOP is Rockwell's explicit no-operation placeholder (``NOP()`` with no
+    # operands). It reads and writes nothing, so it is a *recognized* opcode
+    # that deliberately emits no cause/effect edges. ``implemented=True`` so
+    # it is not flagged in the unsupported-instruction inventory and the
+    # grader stops counting it as unknown.
+    "NOP": _InstructionSemantics(
+        family=_InstructionFamily.NO_OP,
+        notes="No Operation: recognized placeholder; reads/writes nothing.",
+        implemented=True,
     ),
 }
 
@@ -618,6 +674,70 @@ def _normalize_controller(
     # for program tags or CONTROLLER_SCOPE_KEY for controller-scope tags.
     tag_index: dict[tuple[str, str], str] = {}
 
+    # Vendor-neutral resolution maps consumed by ladder normalization:
+    #   * aoi_defs_by_name  -> resolve AOI instance calls to LogicBlocks.
+    #   * udt_defs_by_name  -> resolve UDT member accesses.
+    #   * tag_type_map      -> tag name -> declared data type (UDT lookup).
+    #   * aoi_body_routine_ids -> AOI name -> synthetic body-routine id
+    #     for the optional instance -> body CALLS edge.
+    # Keyed case-insensitively because rung mnemonics are upper-cased by
+    # some exporters while the AOI definition keeps its declared casing.
+    aoi_defs_by_name: dict[str, AddOnInstructionDef] = {
+        d.name.upper(): d for d in controller.add_on_instruction_defs
+    }
+    udt_defs_by_name: dict[str, DataTypeDef] = {
+        d.name: d for d in controller.data_type_defs
+    }
+    tag_type_map: dict[str, str] = {}
+    aoi_body_routine_ids: dict[str, str] = {}
+
+    # alias name -> base name, for annotating reads/writes that go through
+    # an alias (the alias -> base REFERENCES edge is emitted separately).
+    alias_map: dict[str, str] = {}
+    for _t in controller.controller_tags:
+        if _t.alias_for:
+            alias_map[_t.name] = _t.alias_for
+    for _prog in controller.programs:
+        for _t in _prog.tags:
+            if _t.alias_for:
+                alias_map.setdefault(_t.name, _t.alias_for)
+
+    # Materialize one synthetic ROUTINE object per AOI definition that
+    # exposes an internal logic routine, so instances can CALLS into the
+    # body. The body's own instructions are intentionally NOT extracted
+    # here (deferred); the object marks where the logic lives.
+    for upper_name, aoi_def in aoi_defs_by_name.items():
+        if not aoi_def.logic_routine:
+            continue
+        body_id = (
+            f"routine::{controller.name}/__AOI__/{aoi_def.name}"
+            f"/{aoi_def.logic_routine}"
+        )
+        aoi_body_routine_ids[upper_name] = body_id
+        control_objects.append(
+            ControlObject(
+                id=body_id,
+                name=aoi_def.logic_routine,
+                object_type=ControlObjectType.ROUTINE,
+                source_platform=source_platform,
+                source_location=(
+                    f"Controller:{controller.name}"
+                    f"/AddOnInstructionDefinition:{aoi_def.name}"
+                    f"/Routine:{aoi_def.logic_routine}"
+                ),
+                parent_ids=[controller_id],
+                attributes={
+                    "is_aoi_body": True,
+                    "aoi_name": aoi_def.name,
+                },
+                confidence=ConfidenceLevel.MEDIUM,
+                platform_specific={
+                    "parse_status": "aoi_body_not_extracted",
+                    "aoi_revision": aoi_def.revision,
+                },
+            )
+        )
+
     control_objects.append(
         ControlObject(
             id=controller_id,
@@ -636,9 +756,16 @@ def _normalize_controller(
         )
     )
 
+    # Collected so alias -> base REFERENCES edges can be emitted after all
+    # tags of the relevant scope exist. Each entry: (alias_tag, alias_id,
+    # lookup_program_name).
+    pending_alias_edges: list[tuple[ControlTag, str, str]] = []
+
     for tag in controller.controller_tags:
         tag_id = _tag_id(controller.name, CONTROLLER_SCOPE_KEY, tag.name)
         tag_index[(CONTROLLER_SCOPE_KEY, tag.name)] = tag_id
+        if tag.data_type:
+            tag_type_map.setdefault(tag.name, tag.data_type)
 
         control_objects.append(
             _tag_to_control_object(
@@ -660,6 +787,22 @@ def _normalize_controller(
                 source_platform=source_platform,
             )
         )
+        if tag.alias_for:
+            pending_alias_edges.append((tag, tag_id, CONTROLLER_SCOPE_KEY))
+
+    # Controller-scope alias edges: base must be controller-scope.
+    for alias_tag, alias_id, _scope in pending_alias_edges:
+        _emit_alias_edge(
+            alias_tag=alias_tag,
+            alias_id=alias_id,
+            controller_name=controller.name,
+            program_name=CONTROLLER_SCOPE_KEY,
+            tag_index=tag_index,
+            control_objects=control_objects,
+            relationships=relationships,
+            source_platform=source_platform,
+        )
+    pending_alias_edges.clear()
 
     for program in controller.programs:
         program_id = _program_id(controller.name, program.name)
@@ -691,6 +834,8 @@ def _normalize_controller(
         for tag in program.tags:
             tag_id = _tag_id(controller.name, program.name, tag.name)
             tag_index[(program.name, tag.name)] = tag_id
+            if tag.data_type:
+                tag_type_map.setdefault(tag.name, tag.data_type)
 
             control_objects.append(
                 _tag_to_control_object(
@@ -710,6 +855,19 @@ def _normalize_controller(
                     source_platform=source_platform,
                 )
             )
+            if tag.alias_for:
+                # Program-scope alias: base resolves program-scope first,
+                # then controller-scope (handled by the resolver).
+                _emit_alias_edge(
+                    alias_tag=tag,
+                    alias_id=tag_id,
+                    controller_name=controller.name,
+                    program_name=program.name,
+                    tag_index=tag_index,
+                    control_objects=control_objects,
+                    relationships=relationships,
+                    source_platform=source_platform,
+                )
 
         for routine in program.routines:
             _normalize_routine(
@@ -725,6 +883,11 @@ def _normalize_controller(
                 control_objects=control_objects,
                 relationships=relationships,
                 execution_contexts=execution_contexts,
+                aoi_defs=aoi_defs_by_name,
+                udt_defs=udt_defs_by_name,
+                tag_type_map=tag_type_map,
+                aoi_body_routine_ids=aoi_body_routine_ids,
+                alias_map=alias_map,
             )
 
 
@@ -746,7 +909,18 @@ def _normalize_routine(
     control_objects: list[ControlObject],
     relationships: list[Relationship],
     execution_contexts: list[ExecutionContext],
+    aoi_defs: Optional[dict[str, AddOnInstructionDef]] = None,
+    udt_defs: Optional[dict[str, DataTypeDef]] = None,
+    tag_type_map: Optional[dict[str, str]] = None,
+    aoi_body_routine_ids: Optional[dict[str, str]] = None,
+    alias_map: Optional[dict[str, str]] = None,
 ) -> None:
+
+    aoi_defs = aoi_defs or {}
+    udt_defs = udt_defs or {}
+    tag_type_map = tag_type_map or {}
+    aoi_body_routine_ids = aoi_body_routine_ids or {}
+    alias_map = alias_map or {}
 
     routine_id = _routine_id(controller_name, program_name, routine.name)
     routine_loc = f"{program_loc}/Routine:{routine.name}"
@@ -822,6 +996,11 @@ def _normalize_routine(
             routine_index=routine_index,
             control_objects=control_objects,
             relationships=relationships,
+            aoi_defs=aoi_defs,
+            udt_defs=udt_defs,
+            tag_type_map=tag_type_map,
+            aoi_body_routine_ids=aoi_body_routine_ids,
+            alias_map=alias_map,
         )
         return
 
@@ -958,6 +1137,15 @@ class _RungContext:
     rung_has_branches: bool = False
     rung_branch_count: int = 1
     branch_warnings: list[str] = field(default_factory=list)
+    logic_expression: LogicExpression | None = None
+    logic_expression_resolved: bool = False
+    logic_expression_warnings: list[str] = field(default_factory=list)
+    # Vendor-neutral resolution maps (AOI / UDT / alias enrichment).
+    aoi_defs: dict[str, AddOnInstructionDef] = field(default_factory=dict)
+    udt_defs: dict[str, DataTypeDef] = field(default_factory=dict)
+    tag_type_map: dict[str, str] = field(default_factory=dict)
+    aoi_body_routine_ids: dict[str, str] = field(default_factory=dict)
+    alias_map: dict[str, str] = field(default_factory=dict)
 
 
 def _normalize_ladder_routine(
@@ -974,7 +1162,18 @@ def _normalize_ladder_routine(
     routine_index: dict[tuple[str, str, str], str],
     control_objects: list[ControlObject],
     relationships: list[Relationship],
+    aoi_defs: Optional[dict[str, AddOnInstructionDef]] = None,
+    udt_defs: Optional[dict[str, DataTypeDef]] = None,
+    tag_type_map: Optional[dict[str, str]] = None,
+    aoi_body_routine_ids: Optional[dict[str, str]] = None,
+    alias_map: Optional[dict[str, str]] = None,
 ) -> None:
+
+    aoi_defs = aoi_defs or {}
+    udt_defs = udt_defs or {}
+    tag_type_map = tag_type_map or {}
+    aoi_body_routine_ids = aoi_body_routine_ids or {}
+    alias_map = alias_map or {}
 
     rungs_by_number: dict[int, list[ControlInstruction]] = {}
     for instruction in instructions:
@@ -1024,6 +1223,16 @@ def _normalize_ladder_routine(
             and not _BRANCH_BND_RE.search(rung_raw_text)
         ):
             branch_warnings.append("missing_bnd_after_bst")
+
+        logic_expr, logic_warnings, logic_resolved = (
+            build_rung_logic_expression(
+                rung_instructions,
+                rung_raw_text=rung_raw_text,
+                rung_number=rung_number,
+            )
+        )
+        logic_expr_text = logic_expression_to_text(logic_expr)
+
         control_objects.append(
             ControlObject(
                 id=rung_id,
@@ -1037,6 +1246,7 @@ def _normalize_ladder_routine(
                     "instruction_count": len(rung_instructions),
                     "has_branches": rung_has_branches,
                     "branch_count": rung_branch_count,
+                    "logic_expression_resolved": logic_resolved,
                 },
                 confidence=ConfidenceLevel.HIGH,
                 platform_specific={
@@ -1044,6 +1254,8 @@ def _normalize_ladder_routine(
                     "rung_has_branches": rung_has_branches,
                     "rung_branch_count": rung_branch_count,
                     "branch_warnings": branch_warnings,
+                    "logic_expression_text": logic_expr_text,
+                    "logic_expression_warnings": logic_warnings,
                 },
             )
         )
@@ -1076,6 +1288,14 @@ def _normalize_ladder_routine(
             rung_has_branches=rung_has_branches,
             rung_branch_count=rung_branch_count,
             branch_warnings=branch_warnings,
+            logic_expression=logic_expr,
+            logic_expression_resolved=logic_resolved,
+            logic_expression_warnings=logic_warnings,
+            aoi_defs=aoi_defs,
+            udt_defs=udt_defs,
+            tag_type_map=tag_type_map,
+            aoi_body_routine_ids=aoi_body_routine_ids,
+            alias_map=alias_map,
         )
 
         for instruction in rung_instructions:
@@ -1109,10 +1329,56 @@ def _normalize_ladder_routine(
                 )
             )
 
-            _dispatch_instruction_semantics(
-                instruction=instruction,
-                ctx=rung_ctx,
+            # AOI instance calls are resolved as universal LogicBlocks
+            # (retype the instruction object to FUNCTION_BLOCK + emit
+            # typed parameter-binding edges). Everything else flows
+            # through the registry-driven dispatcher.
+            aoi_def = rung_ctx.aoi_defs.get(
+                instruction.instruction_type.upper()
             )
+            if aoi_def is not None:
+                _handle_aoi_instance(
+                    instruction=instruction,
+                    instr_id=instr_id,
+                    instr_obj=control_objects[-1],
+                    aoi_def=aoi_def,
+                    ctx=rung_ctx,
+                )
+            else:
+                _dispatch_instruction_semantics(
+                    instruction=instruction,
+                    ctx=rung_ctx,
+                )
+
+        if logic_expr is not None:
+            _attach_rung_logic_expression(
+                relationships=relationships,
+                rung_id=rung_id,
+                logic_expression=logic_expr,
+                logic_resolved=logic_resolved,
+            )
+
+
+def _attach_rung_logic_expression(
+    *,
+    relationships: list[Relationship],
+    rung_id: str,
+    logic_expression: LogicExpression,
+    logic_resolved: bool,
+) -> None:
+    """Copy the rung's structured gating tree onto cause/effect edges."""
+
+    for idx, rel in enumerate(relationships):
+        if rel.source_id != rung_id:
+            continue
+        if rel.relationship_type == RelationshipType.CONTAINS:
+            continue
+        updates: dict = {"logic_expression": logic_expression}
+        if logic_resolved:
+            ps = dict(rel.platform_specific or {})
+            ps["logic_expression_resolved"] = True
+            updates["platform_specific"] = ps
+        relationships[idx] = rel.model_copy(update=updates)
 
 
 # ---------------------------------------------------------------------------
@@ -2214,9 +2480,12 @@ def _dispatch_instruction_semantics(
         _handle_move_copy(instruction, sem, ctx)
     elif family == _InstructionFamily.ONE_SHOT:
         _handle_one_shot(instruction, sem, ctx)
-    # PID / CONTROL_LOOP and UNKNOWN families remain undispatched -- they
-    # are still represented structurally as INSTRUCTION ControlObjects
-    # via the CONTAINS pass.
+    # NO_OP (NOP), PID / CONTROL_LOOP, LOGIC_BLOCK, and UNKNOWN families
+    # remain undispatched here. NO_OP is intentionally edge-free but
+    # recognized; AOI instances (LOGIC_BLOCK) are resolved by
+    # ``_handle_aoi_instance`` before this dispatcher runs; the rest are
+    # still represented structurally as INSTRUCTION ControlObjects via
+    # the CONTAINS pass.
 
 
 def _handle_condition(
@@ -2434,6 +2703,219 @@ def _handle_routine_call(
                         "gating_kind": "jsr_parameter",
                     },
                 ),
+            )
+        )
+
+
+# ---------------------------------------------------------------------------
+# Add-On Instruction (AOI) instance resolution -> universal LogicBlock
+# ---------------------------------------------------------------------------
+
+# System-defined AOI parameters that are NEVER passed positionally at the
+# call site (EnableIn is driven by the rung condition; EnableOut is the
+# rung-out state). Compared upper-case.
+_AOI_SYSTEM_PARAMS = frozenset({"ENABLEIN", "ENABLEOUT"})
+
+
+def _aoi_usage_to_relationships(
+    usage: Optional[str],
+) -> tuple[RelationshipType, ...]:
+    """Map an AOI parameter Usage to universal relationship direction(s).
+
+    ``Input`` -> the instance READS the bound tag.
+    ``Output`` -> the instance WRITES the bound tag.
+    ``InOut`` -> the instance both READS and WRITES (by-reference).
+    Unknown / missing usage -> no edge (do not guess direction).
+    """
+
+    u = (usage or "").strip().lower()
+    if u == "input":
+        return (RelationshipType.READS,)
+    if u == "output":
+        return (RelationshipType.WRITES,)
+    if u == "inout":
+        return (RelationshipType.READS, RelationshipType.WRITES)
+    return ()
+
+
+def _handle_aoi_instance(
+    instruction: ControlInstruction,
+    instr_id: str,
+    instr_obj: ControlObject,
+    aoi_def: AddOnInstructionDef,
+    ctx: _RungContext,
+) -> None:
+    """Resolve an AOI instance call into a vendor-neutral LogicBlock.
+
+    The call's INSTRUCTION ControlObject is retyped to ``FUNCTION_BLOCK``
+    (the universal LogicBlock). Operand 0 is the backing/instance tag
+    (instance ``REFERENCES`` it). The remaining operands bind to the AOI's
+    *call parameters* by position and emit ``READS`` / ``WRITES`` per the
+    parameter Usage. This is the same shape a Siemens FB instance will map
+    to.
+
+    Call-parameter ordering (Rockwell neutral text): operands after the
+    backing tag correspond to the parameters with ``Required="true"`` in
+    declared order, excluding the system EnableIn/EnableOut. We verify the
+    operand count matches before binding; on a mismatch we stay
+    conservative (backing reference only) and flag it rather than guessing
+    a misaligned mapping.
+    """
+
+    operands = list(instruction.operands)
+
+    # Retype the instruction object into the universal LogicBlock.
+    instr_obj.object_type = ControlObjectType.FUNCTION_BLOCK
+    attrs = dict(instr_obj.attributes or {})
+    attrs["is_aoi_instance"] = True
+    attrs["aoi_name"] = aoi_def.name
+    attrs["block_kind"] = "add_on_instruction"
+    attrs["semantic_family"] = _InstructionFamily.LOGIC_BLOCK.value
+    attrs["semantic_implemented"] = True
+    instr_obj.attributes = attrs
+    ps = dict(instr_obj.platform_specific or {})
+    ps["aoi_name"] = aoi_def.name
+    ps["aoi_revision"] = aoi_def.revision
+    instr_obj.platform_specific = ps
+
+    if not operands:
+        return
+
+    # --- Backing / instance tag (operand 0) -------------------------------
+    backing_operand = operands[0]
+    if backing_operand and _looks_like_tag_operand(backing_operand):
+        backing_id = _resolve_tag_id_or_stub(
+            operand=backing_operand,
+            controller_name=ctx.controller_name,
+            program_name=ctx.program_name,
+            tag_index=ctx.tag_index,
+            control_objects=ctx.control_objects,
+        )
+        ctx.relationships.append(
+            Relationship(
+                source_id=instr_id,
+                target_id=backing_id,
+                relationship_type=RelationshipType.REFERENCES,
+                execution_context_id=ctx.exec_ctx_id,
+                logic_condition=ctx.rung_raw_text,
+                source_platform="rockwell",
+                source_location=ctx.rung_loc,
+                confidence=ConfidenceLevel.HIGH,
+                platform_specific=_rel_meta(
+                    ctx,
+                    instruction,
+                    operand=backing_operand,
+                    extras={
+                        "aoi_name": aoi_def.name,
+                        "aoi_role": "backing_tag",
+                        "gating_kind": "aoi_backing",
+                    },
+                ),
+            )
+        )
+
+    # --- Determine the call-parameter ordering ----------------------------
+    bound_operands = operands[1:]
+    n_args = len(bound_operands)
+
+    params_all = [
+        p for p in aoi_def.parameters
+        if p.name.upper() not in _AOI_SYSTEM_PARAMS
+    ]
+    params_required = [p for p in params_all if p.required]
+
+    mapped_params = None
+    binding_basis = None
+    if n_args == len(params_required):
+        mapped_params = params_required
+        binding_basis = "required_params"
+    elif n_args == len(params_all):
+        mapped_params = params_all
+        binding_basis = "all_visible_params"
+
+    if mapped_params is None:
+        # Operand count matches neither the Required-only nor the full
+        # call-parameter list. Do NOT guess a misaligned mapping; record
+        # the ambiguity so a controls engineer can review.
+        ps = dict(instr_obj.platform_specific or {})
+        ps["aoi_binding_status"] = "operand_count_mismatch"
+        ps["aoi_arg_count"] = n_args
+        ps["aoi_required_param_count"] = len(params_required)
+        ps["aoi_total_param_count"] = len(params_all)
+        instr_obj.platform_specific = ps
+        return
+
+    instr_obj.attributes["aoi_binding_basis"] = binding_basis
+
+    # --- Bind operands -> parameters by position --------------------------
+    for idx, (param, operand) in enumerate(
+        zip(mapped_params, bound_operands), start=1
+    ):
+        if not operand or not _looks_like_tag_operand(operand):
+            # Literal / constant argument: nothing to wire, but keep going
+            # so later positional bindings stay aligned.
+            continue
+        rel_types = _aoi_usage_to_relationships(param.usage)
+        if not rel_types:
+            continue
+        target_id = _resolve_tag_id_or_stub(
+            operand=operand,
+            controller_name=ctx.controller_name,
+            program_name=ctx.program_name,
+            tag_index=ctx.tag_index,
+            control_objects=ctx.control_objects,
+        )
+        for rel_type in rel_types:
+            write_behavior = (
+                WriteBehaviorType.MOVES_VALUE
+                if rel_type == RelationshipType.WRITES
+                else None
+            )
+            ctx.relationships.append(
+                Relationship(
+                    source_id=instr_id,
+                    target_id=target_id,
+                    relationship_type=rel_type,
+                    write_behavior=write_behavior,
+                    execution_context_id=ctx.exec_ctx_id,
+                    logic_condition=ctx.rung_raw_text,
+                    source_platform="rockwell",
+                    source_location=ctx.rung_loc,
+                    confidence=ConfidenceLevel.HIGH,
+                    platform_specific=_rel_meta(
+                        ctx,
+                        instruction,
+                        operand=operand,
+                        extras={
+                            "aoi_name": aoi_def.name,
+                            "parameter_name": param.name,
+                            "parameter_usage": param.usage,
+                            "parameter_data_type": param.data_type,
+                            "operand_index": idx,
+                            "gating_kind": "aoi_parameter",
+                        },
+                    ),
+                )
+            )
+
+    # --- Optional: link the instance to its internal logic routine --------
+    body_id = ctx.aoi_body_routine_ids.get(aoi_def.name.upper())
+    if body_id:
+        ctx.relationships.append(
+            Relationship(
+                source_id=instr_id,
+                target_id=body_id,
+                relationship_type=RelationshipType.CALLS,
+                execution_context_id=ctx.exec_ctx_id,
+                source_platform="rockwell",
+                source_location=ctx.rung_loc,
+                confidence=ConfidenceLevel.MEDIUM,
+                platform_specific={
+                    "instruction_type": instruction.instruction_type,
+                    "instruction_id": instruction.id,
+                    "aoi_name": aoi_def.name,
+                    "calls_kind": "aoi_body",
+                },
             )
         )
 
@@ -2843,6 +3325,116 @@ def _looks_like_tag_operand(value: str) -> bool:
     )
 
 
+def _emit_alias_edge(
+    alias_tag: ControlTag,
+    alias_id: str,
+    controller_name: str,
+    program_name: str,
+    tag_index: dict[tuple[str, str], str],
+    control_objects: list[ControlObject],
+    relationships: list[Relationship],
+    source_platform: str,
+) -> None:
+    """Emit an ``alias -> base`` REFERENCES edge so trace follows aliases.
+
+    The base tag is resolved through the normal tag resolver (program
+    scope then controller scope), creating a low-confidence stub if the
+    base is not present. Also records ``alias_for`` on the alias tag's
+    own ControlObject attributes for display.
+    """
+
+    base_name = alias_tag.alias_for
+    if not base_name:
+        return
+
+    base_id = _resolve_tag_id_or_stub(
+        operand=base_name,
+        controller_name=controller_name,
+        program_name=program_name,
+        tag_index=tag_index,
+        control_objects=control_objects,
+    )
+
+    # Annotate the alias tag object itself.
+    for obj in reversed(control_objects):
+        if obj.id == alias_id:
+            obj.attributes = dict(obj.attributes or {})
+            obj.attributes["alias_for"] = base_name
+            ps = dict(obj.platform_specific or {})
+            ps["alias_for"] = base_name
+            obj.platform_specific = ps
+            break
+
+    relationships.append(
+        Relationship(
+            source_id=alias_id,
+            target_id=base_id,
+            relationship_type=RelationshipType.REFERENCES,
+            source_platform=source_platform,
+            confidence=ConfidenceLevel.HIGH,
+            platform_specific={
+                "alias_for": base_name,
+                "reference_kind": "alias",
+            },
+        )
+    )
+
+
+def _alias_base_for(
+    operand: Optional[str], ctx: "_RungContext"
+) -> Optional[str]:
+    """Return the alias base name if ``operand`` (or its root) is an alias."""
+
+    if not operand or not ctx.alias_map:
+        return None
+    s = operand.strip()
+    if s in ctx.alias_map:
+        return ctx.alias_map[s]
+    root = s.split(".", 1)[0].split("[", 1)[0]
+    if root in ctx.alias_map:
+        return ctx.alias_map[root]
+    return None
+
+
+def _udt_member_meta(
+    operand: Optional[str],
+    tag_type_map: dict[str, str],
+    udt_defs: dict[str, "DataTypeDef"],
+) -> Optional[dict[str, str]]:
+    """Resolve a ``Base.Member`` operand against a known UDT definition.
+
+    Returns ``{"udt_type", "udt_base", "udt_member", "udt_member_type"}``
+    when ``Base`` is a tag of a known UDT type and ``Member`` is one of
+    that type's declared members; else None. Nested members
+    (``Base.Sub.Bit``) resolve the first level only.
+    """
+
+    if not operand or "." not in operand:
+        return None
+    s = operand.strip()
+    base = s.split(".", 1)[0].split("[", 1)[0]
+    member = s.split(".", 1)[1].split(".", 1)[0].split("[", 1)[0]
+    if not base or not member:
+        return None
+    udt_type = tag_type_map.get(base)
+    if not udt_type:
+        return None
+    udt_def = udt_defs.get(udt_type)
+    if udt_def is None:
+        return None
+    for m in udt_def.members:
+        if m.name == member:
+            meta = {
+                "udt_type": udt_type,
+                "udt_base": base,
+                "udt_member": member,
+            }
+            if m.data_type:
+                meta["udt_member_type"] = m.data_type
+            return meta
+    return None
+
+
 def _member_suffix(operand: Optional[str]) -> Optional[dict[str, str]]:
     """Return ``{'member': '.DN', 'semantic': 'done'}`` if ``operand``
     accesses a known timer/counter member, else None.
@@ -2926,9 +3518,17 @@ def _rel_meta(
     if member_info:
         meta["member"] = member_info["member"]
         meta["member_semantic"] = member_info["semantic"]
+    udt_info = _udt_member_meta(operand, ctx.tag_type_map, ctx.udt_defs)
+    if udt_info:
+        meta.update(udt_info)
+    alias_base = _alias_base_for(operand, ctx)
+    if alias_base:
+        meta["alias_for"] = alias_base
     if ctx.rung_has_branches:
         meta["rung_has_branches"] = True
         meta["rung_branch_count"] = ctx.rung_branch_count
+    if ctx.logic_expression_resolved:
+        meta["logic_expression_resolved"] = True
     if ctx.branch_warnings:
         meta["branch_warnings"] = list(ctx.branch_warnings)
     if extras:

@@ -2,11 +2,15 @@ from lxml import etree
 
 from app.connectors.base import ConnectorMatch, PlatformConnector
 from app.models.control_model import (
+    AddOnInstructionDef,
+    AOIParameter,
     ControlController,
     ControlProgram,
     ControlProject,
     ControlRoutine,
     ControlTag,
+    DataTypeDef,
+    DataTypeMember,
 )
 from app.parsers.fbd import extract_fbd_tags, parse_l5x_fbd_routine
 from app.parsers.ladder import extract_operand_tags, parse_ladder_rung_text
@@ -34,11 +38,139 @@ def _tag_from_element(element: etree._Element, scope: str) -> ControlTag:
         description=description.strip() if description else None,
         scope=scope,
         platform_source="rockwell_l5x",
+        alias_for=element.get("AliasFor") or None,
         metadata={
             "tag_type": element.get("TagType"),
             "external_access": element.get("ExternalAccess"),
+            "alias_for": element.get("AliasFor"),
         },
     )
+
+
+def _bool_attr(element: etree._Element, name: str, default: bool = False) -> bool:
+    raw = element.get(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in {"true", "1", "yes"}
+
+
+def _parse_aoi_definitions(
+    controller_element: etree._Element | None,
+) -> list[AddOnInstructionDef]:
+    """Parse ``<AddOnInstructionDefinitions>`` into staging models.
+
+    Captures each AOI's name, its declared parameters (Name / Usage /
+    DataType / Required / Visible / alias target) in document order, and
+    the name of its internal logic routine (if present) so the normalizer
+    can optionally link an instance to its body via a CALLS edge.
+    """
+
+    if controller_element is None:
+        return []
+
+    defs: list[AddOnInstructionDef] = []
+    for aoi in controller_element.findall(
+        "./AddOnInstructionDefinitions/AddOnInstructionDefinition"
+    ):
+        name = _attr(aoi, "Name")
+        if not name:
+            continue
+
+        params: list[AOIParameter] = []
+        for p in aoi.findall("./Parameters/Parameter"):
+            pname = _attr(p, "Name")
+            if not pname:
+                continue
+            params.append(
+                AOIParameter(
+                    name=pname,
+                    usage=p.get("Usage"),
+                    data_type=p.get("DataType"),
+                    required=_bool_attr(p, "Required", False),
+                    visible=_bool_attr(p, "Visible", True),
+                    alias_for=p.get("AliasFor") or None,
+                )
+            )
+
+        # Internal logic routine: prefer one literally named "Logic",
+        # else the first RLL/ST routine, else the first routine.
+        logic_routine: str | None = None
+        routine_els = aoi.findall("./Routines/Routine")
+        for r in routine_els:
+            if (r.get("Name") or "").lower() == "logic":
+                logic_routine = r.get("Name")
+                break
+        if logic_routine is None:
+            for r in routine_els:
+                if (r.get("Type") or "").upper() in {"RLL", "ST"}:
+                    logic_routine = r.get("Name")
+                    break
+        if logic_routine is None and routine_els:
+            logic_routine = routine_els[0].get("Name")
+
+        description = aoi.findtext("./Description")
+        defs.append(
+            AddOnInstructionDef(
+                name=name,
+                parameters=params,
+                logic_routine=logic_routine,
+                revision=aoi.get("Revision"),
+                description=description.strip() if description else None,
+                metadata={"class": aoi.get("Class"), "vendor": aoi.get("Vendor")},
+            )
+        )
+    return defs
+
+
+def _parse_data_type_defs(
+    controller_element: etree._Element | None,
+) -> list[DataTypeDef]:
+    """Parse user-defined ``<DataTypes>`` (UDTs) into staging models.
+
+    Hidden host members (Rockwell pads UDTs with ``ZZZZZZZZZZ...`` filler
+    and ``Hidden="true"`` members) are skipped so only the engineer-facing
+    members survive.
+    """
+
+    if controller_element is None:
+        return []
+
+    defs: list[DataTypeDef] = []
+    for dt in controller_element.findall("./DataTypes/DataType"):
+        # Only user-defined types are UDTs; predefined/module types are
+        # already understood structurally.
+        if (dt.get("Class") or "User") not in {"User", None}:
+            continue
+        name = _attr(dt, "Name")
+        if not name:
+            continue
+        members: list[DataTypeMember] = []
+        for m in dt.findall("./Members/Member"):
+            mname = _attr(m, "Name")
+            if not mname:
+                continue
+            if _bool_attr(m, "Hidden", False):
+                continue
+            if mname.upper().startswith("ZZZZZZZZZZ"):
+                continue
+            mdesc = m.findtext("./Description")
+            members.append(
+                DataTypeMember(
+                    name=mname,
+                    data_type=m.get("DataType"),
+                    description=mdesc.strip() if mdesc else None,
+                )
+            )
+        dtdesc = dt.findtext("./Description")
+        defs.append(
+            DataTypeDef(
+                name=name,
+                members=members,
+                description=dtdesc.strip() if dtdesc else None,
+                metadata={"family": dt.get("Family")},
+            )
+        )
+    return defs
 
 
 def _extract_structured_text(routine_element: etree._Element) -> str:
@@ -121,6 +253,9 @@ class RockwellL5XConnector(PlatformConnector):
             if tag.get("Name")
         ]
 
+        aoi_defs = _parse_aoi_definitions(controller_element)
+        data_type_defs = _parse_data_type_defs(controller_element)
+
         programs: list[ControlProgram] = []
 
         for program_element in root.findall(".//Programs/Program"):
@@ -160,6 +295,8 @@ class RockwellL5XConnector(PlatformConnector):
                     platform="rockwell",
                     controller_tags=controller_tags,
                     programs=programs,
+                    add_on_instruction_defs=aoi_defs,
+                    data_type_defs=data_type_defs,
                 )
             ],
             metadata={

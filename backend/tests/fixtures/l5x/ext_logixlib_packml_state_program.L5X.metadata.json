@@ -1,0 +1,11 @@
+{
+  "platform": "rockwell",
+  "language": "ladder",
+  "expected_capabilities": ["ladder", "aoi_instances", "udt", "indexed_addressing"],
+  "known_unsupported_features": [
+    "AOI instance opcodes are reported as unknown (OP_PERMISSIVE, OP_PACKMLSTATE) because user-defined AOI names are not in INSTRUCTION_SEMANTICS",
+    "AOI definition body logic (carried in ContainsContext) is not extracted into program routines/instructions",
+    "NOP rungs counted as unknown opcodes"
+  ],
+  "parser_notes": "REAL external fixture. Source: https://github.com/JeremyMedders/LogixLibraries (file src/Process/Dev_PackML_State_Program.L5X). License: MIT. Studio 5000 v35 Program-scope export (TargetType=Program, ContainsContext=true). PackML state-machine demo: 614 rungs, 25 routines, 622 tags, 5 AOI definitions, 1 UDT, JSR x17, heavy indexed/array addressing. Grader: grade A, ~96.9% known-instruction coverage (1192 instr). Library/design-pattern code by one author, not de-identified plant code, but genuinely complex and license-safe. De-identified: embedded personal/vendor identifiers in the L5X were scrubbed with tools/deidentify_l5x.py (Vendor/CreatedBy/EditedBy -> INTELLI, ExportDate neutralized, Controller context Name DEVPAC -> INTELLI_Context); CDATA logic left byte-identical (grade A / 96.9% coverage unchanged before and after). MIT source/license attribution above is retained here intentionally and was NOT scrubbed from metadata."
+}

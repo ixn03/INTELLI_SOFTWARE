@@ -1,0 +1,157 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<RSLogix5000Content SchemaRevision="1.0" SoftwareRevision="35.00" TargetName="Synthetic_TankFarm" TargetType="Controller" ContainsContext="false" Owner="INTELLI" ExportDate="Thu Jun 05 00:00:00 2026" ExportOptions="References DecoratedData Context Dependencies">
+  <Controller Name="Synthetic_TankFarm" ProcessorType="1756-L85E" MajorRev="35" MinorRev="11" TimeSlice="20" ProjectCreationDate="Thu Jun 05 00:00:00 2026" LastModifiedDate="Thu Jun 05 00:00:00 2026">
+    <RedundancyInfo Enabled="false"/>
+    <Security Code="0"/>
+    <DataTypes>
+      <DataType Name="Valve_UDT" Family="NoFamily" Class="User">
+        <Description><![CDATA[On/off process valve with command, feedback and fail-to-move diagnostic.]]></Description>
+        <Members>
+          <Member Name="Cmd" DataType="BOOL" Dimension="0" Radix="Decimal" Hidden="false" ExternalAccess="Read/Write"><Description><![CDATA[Open command to the valve solenoid.]]></Description></Member>
+          <Member Name="Fbk" DataType="BOOL" Dimension="0" Radix="Decimal" Hidden="false" ExternalAccess="Read/Write"><Description><![CDATA[Open limit-switch feedback.]]></Description></Member>
+          <Member Name="Fault" DataType="BOOL" Dimension="0" Radix="Decimal" Hidden="false" ExternalAccess="Read/Write"><Description><![CDATA[Latched fail-to-open fault.]]></Description></Member>
+          <Member Name="FailTimer" DataType="TIMER" Dimension="0" Radix="NullType" Hidden="false" ExternalAccess="Read/Write"><Description><![CDATA[Fail-to-move debounce timer.]]></Description></Member>
+        </Members>
+      </DataType>
+      <DataType Name="Motor_UDT" Family="NoFamily" Class="User">
+        <Description><![CDATA[Discrete motor with run command, running feedback and overload fault.]]></Description>
+        <Members>
+          <Member Name="Run_Cmd" DataType="BOOL" Dimension="0" Radix="Decimal" Hidden="false" ExternalAccess="Read/Write"><Description><![CDATA[Run command to the starter.]]></Description></Member>
+          <Member Name="Fbk" DataType="BOOL" Dimension="0" Radix="Decimal" Hidden="false" ExternalAccess="Read/Write"><Description><![CDATA[Auxiliary contact running feedback.]]></Description></Member>
+          <Member Name="Overload" DataType="BOOL" Dimension="0" Radix="Decimal" Hidden="false" ExternalAccess="Read/Write"><Description><![CDATA[Motor overload trip.]]></Description></Member>
+        </Members>
+      </DataType>
+    </DataTypes>
+    <Modules/>
+    <AddOnInstructionDefinitions>
+      <AddOnInstructionDefinition Name="MotorStarter" Revision="1.0" Class="Standard" ExecutePrescan="false" ExecutePostscan="false" ExecuteEnableInFalse="false" CreatedDate="2026-06-05T00:00:00.000Z" EditedDate="2026-06-05T00:00:00.000Z" SoftwareRevision="v35.00">
+        <Description><![CDATA[Reusable across-the-line motor starter with seal-in, permissive gating and overload trip.]]></Description>
+        <Parameters>
+          <Parameter Name="EnableIn" TagType="Base" DataType="BOOL" Usage="Input" Radix="Decimal" Required="false" Visible="false" ExternalAccess="Read Only"/>
+          <Parameter Name="Start" TagType="Base" DataType="BOOL" Usage="Input" Radix="Decimal" Required="true" Visible="true" ExternalAccess="Read/Write"><Description><![CDATA[Momentary start request.]]></Description></Parameter>
+          <Parameter Name="Stop" TagType="Base" DataType="BOOL" Usage="Input" Radix="Decimal" Required="true" Visible="true" ExternalAccess="Read/Write"><Description><![CDATA[Momentary stop request (normally true).]]></Description></Parameter>
+          <Parameter Name="Permissive" TagType="Base" DataType="BOOL" Usage="Input" Radix="Decimal" Required="true" Visible="true" ExternalAccess="Read/Write"><Description><![CDATA[All permissives healthy.]]></Description></Parameter>
+          <Parameter Name="Overload" TagType="Base" DataType="BOOL" Usage="Input" Radix="Decimal" Required="true" Visible="true" ExternalAccess="Read/Write"><Description><![CDATA[Overload trip input.]]></Description></Parameter>
+          <Parameter Name="Run" TagType="Base" DataType="BOOL" Usage="Output" Radix="Decimal" Required="true" Visible="true" ExternalAccess="Read/Write"><Description><![CDATA[Run output to contactor.]]></Description></Parameter>
+        </Parameters>
+        <LocalTags/>
+        <Routines>
+          <Routine Name="Logic" Type="RLL">
+            <RLLContent>
+              <Rung Number="0" Type="N">
+                <Comment><![CDATA[Seal-in run with stop, permissive and overload interlock.]]></Comment>
+                <Text><![CDATA[XIC(Permissive) XIO(Overload) XIC(Stop) BST XIC(Start) NXB XIC(Run) BND OTE(Run);]]></Text>
+              </Rung>
+            </RLLContent>
+          </Routine>
+        </Routines>
+      </AddOnInstructionDefinition>
+    </AddOnInstructionDefinitions>
+    <Tags>
+      <Tag Name="HMI_Start" TagType="Base" DataType="BOOL" Radix="Decimal" Constant="false" ExternalAccess="Read/Write"><Description><![CDATA[HMI momentary start request (base tag for alias).]]></Description></Tag>
+      <Tag Name="Start_PB" TagType="Alias" Radix="Decimal" AliasFor="HMI_Start" ExternalAccess="Read/Write"><Description><![CDATA[Field start pushbutton, aliased to HMI_Start.]]></Description></Tag>
+      <Tag Name="Stop_PB" TagType="Base" DataType="BOOL" Radix="Decimal" Constant="false" ExternalAccess="Read/Write"><Description><![CDATA[Stop pushbutton (NC, true = not pressed).]]></Description></Tag>
+      <Tag Name="EStop_OK" TagType="Base" DataType="BOOL" Radix="Decimal" Constant="false" ExternalAccess="Read/Write"><Description><![CDATA[E-stop string healthy.]]></Description></Tag>
+      <Tag Name="Air_Pressure_OK" TagType="Base" DataType="BOOL" Radix="Decimal" Constant="false" ExternalAccess="Read/Write"/>
+      <Tag Name="Guard_Closed" TagType="Base" DataType="BOOL" Radix="Decimal" Constant="false" ExternalAccess="Read/Write"/>
+      <Tag Name="Permissive_OK" TagType="Base" DataType="BOOL" Radix="Decimal" Constant="false" ExternalAccess="Read/Write"/>
+      <Tag Name="AutoMode" TagType="Base" DataType="BOOL" Radix="Decimal" Constant="false" ExternalAccess="Read/Write"/>
+      <Tag Name="Run_Cmd" TagType="Base" DataType="BOOL" Radix="Decimal" Constant="false" ExternalAccess="Read/Write"><Description><![CDATA[Sealed-in master run command.]]></Description></Tag>
+      <Tag Name="Start_OneShot" TagType="Base" DataType="BOOL" Radix="Decimal" Constant="false" ExternalAccess="Read/Write"/>
+      <Tag Name="State_Idle" TagType="Base" DataType="BOOL" Radix="Decimal" Constant="false" ExternalAccess="Read/Write"/>
+      <Tag Name="State_Fill" TagType="Base" DataType="BOOL" Radix="Decimal" Constant="false" ExternalAccess="Read/Write"/>
+      <Tag Name="State_Mix" TagType="Base" DataType="BOOL" Radix="Decimal" Constant="false" ExternalAccess="Read/Write"/>
+      <Tag Name="State_Transfer" TagType="Base" DataType="BOOL" Radix="Decimal" Constant="false" ExternalAccess="Read/Write"/>
+      <Tag Name="Lamp_Running" TagType="Base" DataType="BOOL" Radix="Decimal" Constant="false" ExternalAccess="Read/Write"/>
+      <Tag Name="Tank_Level" TagType="Base" DataType="REAL" Radix="Float" Constant="false" ExternalAccess="Read/Write"/>
+      <Tag Name="Target_Level" TagType="Base" DataType="REAL" Radix="Float" Constant="false" ExternalAccess="Read/Write"/>
+      <Tag Name="Step_Number" TagType="Base" DataType="DINT" Radix="Decimal" Constant="false" ExternalAccess="Read/Write"/>
+      <Tag Name="Fill_Timer" TagType="Base" DataType="TIMER" Radix="NullType" Constant="false" ExternalAccess="Read/Write"/>
+      <Tag Name="Batch_Counter" TagType="Base" DataType="COUNTER" Radix="NullType" Constant="false" ExternalAccess="Read/Write"/>
+      <Tag Name="Valve_DIW" TagType="Base" DataType="Valve_UDT" Constant="false" ExternalAccess="Read/Write"><Description><![CDATA[Deionized-water inlet valve (UDT instance).]]></Description></Tag>
+      <Tag Name="Pump_Transfer" TagType="Base" DataType="Motor_UDT" Constant="false" ExternalAccess="Read/Write"><Description><![CDATA[Transfer pump (UDT instance).]]></Description></Tag>
+      <Tag Name="Agitator_Motor" TagType="Base" DataType="MotorStarter" Constant="false" ExternalAccess="Read/Write"><Description><![CDATA[Agitator motor (AOI backing tag).]]></Description></Tag>
+      <Tag Name="Seq_Array" TagType="Base" DataType="DINT" Dimensions="8" Radix="Decimal" Constant="false" ExternalAccess="Read/Write"><Description><![CDATA[Sequencer step output table.]]></Description></Tag>
+      <Tag Name="Seq_Control" TagType="Base" DataType="CONTROL" Radix="NullType" Constant="false" ExternalAccess="Read/Write"/>
+    </Tags>
+    <Tasks>
+      <Task Name="MainTask" Type="CONTINUOUS" Priority="10" Watchdog="500" DisableUpdateOutputs="false" InhibitTask="false">
+        <ScheduledPrograms>
+          <ScheduledProgram Name="PRG_TankControl"/>
+        </ScheduledPrograms>
+      </Task>
+      <Task Name="DiagTask" Type="PERIODIC" Rate="1000" Priority="5" Watchdog="500" DisableUpdateOutputs="false" InhibitTask="false">
+        <ScheduledPrograms>
+          <ScheduledProgram Name="PRG_Diagnostics"/>
+        </ScheduledPrograms>
+      </Task>
+    </Tasks>
+    <Programs>
+      <Program Name="PRG_TankControl" TestEdits="false" MainRoutineName="R01_Main" Disabled="false" UseAsFolder="false">
+        <Tags/>
+        <Routines>
+          <Routine Name="R01_Main" Type="RLL">
+            <RLLContent>
+              <Rung Number="0" Type="N">
+                <Comment><![CDATA[Aggregate permissives: E-stop healthy, air pressure OK and guard closed.]]></Comment>
+                <Text><![CDATA[XIC(EStop_OK) XIC(Air_Pressure_OK) XIC(Guard_Closed) OTE(Permissive_OK);]]></Text>
+              </Rung>
+              <Rung Number="1" Type="N">
+                <Comment><![CDATA[START/STOP seal-in: branch parallels the start pushbutton (alias) with the sealed run command. Stop and permissive interlock the rung.]]></Comment>
+                <Text><![CDATA[XIC(Permissive_OK) XIC(Stop_PB) BST XIC(Start_PB) NXB XIC(Run_Cmd) BND OTE(Run_Cmd);]]></Text>
+              </Rung>
+              <Rung Number="2" Type="N">
+                <Comment><![CDATA[One-shot the start to initialize the sequence into the fill state.]]></Comment>
+                <Text><![CDATA[XIC(Run_Cmd) ONS(Start_OneShot) OTL(State_Fill) OTU(State_Idle) MOV(0,Step_Number);]]></Text>
+              </Rung>
+              <Rung Number="3" Type="N">
+                <Comment><![CDATA[DIW inlet valve opens during fill; fill timer runs.]]></Comment>
+                <Text><![CDATA[XIC(State_Fill) XIC(Run_Cmd) OTE(Valve_DIW.Cmd) TON(Fill_Timer,?,8000,0);]]></Text>
+              </Rung>
+              <Rung Number="4" Type="N">
+                <Comment><![CDATA[Fail-to-open diagnostic timer for the inlet valve (UDT member as a TIMER).]]></Comment>
+                <Text><![CDATA[XIC(Valve_DIW.Cmd) XIO(Valve_DIW.Fbk) TON(Valve_DIW.FailTimer,?,3000,0);]]></Text>
+              </Rung>
+              <Rung Number="5" Type="N">
+                <Comment><![CDATA[Transition fill->mix when the fill timer is done OR the level target is reached (branched condition).]]></Comment>
+                <Text><![CDATA[XIC(State_Fill) BST XIC(Fill_Timer.DN) NXB GEQ(Tank_Level,Target_Level) BND OTL(State_Mix) OTU(State_Fill);]]></Text>
+              </Rung>
+              <Rung Number="6" Type="N">
+                <Comment><![CDATA[Add-On Instruction call: across-the-line agitator motor starter during the mix state.]]></Comment>
+                <Text><![CDATA[XIC(State_Mix) MotorStarter(Agitator_Motor,Run_Cmd,Stop_PB,Permissive_OK,Pump_Transfer.Overload,Pump_Transfer.Run_Cmd);]]></Text>
+              </Rung>
+              <Rung Number="7" Type="N">
+                <Comment><![CDATA[Step sequencer drives the recipe output table during mix (SQO).]]></Comment>
+                <Text><![CDATA[XIC(State_Mix) SQO(Seq_Array,16#FFFF,0,Seq_Control,7,1);]]></Text>
+              </Rung>
+              <Rung Number="8" Type="N">
+                <Comment><![CDATA[Transfer pump runs in transfer state and counts completed batches.]]></Comment>
+                <Text><![CDATA[XIC(State_Transfer) XIC(Permissive_OK) OTE(Pump_Transfer.Run_Cmd) CTU(Batch_Counter,?,?);]]></Text>
+              </Rung>
+              <Rung Number="9" Type="N">
+                <Comment><![CDATA[Running lamp follows the sealed run command (alias-driven start indication).]]></Comment>
+                <Text><![CDATA[XIC(Run_Cmd) OTE(Lamp_Running);]]></Text>
+              </Rung>
+            </RLLContent>
+          </Routine>
+        </Routines>
+      </Program>
+      <Program Name="PRG_Diagnostics" TestEdits="false" MainRoutineName="R10_Diag" Disabled="false" UseAsFolder="false">
+        <Tags/>
+        <Routines>
+          <Routine Name="R10_Diag" Type="ST">
+            <STContent>
+              <Line Number="0"><![CDATA[(* Roll up valve and motor faults into the master fault flags. *)]]></Line>
+              <Line Number="1"><![CDATA[Valve_DIW.Fault := Valve_DIW.FailTimer.DN AND NOT Valve_DIW.Fbk;]]></Line>
+              <Line Number="2"><![CDATA[IF Pump_Transfer.Overload THEN]]></Line>
+              <Line Number="3"><![CDATA[    Pump_Transfer.Run_Cmd := FALSE;]]></Line>
+              <Line Number="4"><![CDATA[    Run_Cmd := FALSE;]]></Line>
+              <Line Number="5"><![CDATA[END_IF;]]></Line>
+              <Line Number="6"><![CDATA[Permissive_OK := EStop_OK AND Air_Pressure_OK AND Guard_Closed;]]></Line>
+            </STContent>
+          </Routine>
+        </Routines>
+      </Program>
+    </Programs>
+  </Controller>
+</RSLogix5000Content>

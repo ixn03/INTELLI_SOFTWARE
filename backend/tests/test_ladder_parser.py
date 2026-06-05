@@ -38,6 +38,16 @@ class TestLadderParser(unittest.TestCase):
         self.assertEqual(families["ADD"], "math")
         self.assertEqual(families["MOV"], "move_copy")
 
+    def test_build_logic_expression_on_parsed_rung(self) -> None:
+        from app.parsers.ladder_logic import build_rung_logic_expression
+
+        rung = "BST XIC(A) NXB XIC(B) BND OTE(Out);"
+        insts = parse_ladder_rung_text(rung, rung_number=1)
+        expr, warnings, resolved = build_rung_logic_expression(insts)
+        self.assertTrue(resolved, warnings)
+        self.assertIsNotNone(expr)
+        self.assertEqual(expr.kind.value, "or")
+
 
 if __name__ == "__main__":
     unittest.main()

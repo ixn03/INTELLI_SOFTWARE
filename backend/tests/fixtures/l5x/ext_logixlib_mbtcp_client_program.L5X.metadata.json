@@ -1,0 +1,11 @@
+{
+  "platform": "rockwell",
+  "language": "ladder",
+  "expected_capabilities": ["ladder", "aoi_definitions", "aoi_instances", "udt", "msg", "gsv"],
+  "known_unsupported_features": [
+    "AOI instance opcode reported as unknown (MBTCP_CLIENT)",
+    "MSG x6 / GSV x1 / COP x37 logic lives inside the AOI definition body and is not extracted into program routines; the visible program has only 2 rungs",
+    "NOP rung counted as unknown opcode"
+  ],
+  "parser_notes": "REAL external fixture. Source: https://github.com/JeremyMedders/LogixLibraries (file src/ModbusTCP/v1/Dev_MBTCP_Client_Program.L5X). License: MIT. Studio 5000 v35 Program-scope export. Modbus-TCP client demo: 2 AOI definitions, 11 UDTs, 5 routines, MSG x6 (Modbus/CIP messaging) inside the AOI body. Grader: grade C (only 2 visible program instructions). Added for the Modbus protocol domain + MSG/UDT context and the MBTCP_CLIENT opcode; thin on program-level logic. Library/design-pattern code, not plant code; license-safe. De-identified: embedded personal/vendor identifiers in the L5X were scrubbed with tools/deidentify_l5x.py (Vendor/CreatedBy/EditedBy -> INTELLI, ExportDate neutralized, Controller context Name DEVPAC -> INTELLI_Context); CDATA logic left byte-identical (grade C / 0.0% coverage unchanged before and after). MIT source/license attribution above is retained here intentionally and was NOT scrubbed from metadata. Note: 'DEVPAC' string literals remain inside CDATA tag-data by design (scrubbing them would alter program logic)."
+}

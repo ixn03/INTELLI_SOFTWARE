@@ -1,0 +1,315 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<RSLogix5000Content SchemaRevision="1.0" SoftwareRevision="32.00" TargetName="Conveyance_ST" TargetType="RoutineRoutine" ContainsContext="true" ExportDate="Tue May 12 10:00:00 2026" ExportOptions="References DecoratedData ForceProtectedEncoding AllProjDocTrans">
+<Controller Use="Context" Name="Conveyance_ST">
+<DataTypes Use="Context">
+<DataType Name="CONVEYANCE_STATE" Family="NoFamily" Class="User">
+<Description><![CDATA[State machine for the conveyance sequence]]></Description>
+<Members>
+<Member Name="State" DataType="DINT" Dimension="0" Radix="Decimal" Hidden="false" ExternalAccess="Read/Write">
+<Description><![CDATA[0=Init,1=Idle,2=T1Fwd,3=CL1Run,4=T2Fwd,5=Return,99=Fault]]></Description>
+</Member>
+<Member Name="LastState" DataType="DINT" Dimension="0" Radix="Decimal" Hidden="false" ExternalAccess="Read/Write">
+<Description><![CDATA[Previous state for entry detection]]></Description>
+</Member>
+<Member Name="StepTimer" DataType="TIMER" Dimension="0" Radix="NullType" Hidden="false" ExternalAccess="Read/Write">
+<Description><![CDATA[In-step elapsed timer]]></Description>
+</Member>
+<Member Name="CycleCount" DataType="DINT" Dimension="0" Radix="Decimal" Hidden="false" ExternalAccess="Read/Write">
+<Description><![CDATA[Completed cycle counter]]></Description>
+</Member>
+</Members>
+</DataType>
+</DataTypes>
+<Modules Use="Context"/>
+<AddOnInstructionDefinitions Use="Context"/>
+<Tags Use="Context">
+<!-- Digital Inputs -->
+<Tag Name="START_PB" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[Start Pushbutton (NO)]]></Description>
+</Tag>
+<Tag Name="STOP_PB" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[Stop Pushbutton (NC - wired so 1=OK, 0=Stop pressed)]]></Description>
+</Tag>
+<Tag Name="EMERG_STOP" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[Emergency Stop (NC - wired so 1=OK, 0=Pressed)]]></Description>
+</Tag>
+<Tag Name="RESET_PB" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[Fault Reset Pushbutton]]></Description>
+</Tag>
+<Tag Name="LS_T1_LOAD" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[Limit Switch - Material at T1 Load Position]]></Description>
+</Tag>
+<Tag Name="LS_T1_DROP" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[Limit Switch - T1 at Drop Position]]></Description>
+</Tag>
+<Tag Name="LS_CL1_IN" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[Photo-eye - Material Entering Conveyance Line]]></Description>
+</Tag>
+<Tag Name="LS_CL1_OUT" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[Photo-eye - Material Exiting Conveyance Line]]></Description>
+</Tag>
+<Tag Name="LS_T2_PICK" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[Limit Switch - T2 at Pick Position]]></Description>
+</Tag>
+<Tag Name="LS_T2_DROP" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[Limit Switch - T2 at Discharge Position]]></Description>
+</Tag>
+<Tag Name="MTR_T1_OL" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[T1 Motor Overload (NC - 1=OK, 0=Tripped)]]></Description>
+</Tag>
+<Tag Name="MTR_T2_OL" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[T2 Motor Overload (NC - 1=OK, 0=Tripped)]]></Description>
+</Tag>
+<Tag Name="MTR_CL1_OL" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[Conveyance Line Motor Overload (NC)]]></Description>
+</Tag>
+<!-- Digital Outputs -->
+<Tag Name="T1_FWD" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[Transporter T1 Forward Output]]></Description>
+</Tag>
+<Tag Name="T1_REV" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[Transporter T1 Reverse Output]]></Description>
+</Tag>
+<Tag Name="T2_FWD" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[Transporter T2 Forward Output]]></Description>
+</Tag>
+<Tag Name="T2_REV" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[Transporter T2 Reverse Output]]></Description>
+</Tag>
+<Tag Name="CL1_RUN" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[Conveyance Line Motor Run Output]]></Description>
+</Tag>
+<Tag Name="LAMP_RUN" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[System Running Indicator Lamp]]></Description>
+</Tag>
+<Tag Name="LAMP_FAULT" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[System Fault Indicator Lamp]]></Description>
+</Tag>
+<!-- Internal Tags -->
+<Tag Name="SAFETY_OK" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[Master Safety Permissive]]></Description>
+</Tag>
+<Tag Name="SYS_RUN" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[System Running Seal-in]]></Description>
+</Tag>
+<Tag Name="FAULT" TagType="Base" DataType="BOOL" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[System Fault Latch]]></Description>
+</Tag>
+<Tag Name="StateMachine" TagType="Base" DataType="CONVEYANCE_STATE" Constant="false" ExternalAccess="Read/Write">
+<Description><![CDATA[Conveyance state machine instance]]></Description>
+</Tag>
+<!-- State Constants -->
+<Tag Name="STATE_INIT" TagType="Base" DataType="DINT" Constant="true" ExternalAccess="Read/Write">
+<Description><![CDATA[State 0: Initial]]></Description>
+<Data Format="Decimal"><![CDATA[0]]></Data>
+</Tag>
+<Tag Name="STATE_IDLE" TagType="Base" DataType="DINT" Constant="true" ExternalAccess="Read/Write">
+<Description><![CDATA[State 1: Idle/Ready]]></Description>
+<Data Format="Decimal"><![CDATA[1]]></Data>
+</Tag>
+<Tag Name="STATE_T1_FWD" TagType="Base" DataType="DINT" Constant="true" ExternalAccess="Read/Write">
+<Description><![CDATA[State 2: T1 Forward]]></Description>
+<Data Format="Decimal"><![CDATA[2]]></Data>
+</Tag>
+<Tag Name="STATE_CL1_RUN" TagType="Base" DataType="DINT" Constant="true" ExternalAccess="Read/Write">
+<Description><![CDATA[State 3: CL1 Run]]></Description>
+<Data Format="Decimal"><![CDATA[3]]></Data>
+</Tag>
+<Tag Name="STATE_T2_FWD" TagType="Base" DataType="DINT" Constant="true" ExternalAccess="Read/Write">
+<Description><![CDATA[State 4: T2 Forward]]></Description>
+<Data Format="Decimal"><![CDATA[4]]></Data>
+</Tag>
+<Tag Name="STATE_RETURN" TagType="Base" DataType="DINT" Constant="true" ExternalAccess="Read/Write">
+<Description><![CDATA[State 5: Return Home]]></Description>
+<Data Format="Decimal"><![CDATA[5]]></Data>
+</Tag>
+<Tag Name="STATE_FAULT" TagType="Base" DataType="DINT" Constant="true" ExternalAccess="Read/Write">
+<Description><![CDATA[State 99: Fault]]></Description>
+<Data Format="Decimal"><![CDATA[99]]></Data>
+</Tag>
+<!-- Timeout constants in milliseconds -->
+<Tag Name="WDT_T1_MS" TagType="Base" DataType="DINT" Constant="true" ExternalAccess="Read/Write">
+<Description><![CDATA[T1 motion timeout (ms)]]></Description>
+<Data Format="Decimal"><![CDATA[10000]]></Data>
+</Tag>
+<Tag Name="WDT_CL1_MS" TagType="Base" DataType="DINT" Constant="true" ExternalAccess="Read/Write">
+<Description><![CDATA[Conveyance line timeout (ms)]]></Description>
+<Data Format="Decimal"><![CDATA[30000]]></Data>
+</Tag>
+<Tag Name="WDT_T2_MS" TagType="Base" DataType="DINT" Constant="true" ExternalAccess="Read/Write">
+<Description><![CDATA[T2 motion timeout (ms)]]></Description>
+<Data Format="Decimal"><![CDATA[10000]]></Data>
+</Tag>
+<Tag Name="WDT_RETURN_MS" TagType="Base" DataType="DINT" Constant="true" ExternalAccess="Read/Write">
+<Description><![CDATA[Return home timeout (ms)]]></Description>
+<Data Format="Decimal"><![CDATA[15000]]></Data>
+</Tag>
+</Tags>
+<Programs Use="Context">
+<Program Use="Context" Name="MainProgram">
+<Routines Use="Context">
+<Routine Use="Target" Name="Conveyance_ST" Type="ST">
+<Description><![CDATA[Conveyance System - Structured Text - Transporters T1, T2 and Conveyance Line CL1
+Implements an SFC-style state machine for sequential control.]]></Description>
+<STContent>
+<Line Number="0"><![CDATA[(* ============================================================ *)]]></Line>
+<Line Number="1"><![CDATA[(* CONVEYANCE CONTROL - STRUCTURED TEXT                         *)]]></Line>
+<Line Number="2"><![CDATA[(* SFC-style state machine for T1 -> CL1 -> T2 sequencing       *)]]></Line>
+<Line Number="3"><![CDATA[(* ============================================================ *)]]></Line>
+<Line Number="4"><![CDATA[]]></Line>
+<Line Number="5"><![CDATA[(* ---- 1. SAFETY PERMISSIVE EVALUATION ---- *)]]></Line>
+<Line Number="6"><![CDATA[SAFETY_OK := EMERG_STOP AND STOP_PB AND MTR_T1_OL AND MTR_T2_OL AND MTR_CL1_OL;]]></Line>
+<Line Number="7"><![CDATA[]]></Line>
+<Line Number="8"><![CDATA[(* ---- 2. FAULT HANDLING ---- *)]]></Line>
+<Line Number="9"><![CDATA[(* Latch a fault on any motor overload trip *)]]></Line>
+<Line Number="10"><![CDATA[IF NOT MTR_T1_OL OR NOT MTR_T2_OL OR NOT MTR_CL1_OL OR NOT EMERG_STOP THEN]]></Line>
+<Line Number="11"><![CDATA[    FAULT := TRUE;]]></Line>
+<Line Number="12"><![CDATA[END_IF;]]></Line>
+<Line Number="13"><![CDATA[]]></Line>
+<Line Number="14"><![CDATA[(* Operator reset only when safety has been restored *)]]></Line>
+<Line Number="15"><![CDATA[IF RESET_PB AND SAFETY_OK THEN]]></Line>
+<Line Number="16"><![CDATA[    FAULT := FALSE;]]></Line>
+<Line Number="17"><![CDATA[    StateMachine.State := STATE_INIT;]]></Line>
+<Line Number="18"><![CDATA[END_IF;]]></Line>
+<Line Number="19"><![CDATA[]]></Line>
+<Line Number="20"><![CDATA[(* ---- 3. SYSTEM RUN SEAL-IN ---- *)]]></Line>
+<Line Number="21"><![CDATA[IF START_PB AND SAFETY_OK AND NOT FAULT THEN]]></Line>
+<Line Number="22"><![CDATA[    SYS_RUN := TRUE;]]></Line>
+<Line Number="23"><![CDATA[END_IF;]]></Line>
+<Line Number="24"><![CDATA[]]></Line>
+<Line Number="25"><![CDATA[IF NOT SAFETY_OK OR FAULT THEN]]></Line>
+<Line Number="26"><![CDATA[    SYS_RUN := FALSE;]]></Line>
+<Line Number="27"><![CDATA[END_IF;]]></Line>
+<Line Number="28"><![CDATA[]]></Line>
+<Line Number="29"><![CDATA[(* ---- 4. JUMP TO FAULT STATE IF NEEDED ---- *)]]></Line>
+<Line Number="30"><![CDATA[IF FAULT AND StateMachine.State <> STATE_FAULT THEN]]></Line>
+<Line Number="31"><![CDATA[    StateMachine.LastState := StateMachine.State;]]></Line>
+<Line Number="32"><![CDATA[    StateMachine.State := STATE_FAULT;]]></Line>
+<Line Number="33"><![CDATA[END_IF;]]></Line>
+<Line Number="34"><![CDATA[]]></Line>
+<Line Number="35"><![CDATA[(* ---- 5. STEP-ENTRY TIMER RESET ---- *)]]></Line>
+<Line Number="36"><![CDATA[(* Reset the in-step timer whenever the state changes *)]]></Line>
+<Line Number="37"><![CDATA[IF StateMachine.State <> StateMachine.LastState THEN]]></Line>
+<Line Number="38"><![CDATA[    StateMachine.StepTimer.ACC := 0;]]></Line>
+<Line Number="39"><![CDATA[    StateMachine.StepTimer.EN := 0;]]></Line>
+<Line Number="40"><![CDATA[    StateMachine.StepTimer.TT := 0;]]></Line>
+<Line Number="41"><![CDATA[    StateMachine.StepTimer.DN := 0;]]></Line>
+<Line Number="42"><![CDATA[END_IF;]]></Line>
+<Line Number="43"><![CDATA[StateMachine.LastState := StateMachine.State;]]></Line>
+<Line Number="44"><![CDATA[]]></Line>
+<Line Number="45"><![CDATA[(* ---- 6. STATE MACHINE ---- *)]]></Line>
+<Line Number="46"><![CDATA[CASE StateMachine.State OF]]></Line>
+<Line Number="47"><![CDATA[]]></Line>
+<Line Number="48"><![CDATA[    (* ---------- STATE 0: INITIAL ---------- *)]]></Line>
+<Line Number="49"><![CDATA[    0:  (* STATE_INIT *)]]></Line>
+<Line Number="50"><![CDATA[        T1_FWD  := FALSE;]]></Line>
+<Line Number="51"><![CDATA[        T1_REV  := FALSE;]]></Line>
+<Line Number="52"><![CDATA[        T2_FWD  := FALSE;]]></Line>
+<Line Number="53"><![CDATA[        T2_REV  := FALSE;]]></Line>
+<Line Number="54"><![CDATA[        CL1_RUN := FALSE;]]></Line>
+<Line Number="55"><![CDATA[        LAMP_RUN := FALSE;]]></Line>
+<Line Number="56"><![CDATA[        IF SYS_RUN AND SAFETY_OK AND NOT FAULT THEN]]></Line>
+<Line Number="57"><![CDATA[            StateMachine.State := STATE_IDLE;]]></Line>
+<Line Number="58"><![CDATA[        END_IF;]]></Line>
+<Line Number="59"><![CDATA[]]></Line>
+<Line Number="60"><![CDATA[    (* ---------- STATE 1: IDLE / READY ---------- *)]]></Line>
+<Line Number="61"><![CDATA[    1:  (* STATE_IDLE *)]]></Line>
+<Line Number="62"><![CDATA[        T1_FWD := FALSE;  T1_REV := FALSE;]]></Line>
+<Line Number="63"><![CDATA[        T2_FWD := FALSE;  T2_REV := FALSE;]]></Line>
+<Line Number="64"><![CDATA[        CL1_RUN := FALSE;]]></Line>
+<Line Number="65"><![CDATA[        LAMP_RUN := TRUE;]]></Line>
+<Line Number="66"><![CDATA[        (* Transition: material present at T1 load position *)]]></Line>
+<Line Number="67"><![CDATA[        IF SYS_RUN AND LS_T1_LOAD THEN]]></Line>
+<Line Number="68"><![CDATA[            StateMachine.State := STATE_T1_FWD;]]></Line>
+<Line Number="69"><![CDATA[        END_IF;]]></Line>
+<Line Number="70"><![CDATA[]]></Line>
+<Line Number="71"><![CDATA[    (* ---------- STATE 2: TRANSPORTER T1 FORWARD ---------- *)]]></Line>
+<Line Number="72"><![CDATA[    2:  (* STATE_T1_FWD - pick material onto conveyance line *)]]></Line>
+<Line Number="73"><![CDATA[        T1_FWD := TRUE;]]></Line>
+<Line Number="74"><![CDATA[        T1_REV := FALSE;]]></Line>
+<Line Number="75"><![CDATA[        CL1_RUN := FALSE;]]></Line>
+<Line Number="76"><![CDATA[        TONR(StateMachine.StepTimer);]]></Line>
+<Line Number="77"><![CDATA[        StateMachine.StepTimer.PRE := WDT_T1_MS;]]></Line>
+<Line Number="78"><![CDATA[        (* Transition: T1 reached drop position *)]]></Line>
+<Line Number="79"><![CDATA[        IF LS_T1_DROP THEN]]></Line>
+<Line Number="80"><![CDATA[            StateMachine.State := STATE_CL1_RUN;]]></Line>
+<Line Number="81"><![CDATA[        (* Watchdog fault *)]]></Line>
+<Line Number="82"><![CDATA[        ELSIF StateMachine.StepTimer.DN THEN]]></Line>
+<Line Number="83"><![CDATA[            FAULT := TRUE;]]></Line>
+<Line Number="84"><![CDATA[        END_IF;]]></Line>
+<Line Number="85"><![CDATA[]]></Line>
+<Line Number="86"><![CDATA[    (* ---------- STATE 3: CONVEYANCE LINE CL1 RUNNING ---------- *)]]></Line>
+<Line Number="87"><![CDATA[    3:  (* STATE_CL1_RUN - transport material to T2 *)]]></Line>
+<Line Number="88"><![CDATA[        T1_FWD := FALSE;  (* anti-collision *)]]></Line>
+<Line Number="89"><![CDATA[        CL1_RUN := TRUE;]]></Line>
+<Line Number="90"><![CDATA[        TONR(StateMachine.StepTimer);]]></Line>
+<Line Number="91"><![CDATA[        StateMachine.StepTimer.PRE := WDT_CL1_MS;]]></Line>
+<Line Number="92"><![CDATA[        (* Transition: material detected at end of line *)]]></Line>
+<Line Number="93"><![CDATA[        IF LS_CL1_OUT THEN]]></Line>
+<Line Number="94"><![CDATA[            StateMachine.State := STATE_T2_FWD;]]></Line>
+<Line Number="95"><![CDATA[        ELSIF StateMachine.StepTimer.DN THEN]]></Line>
+<Line Number="96"><![CDATA[            FAULT := TRUE;]]></Line>
+<Line Number="97"><![CDATA[        END_IF;]]></Line>
+<Line Number="98"><![CDATA[]]></Line>
+<Line Number="99"><![CDATA[    (* ---------- STATE 4: TRANSPORTER T2 FORWARD ---------- *)]]></Line>
+<Line Number="100"><![CDATA[    4:  (* STATE_T2_FWD - discharge material *)]]></Line>
+<Line Number="101"><![CDATA[        CL1_RUN := FALSE;]]></Line>
+<Line Number="102"><![CDATA[        T2_FWD := TRUE;]]></Line>
+<Line Number="103"><![CDATA[        T2_REV := FALSE;]]></Line>
+<Line Number="104"><![CDATA[        TONR(StateMachine.StepTimer);]]></Line>
+<Line Number="105"><![CDATA[        StateMachine.StepTimer.PRE := WDT_T2_MS;]]></Line>
+<Line Number="106"><![CDATA[        (* Transition: T2 reached discharge position *)]]></Line>
+<Line Number="107"><![CDATA[        IF LS_T2_DROP THEN]]></Line>
+<Line Number="108"><![CDATA[            StateMachine.State := STATE_RETURN;]]></Line>
+<Line Number="109"><![CDATA[        ELSIF StateMachine.StepTimer.DN THEN]]></Line>
+<Line Number="110"><![CDATA[            FAULT := TRUE;]]></Line>
+<Line Number="111"><![CDATA[        END_IF;]]></Line>
+<Line Number="112"><![CDATA[]]></Line>
+<Line Number="113"><![CDATA[    (* ---------- STATE 5: RETURN TRANSPORTERS HOME ---------- *)]]></Line>
+<Line Number="114"><![CDATA[    5:  (* STATE_RETURN - both transporters return *)]]></Line>
+<Line Number="115"><![CDATA[        T2_FWD := FALSE;]]></Line>
+<Line Number="116"><![CDATA[        (* Reverse only while not yet home *)]]></Line>
+<Line Number="117"><![CDATA[        T1_REV := NOT LS_T1_LOAD;]]></Line>
+<Line Number="118"><![CDATA[        T2_REV := NOT LS_T2_PICK;]]></Line>
+<Line Number="119"><![CDATA[        TONR(StateMachine.StepTimer);]]></Line>
+<Line Number="120"><![CDATA[        StateMachine.StepTimer.PRE := WDT_RETURN_MS;]]></Line>
+<Line Number="121"><![CDATA[        (* Transition: both transporters home *)]]></Line>
+<Line Number="122"><![CDATA[        IF LS_T1_LOAD AND LS_T2_PICK THEN]]></Line>
+<Line Number="123"><![CDATA[            T1_REV := FALSE;]]></Line>
+<Line Number="124"><![CDATA[            T2_REV := FALSE;]]></Line>
+<Line Number="125"><![CDATA[            StateMachine.CycleCount := StateMachine.CycleCount + 1;]]></Line>
+<Line Number="126"><![CDATA[            StateMachine.State := STATE_IDLE;]]></Line>
+<Line Number="127"><![CDATA[        ELSIF StateMachine.StepTimer.DN THEN]]></Line>
+<Line Number="128"><![CDATA[            FAULT := TRUE;]]></Line>
+<Line Number="129"><![CDATA[        END_IF;]]></Line>
+<Line Number="130"><![CDATA[]]></Line>
+<Line Number="131"><![CDATA[    (* ---------- STATE 99: FAULT ---------- *)]]></Line>
+<Line Number="132"><![CDATA[    99: (* STATE_FAULT - all outputs OFF, await reset *)]]></Line>
+<Line Number="133"><![CDATA[        T1_FWD  := FALSE;]]></Line>
+<Line Number="134"><![CDATA[        T1_REV  := FALSE;]]></Line>
+<Line Number="135"><![CDATA[        T2_FWD  := FALSE;]]></Line>
+<Line Number="136"><![CDATA[        T2_REV  := FALSE;]]></Line>
+<Line Number="137"><![CDATA[        CL1_RUN := FALSE;]]></Line>
+<Line Number="138"><![CDATA[        LAMP_RUN := FALSE;]]></Line>
+<Line Number="139"><![CDATA[        (* Exit handled by RESET_PB block above *)]]></Line>
+<Line Number="140"><![CDATA[]]></Line>
+<Line Number="141"><![CDATA[    ELSE]]></Line>
+<Line Number="142"><![CDATA[        (* Unknown state - force back to init *)]]></Line>
+<Line Number="143"><![CDATA[        StateMachine.State := STATE_INIT;]]></Line>
+<Line Number="144"><![CDATA[]]></Line>
+<Line Number="145"><![CDATA[END_CASE;]]></Line>
+<Line Number="146"><![CDATA[]]></Line>
+<Line Number="147"><![CDATA[(* ---- 7. INDICATOR LAMPS ---- *)]]></Line>
+<Line Number="148"><![CDATA[LAMP_RUN := SYS_RUN AND NOT FAULT;]]></Line>
+<Line Number="149"><![CDATA[LAMP_FAULT := FAULT;]]></Line>
+<Line Number="150"><![CDATA[]]></Line>
+<Line Number="151"><![CDATA[(* ============================================================ *)]]></Line>
+<Line Number="152"><![CDATA[(* END OF CONVEYANCE_ST                                         *)]]></Line>
+<Line Number="153"><![CDATA[(* ============================================================ *)]]></Line>
+</STContent>
+</Routine>
+</Routines>
+</Program>
+</Programs>
+</Controller>
+</RSLogix5000Content>

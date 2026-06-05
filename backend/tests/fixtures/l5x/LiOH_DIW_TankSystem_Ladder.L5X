@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<RSLogix5000Content SchemaRevision="1.0" SoftwareRevision="35.00" TargetName="LiOH_DIW_TankSystem_Ladder" TargetType="Controller" ContainsContext="true" Owner="INTELLI">
+  <Controller Name="LiOH_DIW_TankSystem_Ladder">
+    <Tags>
+      <Tag Name="StartPB" DataType="BOOL"><Description>Start pushbutton</Description></Tag>
+      <Tag Name="StopPB" DataType="BOOL"><Description>Stop pushbutton</Description></Tag>
+      <Tag Name="ResetPB" DataType="BOOL"><Description>Reset pushbutton</Description></Tag>
+      <Tag Name="EStop_NC" DataType="BOOL"><Description>E-Stop NC contact TRUE healthy</Description></Tag>
+      <Tag Name="AutoMode" DataType="BOOL"><Description>Auto mode selector</Description></Tag>
+      <Tag Name="LT_101_High" DataType="BOOL"><Description>Tank high level reached</Description></Tag>
+      <Tag Name="LT_101_Low" DataType="BOOL"><Description>Tank low level reached</Description></Tag>
+      <Tag Name="StartPB_OS" DataType="BOOL"><Description>One shot for start pushbutton</Description></Tag>
+      <Tag Name="State_Idle" DataType="BOOL"><Description>Sequence idle state</Description></Tag>
+      <Tag Name="State_Fill" DataType="BOOL"><Description>Sequence fill state</Description></Tag>
+      <Tag Name="State_Mix" DataType="BOOL"><Description>Sequence mix state</Description></Tag>
+      <Tag Name="State_Transfer" DataType="BOOL"><Description>Sequence transfer state</Description></Tag>
+      <Tag Name="State_Fault" DataType="BOOL"><Description>Sequence fault state</Description></Tag>
+      <Tag Name="XV_DIW" DataType="BOOL"><Description>DIW inlet valve command</Description></Tag>
+      <Tag Name="XV_Xfer" DataType="BOOL"><Description>Transfer outlet valve command</Description></Tag>
+      <Tag Name="Agitator" DataType="BOOL"><Description>Agitator run command</Description></Tag>
+      <Tag Name="PMP_LiOH_A_Run" DataType="BOOL"><Description>LiOH Pump A run command</Description></Tag>
+      <Tag Name="PMP_LiOH_B_Run" DataType="BOOL"><Description>LiOH Pump B run command</Description></Tag>
+      <Tag Name="PMP_Xfr_A_Run" DataType="BOOL"><Description>Transfer Pump A run command</Description></Tag>
+      <Tag Name="PMP_Xfr_B_Run" DataType="BOOL"><Description>Transfer Pump B run command</Description></Tag>
+      <Tag Name="PA_LiOH_Fbk" DataType="BOOL"><Description>LiOH Pump A running feedback</Description></Tag>
+      <Tag Name="PB_LiOH_Fbk" DataType="BOOL"><Description>LiOH Pump B running feedback</Description></Tag>
+      <Tag Name="PA_Xfr_Fbk" DataType="BOOL"><Description>Transfer Pump A running feedback</Description></Tag>
+      <Tag Name="PB_Xfr_Fbk" DataType="BOOL"><Description>Transfer Pump B running feedback</Description></Tag>
+      <Tag Name="AltLiOH.SelectA" DataType="BOOL"><Description>LiOH alternator selects pump A</Description></Tag>
+      <Tag Name="AltLiOH.SelectB" DataType="BOOL"><Description>LiOH alternator selects pump B</Description></Tag>
+      <Tag Name="AltXfr.SelectA" DataType="BOOL"><Description>Transfer alternator selects pump A</Description></Tag>
+      <Tag Name="AltXfr.SelectB" DataType="BOOL"><Description>Transfer alternator selects pump B</Description></Tag>
+      <Tag Name="Faults.EStop" DataType="BOOL"><Description>E-stop fault</Description></Tag>
+      <Tag Name="Faults.LevelHH" DataType="BOOL"><Description>High-high level fault</Description></Tag>
+      <Tag Name="Faults.PumpA_LiOH" DataType="BOOL"><Description>LiOH Pump A fault</Description></Tag>
+      <Tag Name="Faults.PumpB_LiOH" DataType="BOOL"><Description>LiOH Pump B fault</Description></Tag>
+      <Tag Name="Faults.PumpA_Xfr" DataType="BOOL"><Description>Transfer Pump A fault</Description></Tag>
+      <Tag Name="Faults.PumpB_Xfr" DataType="BOOL"><Description>Transfer Pump B fault</Description></Tag>
+      <Tag Name="Faults.Any" DataType="BOOL"><Description>Any active fault</Description></Tag>
+      <Tag Name="AlmHorn" DataType="BOOL"><Description>Alarm horn output</Description></Tag>
+      <Tag Name="MixTmr" DataType="TIMER"><Description>Mix timer</Description></Tag>
+    </Tags>
+    <Programs>
+      <Program Name="PRG_Main">
+        <Routines>
+          <Routine Name="R00_Main" Type="RLL">
+            <RLLContent>
+              <Rung Number="0"><Text><![CDATA[JSR(R01_Safety,0)]]></Text></Rung>
+              <Rung Number="1"><Text><![CDATA[JSR(R02_Sequencer,0)]]></Text></Rung>
+              <Rung Number="2"><Text><![CDATA[JSR(R03_Faults,0)]]></Text></Rung>
+            </RLLContent>
+          </Routine>
+          <Routine Name="R01_Safety" Type="RLL">
+            <RLLContent>
+              <Rung Number="0"><Text><![CDATA[XIO(EStop_NC) OTL(Faults.EStop)]]></Text></Rung>
+              <Rung Number="1"><Text><![CDATA[XIC(LT_101_High) OTL(Faults.LevelHH)]]></Text></Rung>
+              <Rung Number="2"><Text><![CDATA[XIC(ResetPB) XIC(EStop_NC) OTU(Faults.EStop) OTU(Faults.LevelHH) OTU(Faults.PumpA_LiOH) OTU(Faults.PumpB_LiOH) OTU(Faults.PumpA_Xfr) OTU(Faults.PumpB_Xfr)]]></Text></Rung>
+            </RLLContent>
+          </Routine>
+          <Routine Name="R02_Sequencer" Type="RLL">
+            <RLLContent>
+              <Rung Number="0"><Text><![CDATA[ONS(StartPB_OS,StartPB)]]></Text></Rung>
+              <Rung Number="1"><Text><![CDATA[XIC(StartPB_OS) XIC(AutoMode) XIO(Faults.Any) XIC(EStop_NC) OTL(State_Fill) OTU(State_Idle)]]></Text></Rung>
+              <Rung Number="2"><Text><![CDATA[XIC(State_Fill) OTE(XV_DIW)]]></Text></Rung>
+              <Rung Number="3"><Text><![CDATA[XIC(State_Fill) XIC(AltLiOH.SelectA) XIO(Faults.PumpA_LiOH) OTE(PMP_LiOH_A_Run)]]></Text></Rung>
+              <Rung Number="4"><Text><![CDATA[XIC(State_Fill) XIC(AltLiOH.SelectB) XIO(Faults.PumpB_LiOH) OTE(PMP_LiOH_B_Run)]]></Text></Rung>
+              <Rung Number="5"><Text><![CDATA[XIC(State_Fill) XIC(LT_101_High) OTU(State_Fill) OTL(State_Mix)]]></Text></Rung>
+              <Rung Number="6"><Text><![CDATA[XIC(State_Mix) OTE(Agitator)]]></Text></Rung>
+              <Rung Number="7"><Text><![CDATA[XIC(State_Mix) TON(MixTmr,5000,0)]]></Text></Rung>
+              <Rung Number="8"><Text><![CDATA[XIC(State_Mix) XIC(MixTmr.DN) OTU(State_Mix) OTL(State_Transfer)]]></Text></Rung>
+              <Rung Number="9"><Text><![CDATA[XIC(State_Transfer) OTE(XV_Xfer)]]></Text></Rung>
+              <Rung Number="10"><Text><![CDATA[XIC(State_Transfer) XIC(AltXfr.SelectA) XIO(Faults.PumpA_Xfr) OTE(PMP_Xfr_A_Run)]]></Text></Rung>
+              <Rung Number="11"><Text><![CDATA[XIC(State_Transfer) XIC(AltXfr.SelectB) XIO(Faults.PumpB_Xfr) OTE(PMP_Xfr_B_Run)]]></Text></Rung>
+              <Rung Number="12"><Text><![CDATA[XIC(State_Transfer) XIC(LT_101_Low) OTU(State_Transfer) OTL(State_Idle)]]></Text></Rung>
+              <Rung Number="13"><Text><![CDATA[XIC(Faults.Any) OTL(State_Fault) OTU(State_Fill) OTU(State_Mix) OTU(State_Transfer)]]></Text></Rung>
+              <Rung Number="14"><Text><![CDATA[XIC(State_Fault) OTE(AlmHorn)]]></Text></Rung>
+            </RLLContent>
+          </Routine>
+          <Routine Name="R03_Faults" Type="RLL">
+            <RLLContent>
+              <Rung Number="0"><Text><![CDATA[XIC(Faults.EStop) OTE(Faults.Any)]]></Text></Rung>
+              <Rung Number="1"><Text><![CDATA[XIC(Faults.LevelHH) OTE(Faults.Any)]]></Text></Rung>
+              <Rung Number="2"><Text><![CDATA[XIC(Faults.PumpA_LiOH) OTE(Faults.Any)]]></Text></Rung>
+              <Rung Number="3"><Text><![CDATA[XIC(Faults.PumpB_LiOH) OTE(Faults.Any)]]></Text></Rung>
+              <Rung Number="4"><Text><![CDATA[XIC(Faults.PumpA_Xfr) OTE(Faults.Any)]]></Text></Rung>
+              <Rung Number="5"><Text><![CDATA[XIC(Faults.PumpB_Xfr) OTE(Faults.Any)]]></Text></Rung>
+              <Rung Number="6"><Text><![CDATA[XIC(Faults.Any) OTE(AlmHorn)]]></Text></Rung>
+            </RLLContent>
+          </Routine>
+        </Routines>
+      </Program>
+    </Programs>
+  </Controller>
+</RSLogix5000Content>

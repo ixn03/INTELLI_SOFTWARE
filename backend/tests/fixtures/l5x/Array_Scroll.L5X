@@ -1,0 +1,170 @@
+﻿<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--Scans a Boolean array and outputs the number of each TRUE element sequentially. Useful for scrolling, multi-state HMI indicators-->
+<RSLogix5000Content SchemaRevision="1.0" SoftwareRevision="24.00" TargetName="Array_Scroll" TargetType="AddOnInstructionDefinition" TargetRevision="1.0 " TargetLastEdited="2017-07-19T21:29:40.318Z" ContainsContext="true" Owner="INTELLI" ExportDate="Thu Jan 01 00:00:00 2026" ExportOptions="DecoratedData Context Dependencies ForceProtectedEncoding AllProjDocTrans">
+<Controller Use="Context" Name="AOi">
+<AddOnInstructionDefinitions Use="Context">
+<AddOnInstructionDefinition Use="Target" Name="Array_Scroll" Revision="1.0" ExecutePrescan="false" ExecutePostscan="false" ExecuteEnableInFalse="false" CreatedDate="2017-07-19T19:43:53.265Z" CreatedBy="INTELLI" EditedDate="2017-07-19T21:29:40.318Z" EditedBy="INTELLI" SoftwareRevision="v24.00"
+>
+<Description>
+<![CDATA[Scans a Boolean array and outputs the number of each TRUE element sequentially. Useful for scrolling, multi-state HMI indicators]]>
+</Description>
+<Parameters>
+<Parameter Name="EnableIn" TagType="Base" DataType="BOOL" Usage="Input" Radix="Decimal" Required="false" Visible="false" ExternalAccess="Read Only">
+<Description>
+<![CDATA[Enable Input - System Defined Parameter]]>
+</Description>
+</Parameter>
+<Parameter Name="EnableOut" TagType="Base" DataType="BOOL" Usage="Output" Radix="Decimal" Required="false" Visible="false" ExternalAccess="Read Only">
+<Description>
+<![CDATA[Enable Output - System Defined Parameter]]>
+</Description>
+</Parameter>
+<Parameter Name="DisplayTime" TagType="Base" DataType="REAL" Usage="Input" Radix="Float" Required="false" Visible="true" ExternalAccess="Read/Write">
+<Description>
+<![CDATA[Time (in seconds) for each True element number to be in the Output]]>
+</Description>
+<DefaultData Format="Decorated">
+<DataValue DataType="REAL" Radix="Float" Value="0.0"/>
+</DefaultData>
+</Parameter>
+<Parameter Name="InputArray" TagType="Base" DataType="BOOL" Dimensions="128" Usage="InOut" Radix="Decimal" Required="true" Visible="true" Constant="false">
+<Description>
+<![CDATA[Array to reference - must be a 128-element Boolean array]]>
+</Description>
+</Parameter>
+<Parameter Name="Output" TagType="Base" DataType="DINT" Usage="Output" Radix="Decimal" Required="true" Visible="true" ExternalAccess="Read Only">
+<Description>
+<![CDATA[Current Array Element]]>
+</Description>
+<DefaultData Format="Decorated">
+<DataValue DataType="DINT" Radix="Decimal" Value="0"/>
+</DefaultData>
+</Parameter>
+</Parameters>
+<LocalTags>
+<LocalTag Name="DelayTime" DataType="DINT" Radix="Decimal" ExternalAccess="Read/Write">
+<DefaultData Format="Decorated">
+<DataValue DataType="DINT" Radix="Decimal" Value="0"/>
+</DefaultData>
+</LocalTag>
+<LocalTag Name="count" DataType="DINT" Radix="Decimal" ExternalAccess="Read/Write">
+<DefaultData Format="Decorated">
+<DataValue DataType="DINT" Radix="Decimal" Value="0"/>
+</DefaultData>
+</LocalTag>
+<LocalTag Name="DelayTimer" DataType="FBD_TIMER" ExternalAccess="Read/Write">
+<DefaultData Format="Decorated">
+<Structure DataType="FBD_TIMER">
+<DataValueMember Name="EnableIn" DataType="BOOL" Value="1"/>
+<DataValueMember Name="TimerEnable" DataType="BOOL" Value="0"/>
+<DataValueMember Name="PRE" DataType="DINT" Radix="Decimal" Value="0"/>
+<DataValueMember Name="Reset" DataType="BOOL" Value="0"/>
+<DataValueMember Name="EnableOut" DataType="BOOL" Value="0"/>
+<DataValueMember Name="ACC" DataType="DINT" Radix="Decimal" Value="0"/>
+<DataValueMember Name="EN" DataType="BOOL" Value="0"/>
+<DataValueMember Name="TT" DataType="BOOL" Value="0"/>
+<DataValueMember Name="DN" DataType="BOOL" Value="0"/>
+<DataValueMember Name="Status" DataType="DINT" Radix="Hex" Value="16#0000_0000"/>
+<DataValueMember Name="InstructFault" DataType="BOOL" Value="0"/>
+<DataValueMember Name="PresetInv" DataType="BOOL" Value="0"/>
+</Structure>
+</DefaultData>
+</LocalTag>
+</LocalTags>
+<Routines>
+<Routine Name="Logic" Type="ST">
+<STContent>
+<Line Number="0">
+<![CDATA[//Convert User-entered time into milliseconds]]>
+</Line>
+<Line Number="1">
+<![CDATA[DelayTimer.PRE := DisplayTime * 1000;]]>
+</Line>
+<Line Number="2">
+<![CDATA[]]>
+</Line>
+<Line Number="3">
+<![CDATA[If InputArray[count] THEN			// Evaluate the current count, if it is true,]]>
+</Line>
+<Line Number="4">
+<![CDATA[									// perform the following steps:]]>
+</Line>
+<Line Number="5">
+<![CDATA[	Output := count;				// Display the current count if it is true]]>
+</Line>
+<Line Number="6">
+<![CDATA[	DelayTimer.TimerEnable := 1;			// Enable the Timer Delay]]>
+</Line>
+<Line Number="7">
+<![CDATA[	DelayTimer.Reset := 0;			// Set the Timer Reset flag to 0]]>
+</Line>
+<Line Number="8">
+<![CDATA[	TONR(DelayTimer);				// Call up the Timer to start it]]>
+</Line>
+<Line Number="9">
+<![CDATA[	If DelayTimer.DN THEN			// When the Timer finishes, perform the following:]]>
+</Line>
+<Line Number="10">
+<![CDATA[		IF count < 127 THEN				// Evaluate the count, if it less than the maximum,]]>
+</Line>
+<Line Number="11">
+<![CDATA[			count := count + 1;				// increment the count by 1]]>
+</Line>
+<Line Number="12">
+<![CDATA[		ELSE							// if it is equal to or greater than the maximum,]]>
+</Line>
+<Line Number="13">
+<![CDATA[			count := 0;						//set the count to 0]]>
+</Line>
+<Line Number="14">
+<![CDATA[		END_IF;]]>
+</Line>
+<Line Number="15">
+<![CDATA[	DelayTimer.Reset := 1;]]>
+</Line>
+<Line Number="16">
+<![CDATA[	DelayTimer.TimerEnable := 0;	// Reset the Timer]]>
+</Line>
+<Line Number="17">
+<![CDATA[	TONR(DelayTimer);				// Call the Timer to Reset it]]>
+</Line>
+<Line Number="18">
+<![CDATA[	END_IF;]]>
+</Line>
+<Line Number="19">
+<![CDATA[]]>
+</Line>
+<Line Number="20">
+<![CDATA[ELSE								// if it is not true, perform the following steps,]]>
+</Line>
+<Line Number="21">
+<![CDATA[	IF count < 127 THEN				// Evaluate the count, if it less than the maximum,]]>
+</Line>
+<Line Number="22">
+<![CDATA[			count := count + 1;				// increment the count by 1]]>
+</Line>
+<Line Number="23">
+<![CDATA[	ELSE							// if it is equal to or greater than the maximum,]]>
+</Line>
+<Line Number="24">
+<![CDATA[			count := 0;						//set the count to 0]]>
+</Line>
+<Line Number="25">
+<![CDATA[	END_IF;]]>
+</Line>
+<Line Number="26">
+<![CDATA[]]>
+</Line>
+<Line Number="27">
+<![CDATA[END_IF;]]>
+</Line>
+<Line Number="28">
+<![CDATA[]]>
+</Line>
+</STContent>
+</Routine>
+</Routines>
+</AddOnInstructionDefinition>
+</AddOnInstructionDefinitions>
+</Controller>
+</RSLogix5000Content>

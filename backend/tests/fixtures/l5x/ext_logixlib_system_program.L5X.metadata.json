@@ -1,0 +1,11 @@
+{
+  "platform": "rockwell",
+  "language": "ladder_structured_text",
+  "expected_capabilities": ["ladder", "structured_text", "aoi_definitions", "udt_nested", "gsv_ssv", "msg"],
+  "known_unsupported_features": [
+    "AOI instance opcodes reported as unknown (SYS, SYS_WALLCLOCK, SYS_ALARMCLASS, SYS_PORTCLASS, SYS_TCPIPCLASS, SYS_ENETLINKCLASS, SYS_PRECISIONTIME, SYS_NODECLASS)",
+    "AOI definition body logic (where the GSV x17/SSV x8/MSG x9 actually live) is not extracted into routines/instructions; the visible program has only ~9 rungs",
+    "Deep/nested UDT member resolution is not fully exercised by the grader"
+  ],
+  "parser_notes": "REAL external fixture. Source: https://github.com/JeremyMedders/LogixLibraries (file src/System/System_Program.L5X). License: MIT. Studio 5000 v35 Program-scope export with full context (1.7 MB). System/diagnostics library: 14 AOI definitions, 32 UDTs (deepest set found, incl. CIP types and ISA-18.2 alarm class), GSV x17/SSV x8/MSG x9 inside AOI bodies. Grader: grade C (thin visible program logic, all 9 program instructions are SYS_* AOI instances). Added primarily for AOI-definition-body + deep-UDT + GSV/SSV/MSG stress coverage and Phase 1 unknown-opcode inventory. Library/design-pattern code, not plant code; license-safe. De-identified: embedded personal/vendor identifiers in the L5X were scrubbed with tools/deidentify_l5x.py (Vendor/CreatedBy/EditedBy -> INTELLI, ExportDate neutralized, Controller context Name DEVPAC -> INTELLI_Context); CDATA logic left byte-identical (grade C / 0.0% coverage unchanged before and after). MIT source/license attribution above is retained here intentionally and was NOT scrubbed from metadata. Note: 'DEVPAC*' string literals remain inside CDATA tag-data by design (scrubbing them would alter program logic)."
+}

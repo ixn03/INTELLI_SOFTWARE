@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import axios from "axios";
 import Link from "next/link";
@@ -19,6 +19,7 @@ import type {
 
 import AnswerView from "./AnswerView";
 import Sidebar from "./Sidebar";
+import { Badge, Stat } from "./ui";
 
 const IS_DEV = process.env.NODE_ENV === "development";
 
@@ -257,6 +258,38 @@ export default function IntelliWorkspace() {
     objectListFetchSucceeded &&
     objectListOffset + objectList.length < objectListTotal;
 
+  const projectStats = useMemo(() => {
+    if (!project) {
+      return {
+        controllers: 0,
+        programs: 0,
+        routines: 0,
+        objects: 0,
+        relationships: 0,
+      };
+    }
+    const programs = project.controllers.reduce(
+      (acc, controller) => acc + controller.programs.length,
+      0,
+    );
+    const routines = project.controllers.reduce(
+      (acc, controller) =>
+        acc +
+        controller.programs.reduce(
+          (programAcc, program) => programAcc + program.routines.length,
+          0,
+        ),
+      0,
+    );
+    return {
+      controllers: project.controllers.length,
+      programs,
+      routines,
+      objects: summary?.control_object_count ?? objectListProjectTotal,
+      relationships: summary?.relationship_count ?? 0,
+    };
+  }, [project, summary, objectListProjectTotal]);
+
   async function uploadFile() {
     setUploadError(null);
     if (!file) {
@@ -494,84 +527,73 @@ export default function IntelliWorkspace() {
 
   if (!project) {
     return (
-      <div className="flex min-h-[60vh] flex-col items-center justify-center gap-6 px-6 py-16 text-center">
-        <div>
-          <p className="text-[11px] uppercase tracking-[0.2em] text-zinc-500">
-            Workspace
-          </p>
-          <h1 className="mt-2 text-2xl font-semibold text-zinc-50">
-            No project loaded
-          </h1>
-          <p className="mx-auto mt-2 max-w-md text-sm text-zinc-400">
-            Upload a supported control export from the home page, or use the card below. The
-            backend keeps the most recently uploaded project in memory.
-          </p>
-        </div>
-        <div className="w-full max-w-md rounded-2xl border border-zinc-800/80 bg-zinc-900/40 p-6">
-          <label className="block cursor-pointer rounded-xl border border-dashed border-zinc-700/80 px-4 py-6 text-center">
-            <input
-              type="file"
-              accept=".l5x,.L5X,.xml,.XML,.fhx,.FHX,.scl,.SCL,.txt,.csv,.cl,.hwl,.hwh,.hsc,.epr,application/xml,text/xml,text/plain"
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-              className="sr-only"
-            />
-            <p className="text-sm text-zinc-200">
-              {file ? file.name : "Choose a control export"}
-            </p>
-          </label>
-          <button
-            type="button"
-            onClick={() => void uploadFile()}
-            disabled={uploadLoading || !file}
-            className="mt-4 w-full rounded-lg bg-zinc-100 py-2.5 text-sm font-medium text-zinc-900 disabled:opacity-40"
-          >
-            {uploadLoading ? "Uploading…" : "Upload"}
-          </button>
-          {uploadError ? (
-            <p className="mt-3 text-sm text-rose-300">{uploadError}</p>
-          ) : null}
-        </div>
-        <Link
-          href="/"
-          className="text-sm text-zinc-400 underline-offset-4 hover:text-zinc-200 hover:underline"
-        >
-          Back to home
-        </Link>
-      </div>
+      <WorkspaceNoProject
+        file={file}
+        onFileChange={setFile}
+        onUpload={() => void uploadFile()}
+        uploading={uploadLoading}
+        uploadError={uploadError}
+      />
     );
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-zinc-950 text-zinc-100">
-      <header className="flex shrink-0 items-center justify-between gap-4 border-b border-zinc-800/80 bg-zinc-950/80 px-6 py-3 backdrop-blur">
-        <div className="flex items-center gap-3">
-          <Link
-            href="/"
-            className="grid h-9 w-9 place-items-center rounded-lg border border-zinc-800 bg-zinc-900/80 font-mono text-sm text-zinc-100"
-          >
-            I.
-          </Link>
-          <div>
-            <p className="text-sm font-medium tracking-tight text-zinc-50">
-              INTELLI
-            </p>
-            <p className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">
-              Workspace
+    <div className="flex h-full min-h-0 flex-col bg-[#050914] text-zinc-100">
+      <header className="shrink-0 border-b border-white/10 bg-zinc-950/80 px-5 py-4 backdrop-blur">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge tone="info" uppercase>
+                reasoning workspace
+              </Badge>
+              <Badge tone={summaryError || objectListError ? "warning" : "success"} uppercase>
+                {summaryError || objectListError ? "review graph" : "graph online"}
+              </Badge>
+              {traceVersion ? (
+                <Badge tone="neutral" uppercase>
+                  trace {traceVersion}
+                </Badge>
+              ) : null}
+            </div>
+            <h1 className="mt-2 truncate text-2xl font-semibold tracking-[-0.03em] text-white">
+              {project.project_name || "Imported control project"}
+            </h1>
+            <p className="mt-1 max-w-3xl truncate text-sm text-zinc-500">
+              Evidence-backed object tracing, runtime diagnosis, and controls
+              question routing.
             </p>
           </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Link
+              href="/"
+              className="inline-flex rounded-xl border border-zinc-800 bg-zinc-900/70 px-3 py-2 text-sm text-zinc-300 transition hover:border-zinc-700 hover:text-white xl:hidden"
+            >
+              Home
+            </Link>
+            <button
+              type="button"
+              onClick={() => void refreshSummary()}
+              disabled={summaryLoading || objectListLoading}
+              className="rounded-xl border border-zinc-800 bg-zinc-900/70 px-3 py-2 text-sm text-zinc-300 transition hover:border-zinc-700 hover:text-white disabled:opacity-40"
+            >
+              {summaryLoading || objectListLoading ? "Refreshing..." : "Refresh graph"}
+            </button>
+            <button
+              type="button"
+              onClick={resetWorkspaceUpload}
+              className="rounded-xl border border-cyan-400/30 bg-cyan-400/10 px-3 py-2 text-sm font-medium text-cyan-100 transition hover:bg-cyan-400/15"
+            >
+              Switch project
+            </button>
+          </div>
         </div>
-        <div className="flex items-center gap-3">
-          <p className="hidden max-w-xs truncate text-sm text-zinc-300 sm:block">
-            {project.project_name || "Imported project"}
-          </p>
-          <button
-            type="button"
-            onClick={resetWorkspaceUpload}
-            className="rounded-lg border border-zinc-800 px-3 py-1.5 text-xs text-zinc-300 hover:border-zinc-700 hover:bg-zinc-900"
-          >
-            Switch project
-          </button>
-        </div>
+        <ProjectStatsBar
+          stats={projectStats}
+          selectedObjectName={
+            selectedObject?.name ??
+            (selectedObjectId ? selectedObjectId.split("/").pop() ?? selectedObjectId : "")
+          }
+        />
       </header>
       <div className="flex min-h-0 flex-1">
         <Sidebar
@@ -637,6 +659,110 @@ export default function IntelliWorkspace() {
           runtimeEvalError={runtimeEvalError}
           llmAssist={llmAssist}
         />
+      </div>
+    </div>
+  );
+}
+
+function WorkspaceNoProject({
+  file,
+  onFileChange,
+  onUpload,
+  uploading,
+  uploadError,
+}: {
+  file: File | null;
+  onFileChange: (file: File | null) => void;
+  onUpload: () => void;
+  uploading: boolean;
+  uploadError: string | null;
+}) {
+  return (
+    <div className="relative grid min-h-screen place-items-center overflow-hidden bg-[radial-gradient(circle_at_top,#10223a_0,#050914_55%,#020617_100%)] px-6 py-12 text-center">
+      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(rgba(148,163,184,0.035)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.035)_1px,transparent_1px)] bg-[size:42px_42px]" />
+      <div className="relative w-full max-w-3xl rounded-[2rem] border border-white/10 bg-zinc-950/75 p-6 shadow-2xl shadow-black/40 backdrop-blur">
+        <div className="mx-auto max-w-2xl">
+          <Badge tone="info" uppercase>
+            workspace standby
+          </Badge>
+          <h1 className="mt-4 text-4xl font-semibold tracking-[-0.04em] text-white">
+            Load a control project to start reasoning.
+          </h1>
+          <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-zinc-400">
+            Upload a supported export and INTELLI will move into object search,
+            trace, ask, and runtime diagnosis mode. The backend keeps the most
+            recent project in memory during development.
+          </p>
+        </div>
+
+        <div className="mx-auto mt-8 max-w-xl rounded-2xl border border-zinc-800/80 bg-zinc-900/45 p-4 text-left">
+          <label className="block cursor-pointer rounded-2xl border border-dashed border-cyan-400/30 bg-cyan-400/[0.04] px-4 py-7 text-center transition hover:border-cyan-300/60">
+            <input
+              type="file"
+              accept=".l5x,.L5X,.xml,.XML,.fhx,.FHX,.scl,.SCL,.txt,.csv,.cl,.hwl,.hwh,.hsc,.epr,application/xml,text/xml,text/plain"
+              onChange={(e) => onFileChange(e.target.files?.[0] ?? null)}
+              className="sr-only"
+            />
+            <p className="text-sm font-medium text-zinc-100">
+              {file ? file.name : "Choose a PLC or DCS export"}
+            </p>
+            <p className="mt-2 text-xs text-zinc-500">
+              Rockwell L5X, Siemens XML, DeltaV FHX, Honeywell text/XML.
+            </p>
+          </label>
+          <button
+            type="button"
+            onClick={onUpload}
+            disabled={uploading || !file}
+            className="mt-4 w-full rounded-xl bg-cyan-300 py-3 text-sm font-semibold text-cyan-950 transition hover:bg-cyan-200 disabled:opacity-40"
+          >
+            {uploading ? "Uploading..." : "Analyze project"}
+          </button>
+          {uploadError ? (
+            <p className="mt-3 rounded-lg border border-rose-900/60 bg-rose-950/30 px-3 py-2 text-sm text-rose-100">
+              {uploadError}
+            </p>
+          ) : null}
+        </div>
+
+        <Link
+          href="/"
+          className="mt-6 inline-flex text-sm text-zinc-400 underline-offset-4 hover:text-zinc-200 hover:underline"
+        >
+          Back to product home
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+function ProjectStatsBar({
+  stats,
+  selectedObjectName,
+}: {
+  stats: {
+    controllers: number;
+    programs: number;
+    routines: number;
+    objects: number;
+    relationships: number;
+  };
+  selectedObjectName: string;
+}) {
+  return (
+    <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-wrap gap-2">
+        <Stat value={stats.controllers} label="controllers" />
+        <Stat value={stats.programs} label="programs" />
+        <Stat value={stats.routines} label="routines" />
+        <Stat value={stats.objects} label="objects" />
+        <Stat value={stats.relationships} label="relationships" />
+      </div>
+      <div className="min-w-0 rounded-xl border border-zinc-800/80 bg-zinc-900/55 px-3 py-2 text-xs">
+        <span className="text-zinc-500">Selected target: </span>
+        <span className="text-zinc-200">
+          {selectedObjectName || "none yet"}
+        </span>
       </div>
     </div>
   );

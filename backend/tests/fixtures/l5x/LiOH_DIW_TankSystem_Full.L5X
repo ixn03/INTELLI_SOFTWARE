@@ -1,0 +1,890 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<?CONFIGURE Logix5000 Project File ?>
+<RSLogix5000Content SchemaRevision="1.0" SoftwareRevision="36.00" TargetName="LiOH_DIW_TankSystem" TargetType="Controller" ContainsContext="false" ExportDate="Sat May 09 21:38:52 2026" ExportOptions="NoRawData L5KData DecoratedData ForceProtectedEncoding AllProjDocTrans">
+  <Controller Use="Target" Name="LiOH_DIW_TankSystem" ProcessorType="1756-L85E" MajorRev="36" MinorRev="11" TimeSlice="20" ShareUnusedTimeSlice="1" ProjectCreationDate="Sat May 09 21:38:52 2026" LastModifiedDate="Sat May 09 21:38:52 2026" SFCExecutionControl="CurrentActive" SFCRestartPosition="MostRecent" SFCLastScan="DontScan" ProjectSN="16#0000_0000" MatchProjectToController="false" CanUseRPIFromProducer="false" InhibitAutomaticFirmwareUpdate="0" PassThroughConfiguration="EnabledWithAppend" DownloadProjectDocumentationAndExtendedProperties="true" DownloadCustomProperties="true" ReportMinorOverflow="false">
+    <Description>LiOH/DIW Tank Mixing &amp; Transfer System.
+Sequence: IDLE -&gt; FILL (ratio-controlled) -&gt; MIX -&gt; TRANSFER -&gt; IDLE.
+Redundant LiOH and Transfer pumps with lead/lag alternation.
+Configurable ratio, level setpoints, and mix time via HMI.
+</Description>
+    <RedundancyInfo Enabled="false" KeepTestEditsOnSwitchOver="false" IOMemoryPadPercentage="90" DataTablePadPercentage="50"/>
+    <Security Code="0" ChangesToDetect="16#ffff_ffff_ffff_ffff"/>
+    <SafetyInfo/>
+    <DataTypes>
+      <DataType Name="PumpData" Family="NoFamily" Class="User">
+        <Description>Per-pump status, command, and runtime data</Description>
+        <Members>
+          <Member Name="RunCmd" DataType="BOOL" Dimension="0" Radix="Decimal" Hidden="false" ExternalAccess="Read/Write">
+            <Description>Run command from sequencer</Description>
+          </Member>
+          <Member Name="RunFbk" DataType="BOOL" Dimension="0" Radix="Decimal" Hidden="false" ExternalAccess="Read/Write">
+            <Description>VFD running feedback</Description>
+          </Member>
+          <Member Name="Fault" DataType="BOOL" Dimension="0" Radix="Decimal" Hidden="false" ExternalAccess="Read/Write">
+            <Description>Latched pump fault</Description>
+          </Member>
+          <Member Name="Available" DataType="BOOL" Dimension="0" Radix="Decimal" Hidden="false" ExternalAccess="Read/Write">
+            <Description>Pump healthy &amp; ready to use</Description>
+          </Member>
+          <Member Name="SpeedSP" DataType="REAL" Dimension="0" Radix="Decimal" Hidden="false" ExternalAccess="Read/Write">
+            <Description>Speed reference 0..100 %</Description>
+          </Member>
+          <Member Name="RunHours" DataType="DINT" Dimension="0" Radix="Decimal" Hidden="false" ExternalAccess="Read/Write">
+            <Description>Cumulative runtime hours</Description>
+          </Member>
+        </Members>
+      </DataType>
+      <DataType Name="FaultBits" Family="NoFamily" Class="User">
+        <Description>Latched fault bits aggregated for HMI alarm summary</Description>
+        <Members>
+          <Member Name="Ratio" DataType="BOOL" Dimension="0" Radix="Decimal" Hidden="false" ExternalAccess="Read/Write">
+            <Description>Ratio deviation &gt; 5% sustained 10s</Description>
+          </Member>
+          <Member Name="PumpA_LiOH" DataType="BOOL" Dimension="0" Radix="Decimal" Hidden="false" ExternalAccess="Read/Write">
+            <Description>LiOH pump A no feedback / fault</Description>
+          </Member>
+          <Member Name="PumpB_LiOH" DataType="BOOL" Dimension="0" Radix="Decimal" Hidden="false" ExternalAccess="Read/Write">
+            <Description>LiOH pump B no feedback / fault</Description>
+          </Member>
+          <Member Name="PumpA_Xfr" DataType="BOOL" Dimension="0" Radix="Decimal" Hidden="false" ExternalAccess="Read/Write">
+            <Description>Transfer pump A fault</Description>
+          </Member>
+          <Member Name="PumpB_Xfr" DataType="BOOL" Dimension="0" Radix="Decimal" Hidden="false" ExternalAccess="Read/Write">
+            <Description>Transfer pump B fault</Description>
+          </Member>
+          <Member Name="LevelHH" DataType="BOOL" Dimension="0" Radix="Decimal" Hidden="false" ExternalAccess="Read/Write">
+            <Description>Tank level high-high alarm</Description>
+          </Member>
+          <Member Name="EStop" DataType="BOOL" Dimension="0" Radix="Decimal" Hidden="false" ExternalAccess="Read/Write">
+            <Description>E-Stop pressed</Description>
+          </Member>
+          <Member Name="Any" DataType="BOOL" Dimension="0" Radix="Decimal" Hidden="false" ExternalAccess="Read/Write">
+            <Description>OR of all fault bits</Description>
+          </Member>
+        </Members>
+      </DataType>
+      <DataType Name="TankSetpoints" Family="NoFamily" Class="User">
+        <Description>HMI-writable setpoints for the batch sequence</Description>
+        <Members>
+          <Member Name="RatioSP" DataType="REAL" Dimension="0" Radix="Float" Hidden="false" ExternalAccess="Read/Write">
+            <Description>LiOH:DIW mass ratio setpoint</Description>
+          </Member>
+          <Member Name="LevelHiSP" DataType="REAL" Dimension="0" Radix="Float" Hidden="false" ExternalAccess="Read/Write">
+            <Description>High-level setpoint to end fill (%)</Description>
+          </Member>
+          <Member Name="LevelLoSP" DataType="REAL" Dimension="0" Radix="Float" Hidden="false" ExternalAccess="Read/Write">
+            <Description>Low-level setpoint to end transfer (%)</Description>
+          </Member>
+          <Member Name="LevelHHAlm" DataType="REAL" Dimension="0" Radix="Float" Hidden="false" ExternalAccess="Read/Write">
+            <Description>High-high alarm setpoint (%)</Description>
+          </Member>
+          <Member Name="MixTimeSP" DataType="DINT" Dimension="0" Radix="Decimal" Hidden="false" ExternalAccess="Read/Write">
+            <Description>Mix duration in milliseconds</Description>
+          </Member>
+          <Member Name="PumpAltHrs" DataType="DINT" Dimension="0" Radix="Decimal" Hidden="false" ExternalAccess="Read/Write">
+            <Description>Pump alternation runtime hours</Description>
+          </Member>
+          <Member Name="RatioDevPct" DataType="REAL" Dimension="0" Radix="Float" Hidden="false" ExternalAccess="Read/Write">
+            <Description>Allowed ratio deviation %</Description>
+          </Member>
+        </Members>
+      </DataType>
+    </DataTypes>
+    <AddOnInstructionDefinitions>
+      <AddOnInstructionDefinition Name="AOI_PumpControl" Revision="1.0" Vendor="ProcessEng" ExecutePrescan="false" ExecutePostscan="false" ExecuteEnableInFalse="false" CreatedDate="2026-05-09T21:38:52.000Z" EditedDate="2026-05-09T21:38:52.000Z" SoftwareRevision="v36.00">
+        <Description>Generic redundant-pump driver. Manages inlet/outlet XV interlocks, a feedback timeout, and a latched fault bit.</Description>
+        <RevisionExtension/>
+        <AdditionalHelpText/>
+        <Parameters>
+          <Parameter Name="EnableIn" TagType="Base" DataType="BOOL" Usage="Input" Radix="Decimal" Required="false" Visible="false" ExternalAccess="Read/Write" Constant="false">
+            <Description>Enable Input - System Defined Parameter</Description>
+            <DefaultData Format="L5K">1</DefaultData>
+          </Parameter>
+          <Parameter Name="EnableOut" TagType="Base" DataType="BOOL" Usage="Output" Radix="Decimal" Required="false" Visible="false" ExternalAccess="Read/Write">
+            <Description>Enable Output - System Defined Parameter</Description>
+            <DefaultData Format="L5K">0</DefaultData>
+          </Parameter>
+          <Parameter Name="Enable" TagType="Base" DataType="BOOL" Usage="Input" Radix="Decimal" Required="true" Visible="true" ExternalAccess="Read/Write" Constant="false">
+            <Description>Master enable from sequencer</Description>
+            <DefaultData Format="L5K">0</DefaultData>
+          </Parameter>
+          <Parameter Name="Run" TagType="Base" DataType="BOOL" Usage="Input" Radix="Decimal" Required="true" Visible="true" ExternalAccess="Read/Write" Constant="false">
+            <Description>Sequencer run request</Description>
+            <DefaultData Format="L5K">0</DefaultData>
+          </Parameter>
+          <Parameter Name="RunFbk" TagType="Base" DataType="BOOL" Usage="Input" Radix="Decimal" Required="true" Visible="true" ExternalAccess="Read/Write" Constant="false">
+            <Description>Pump VFD running feedback</Description>
+            <DefaultData Format="L5K">0</DefaultData>
+          </Parameter>
+          <Parameter Name="Reset" TagType="Base" DataType="BOOL" Usage="Input" Radix="Decimal" Required="true" Visible="true" ExternalAccess="Read/Write" Constant="false">
+            <Description>Operator reset PB</Description>
+            <DefaultData Format="L5K">0</DefaultData>
+          </Parameter>
+          <Parameter Name="FbkTimeout" TagType="Base" DataType="DINT" Usage="Input" Radix="Decimal" Required="true" Visible="true" ExternalAccess="Read/Write" Constant="false">
+            <Description>Feedback timeout in ms</Description>
+            <DefaultData Format="L5K">5000</DefaultData>
+          </Parameter>
+          <Parameter Name="XVInlet" TagType="Base" DataType="BOOL" Usage="Output" Radix="Decimal" Required="true" Visible="true" ExternalAccess="Read/Write">
+            <Description>Inlet block valve open command</Description>
+            <DefaultData Format="L5K">0</DefaultData>
+          </Parameter>
+          <Parameter Name="XVOutlet" TagType="Base" DataType="BOOL" Usage="Output" Radix="Decimal" Required="true" Visible="true" ExternalAccess="Read/Write">
+            <Description>Outlet block valve open command</Description>
+            <DefaultData Format="L5K">0</DefaultData>
+          </Parameter>
+          <Parameter Name="RunCmd" TagType="Base" DataType="BOOL" Usage="Output" Radix="Decimal" Required="true" Visible="true" ExternalAccess="Read/Write">
+            <Description>Run output to VFD</Description>
+            <DefaultData Format="L5K">0</DefaultData>
+          </Parameter>
+          <Parameter Name="Fault" TagType="Base" DataType="BOOL" Usage="Output" Radix="Decimal" Required="true" Visible="true" ExternalAccess="Read/Write">
+            <Description>Latched fault</Description>
+            <DefaultData Format="L5K">0</DefaultData>
+          </Parameter>
+          <Parameter Name="Ready" TagType="Base" DataType="BOOL" Usage="Output" Radix="Decimal" Required="true" Visible="true" ExternalAccess="Read/Write">
+            <Description>Pump available and ready to run</Description>
+            <DefaultData Format="L5K">0</DefaultData>
+          </Parameter>
+        </Parameters>
+        <LocalTags>
+          <LocalTag Name="FbkTmr" DataType="TIMER" ExternalAccess="None">
+            <Description>Feedback supervision timer</Description>
+            <DefaultData Format="Decorated">
+              <Structure DataType="TIMER"/>
+            </DefaultData>
+          </LocalTag>
+          <LocalTag Name="FbkLost" DataType="BOOL" ExternalAccess="None">
+            <Description>Latched feedback-lost bit</Description>
+            <DefaultData Format="L5K">0</DefaultData>
+            <DefaultData Format="Decorated"/>
+          </LocalTag>
+        </LocalTags>
+        <Routines>
+          <Routine Name="Logic" Type="ST">
+            <STContent>
+              <Line><![CDATA[(* AOI_PumpControl - generic redundant pump driver *)]]></Line>
+              <Line/>
+              <Line><![CDATA[(* Open block valves whenever Enable + Run are set and no fault *)]]></Line>
+              <Line><![CDATA[XVInlet  := Enable AND Run AND NOT Fault;]]></Line>
+              <Line><![CDATA[XVOutlet := Enable AND Run AND NOT Fault;]]></Line>
+              <Line/>
+              <Line><![CDATA[(* Pump runs only after both valves are open and no fault present *)]]></Line>
+              <Line><![CDATA[RunCmd := XVInlet AND XVOutlet AND NOT Fault;]]></Line>
+              <Line/>
+              <Line><![CDATA[(* Feedback supervision: timer runs while RunCmd is set but no feedback *)]]></Line>
+              <Line><![CDATA[FbkTmr.PRE := FbkTimeout;]]></Line>
+              <Line><![CDATA[TONR(FbkTmr);]]></Line>
+              <Line><![CDATA[FbkTmr.EN := RunCmd AND NOT RunFbk;]]></Line>
+              <Line/>
+              <Line><![CDATA[IF FbkTmr.DN THEN]]></Line>
+              <Line><![CDATA[    FbkLost := 1;]]></Line>
+              <Line><![CDATA[END_IF;]]></Line>
+              <Line/>
+              <Line><![CDATA[(* Latch fault on feedback loss; cleared only by Reset *)]]></Line>
+              <Line><![CDATA[IF FbkLost THEN]]></Line>
+              <Line><![CDATA[    Fault := 1;]]></Line>
+              <Line><![CDATA[END_IF;]]></Line>
+              <Line/>
+              <Line><![CDATA[IF Reset THEN]]></Line>
+              <Line><![CDATA[    Fault   := 0;]]></Line>
+              <Line><![CDATA[    FbkLost := 0;]]></Line>
+              <Line><![CDATA[END_IF;]]></Line>
+              <Line/>
+              <Line><![CDATA[Ready := Enable AND NOT Fault;]]></Line>
+            </STContent>
+          </Routine>
+        </Routines>
+      </AddOnInstructionDefinition>
+      <AddOnInstructionDefinition Name="AOI_RatioCtl" Revision="1.0" Vendor="ProcessEng" ExecutePrescan="false" ExecutePostscan="false" ExecuteEnableInFalse="false" CreatedDate="2026-05-09T21:38:52.000Z" EditedDate="2026-05-09T21:38:52.000Z" SoftwareRevision="v36.00">
+        <Description>Wild-stream / captive-stream mass ratio controller. DIW is the wild stream; LiOH VFD speed is trimmed by a PI loop so that FT_LiOH/FT_DIW approaches RatioSP.</Description>
+        <RevisionExtension/>
+        <AdditionalHelpText/>
+        <Parameters>
+          <Parameter Name="EnableIn" TagType="Base" DataType="BOOL" Usage="Input" Radix="Decimal" Required="false" Visible="false" ExternalAccess="Read/Write" Constant="false">
+            <Description>Enable Input - System Defined Parameter</Description>
+            <DefaultData Format="L5K">1</DefaultData>
+          </Parameter>
+          <Parameter Name="EnableOut" TagType="Base" DataType="BOOL" Usage="Output" Radix="Decimal" Required="false" Visible="false" ExternalAccess="Read/Write">
+            <Description>Enable Output - System Defined Parameter</Description>
+            <DefaultData Format="L5K">0</DefaultData>
+          </Parameter>
+          <Parameter Name="Enable" TagType="Base" DataType="BOOL" Usage="Input" Radix="Decimal" Required="true" Visible="true" ExternalAccess="Read/Write" Constant="false">
+            <Description>Run controller</Description>
+            <DefaultData Format="L5K">0</DefaultData>
+          </Parameter>
+          <Parameter Name="FlowDIW" TagType="Base" DataType="REAL" Usage="Input" Radix="Float" Required="true" Visible="true" ExternalAccess="Read/Write" Constant="false">
+            <Description>DIW flow PV (kg/min)</Description>
+            <DefaultData Format="L5K">0.0</DefaultData>
+          </Parameter>
+          <Parameter Name="FlowLiOH" TagType="Base" DataType="REAL" Usage="Input" Radix="Float" Required="true" Visible="true" ExternalAccess="Read/Write" Constant="false">
+            <Description>LiOH flow PV (kg/min)</Description>
+            <DefaultData Format="L5K">0.0</DefaultData>
+          </Parameter>
+          <Parameter Name="RatioSP" TagType="Base" DataType="REAL" Usage="Input" Radix="Float" Required="true" Visible="true" ExternalAccess="Read/Write" Constant="false">
+            <Description>HMI-set ratio (LiOH/DIW)</Description>
+            <DefaultData Format="L5K">0.05</DefaultData>
+          </Parameter>
+          <Parameter Name="DevAlmPct" TagType="Base" DataType="REAL" Usage="Input" Radix="Float" Required="true" Visible="true" ExternalAccess="Read/Write" Constant="false">
+            <Description>Allowable deviation %</Description>
+            <DefaultData Format="L5K">5.0</DefaultData>
+          </Parameter>
+          <Parameter Name="DevDelay" TagType="Base" DataType="DINT" Usage="Input" Radix="Decimal" Required="true" Visible="true" ExternalAccess="Read/Write" Constant="false">
+            <Description>Time before fault, ms</Description>
+            <DefaultData Format="L5K">10000</DefaultData>
+          </Parameter>
+          <Parameter Name="Reset" TagType="Base" DataType="BOOL" Usage="Input" Radix="Decimal" Required="true" Visible="true" ExternalAccess="Read/Write" Constant="false">
+            <Description>Operator reset</Description>
+            <DefaultData Format="L5K">0</DefaultData>
+          </Parameter>
+          <Parameter Name="LiOHSpeedSP" TagType="Base" DataType="REAL" Usage="Output" Radix="Float" Required="true" Visible="true" ExternalAccess="Read/Write">
+            <Description>CV out to LiOH VFD 0..100%</Description>
+            <DefaultData Format="L5K">0.0</DefaultData>
+          </Parameter>
+          <Parameter Name="RatioActual" TagType="Base" DataType="REAL" Usage="Output" Radix="Float" Required="true" Visible="true" ExternalAccess="Read/Write">
+            <Description>Calculated actual ratio</Description>
+            <DefaultData Format="L5K">0.0</DefaultData>
+          </Parameter>
+          <Parameter Name="RatioDevPct" TagType="Base" DataType="REAL" Usage="Output" Radix="Float" Required="true" Visible="true" ExternalAccess="Read/Write">
+            <Description>Absolute deviation %</Description>
+            <DefaultData Format="L5K">0.0</DefaultData>
+          </Parameter>
+          <Parameter Name="Fault" TagType="Base" DataType="BOOL" Usage="Output" Radix="Decimal" Required="true" Visible="true" ExternalAccess="Read/Write">
+            <Description>Latched ratio fault</Description>
+            <DefaultData Format="L5K">0</DefaultData>
+          </Parameter>
+        </Parameters>
+        <LocalTags>
+          <LocalTag Name="Error" DataType="REAL" ExternalAccess="None" Radix="Float">
+            <Description>PI error term</Description>
+            <DefaultData Format="L5K">0.0</DefaultData>
+            <DefaultData Format="Decorated"/>
+          </LocalTag>
+          <LocalTag Name="Integral" DataType="REAL" ExternalAccess="None" Radix="Float">
+            <Description>PI integral accumulator</Description>
+            <DefaultData Format="L5K">0.0</DefaultData>
+            <DefaultData Format="Decorated"/>
+          </LocalTag>
+          <LocalTag Name="Kp" DataType="REAL" ExternalAccess="None" Radix="Float">
+            <Description>Proportional gain</Description>
+            <DefaultData Format="L5K">8.0</DefaultData>
+            <DefaultData Format="Decorated"/>
+          </LocalTag>
+          <LocalTag Name="Ki" DataType="REAL" ExternalAccess="None" Radix="Float">
+            <Description>Integral gain</Description>
+            <DefaultData Format="L5K">0.4</DefaultData>
+            <DefaultData Format="Decorated"/>
+          </LocalTag>
+          <LocalTag Name="Cycle" DataType="REAL" ExternalAccess="None" Radix="Float">
+            <Description>Scan time in seconds</Description>
+            <DefaultData Format="L5K">0.1</DefaultData>
+            <DefaultData Format="Decorated"/>
+          </LocalTag>
+          <LocalTag Name="DevTmr" DataType="TIMER" ExternalAccess="None">
+            <Description>Deviation alarm timer</Description>
+            <DefaultData Format="Decorated">
+              <Structure DataType="TIMER"/>
+            </DefaultData>
+          </LocalTag>
+        </LocalTags>
+        <Routines>
+          <Routine Name="Logic" Type="ST">
+            <STContent>
+              <Line><![CDATA[(* AOI_RatioCtl - PI ratio controller for LiOH/DIW mixing *)]]></Line>
+              <Line/>
+              <Line><![CDATA[IF NOT Enable THEN]]></Line>
+              <Line><![CDATA[    LiOHSpeedSP := 0.0;]]></Line>
+              <Line><![CDATA[    Integral    := 0.0;]]></Line>
+              <Line><![CDATA[    RETURN;]]></Line>
+              <Line><![CDATA[END_IF;]]></Line>
+              <Line/>
+              <Line><![CDATA[(* 1. Compute actual ratio - guard against div-by-zero *)]]></Line>
+              <Line><![CDATA[IF FlowDIW > 0.1 THEN]]></Line>
+              <Line><![CDATA[    RatioActual := FlowLiOH / FlowDIW;]]></Line>
+              <Line><![CDATA[ELSE]]></Line>
+              <Line><![CDATA[    RatioActual := 0.0;]]></Line>
+              <Line><![CDATA[END_IF;]]></Line>
+              <Line/>
+              <Line><![CDATA[(* 2. Deviation in % of setpoint *)]]></Line>
+              <Line><![CDATA[IF RatioSP > 0.0 THEN]]></Line>
+              <Line><![CDATA[    RatioDevPct := ABS(RatioActual - RatioSP) / RatioSP * 100.0;]]></Line>
+              <Line><![CDATA[ELSE]]></Line>
+              <Line><![CDATA[    RatioDevPct := 0.0;]]></Line>
+              <Line><![CDATA[END_IF;]]></Line>
+              <Line/>
+              <Line><![CDATA[(* 3. PI control law:  CV = Kp*e + Ki * integral(e) *)]]></Line>
+              <Line><![CDATA[Error    := (RatioSP * FlowDIW) - FlowLiOH;]]></Line>
+              <Line><![CDATA[Integral := Integral + (Error * Cycle);]]></Line>
+              <Line/>
+              <Line><![CDATA[(* Anti-windup clamp *)]]></Line>
+              <Line><![CDATA[IF Integral > 50.0 THEN  Integral := 50.0;  END_IF;]]></Line>
+              <Line><![CDATA[IF Integral < -50.0 THEN Integral := -50.0; END_IF;]]></Line>
+              <Line/>
+              <Line><![CDATA[LiOHSpeedSP := (Kp * Error) + (Ki * Integral);]]></Line>
+              <Line/>
+              <Line><![CDATA[(* Clamp output 0..100 % *)]]></Line>
+              <Line><![CDATA[IF LiOHSpeedSP > 100.0 THEN LiOHSpeedSP := 100.0; END_IF;]]></Line>
+              <Line><![CDATA[IF LiOHSpeedSP < 0.0   THEN LiOHSpeedSP := 0.0;   END_IF;]]></Line>
+              <Line/>
+              <Line><![CDATA[(* 4. Deviation fault - sustained excursion latches fault *)]]></Line>
+              <Line><![CDATA[DevTmr.PRE := DevDelay;]]></Line>
+              <Line><![CDATA[TONR(DevTmr);]]></Line>
+              <Line><![CDATA[DevTmr.EN := RatioDevPct > DevAlmPct;]]></Line>
+              <Line/>
+              <Line><![CDATA[IF DevTmr.DN THEN]]></Line>
+              <Line><![CDATA[    Fault := 1;]]></Line>
+              <Line><![CDATA[END_IF;]]></Line>
+              <Line/>
+              <Line><![CDATA[IF Reset THEN]]></Line>
+              <Line><![CDATA[    Fault := 0;]]></Line>
+              <Line><![CDATA[END_IF;]]></Line>
+            </STContent>
+          </Routine>
+        </Routines>
+      </AddOnInstructionDefinition>
+      <AddOnInstructionDefinition Name="AOI_PumpAlt" Revision="1.0" Vendor="ProcessEng" ExecutePrescan="false" ExecutePostscan="false" ExecuteEnableInFalse="false" CreatedDate="2026-05-09T21:38:52.000Z" EditedDate="2026-05-09T21:38:52.000Z" SoftwareRevision="v36.00">
+        <Description>Lead/lag pump rotation. Selects pump A or B as lead based on accumulated runtime, with automatic failover on fault.</Description>
+        <RevisionExtension/>
+        <AdditionalHelpText/>
+        <Parameters>
+          <Parameter Name="EnableIn" TagType="Base" DataType="BOOL" Usage="Input" Radix="Decimal" Required="false" Visible="false" ExternalAccess="Read/Write" Constant="false">
+            <Description>Enable Input - System Defined</Description>
+            <DefaultData Format="L5K">1</DefaultData>
+          </Parameter>
+          <Parameter Name="EnableOut" TagType="Base" DataType="BOOL" Usage="Output" Radix="Decimal" Required="false" Visible="false" ExternalAccess="Read/Write">
+            <Description>Enable Output - System Defined</Description>
+            <DefaultData Format="L5K">0</DefaultData>
+          </Parameter>
+          <Parameter Name="Request" TagType="Base" DataType="BOOL" Usage="Input" Radix="Decimal" Required="true" Visible="true" ExternalAccess="Read/Write" Constant="false">
+            <Description>Sequencer needs a pump</Description>
+            <DefaultData Format="L5K">0</DefaultData>
+          </Parameter>
+          <Parameter Name="FaultA" TagType="Base" DataType="BOOL" Usage="Input" Radix="Decimal" Required="true" Visible="true" ExternalAccess="Read/Write" Constant="false">
+            <Description>Pump A faulted</Description>
+            <DefaultData Format="L5K">0</DefaultData>
+          </Parameter>
+          <Parameter Name="FaultB" TagType="Base" DataType="BOOL" Usage="Input" Radix="Decimal" Required="true" Visible="true" ExternalAccess="Read/Write" Constant="false">
+            <Description>Pump B faulted</Description>
+            <DefaultData Format="L5K">0</DefaultData>
+          </Parameter>
+          <Parameter Name="HoursA" TagType="Base" DataType="DINT" Usage="Input" Radix="Decimal" Required="true" Visible="true" ExternalAccess="Read/Write" Constant="false">
+            <Description>Pump A runtime hours</Description>
+            <DefaultData Format="L5K">0</DefaultData>
+          </Parameter>
+          <Parameter Name="HoursB" TagType="Base" DataType="DINT" Usage="Input" Radix="Decimal" Required="true" Visible="true" ExternalAccess="Read/Write" Constant="false">
+            <Description>Pump B runtime hours</Description>
+            <DefaultData Format="L5K">0</DefaultData>
+          </Parameter>
+          <Parameter Name="AltHours" TagType="Base" DataType="DINT" Usage="Input" Radix="Decimal" Required="true" Visible="true" ExternalAccess="Read/Write" Constant="false">
+            <Description>Hours between rotations</Description>
+            <DefaultData Format="L5K">100</DefaultData>
+          </Parameter>
+          <Parameter Name="SelectA" TagType="Base" DataType="BOOL" Usage="Output" Radix="Decimal" Required="true" Visible="true" ExternalAccess="Read/Write">
+            <Description>Select Pump A as lead</Description>
+            <DefaultData Format="L5K">0</DefaultData>
+          </Parameter>
+          <Parameter Name="SelectB" TagType="Base" DataType="BOOL" Usage="Output" Radix="Decimal" Required="true" Visible="true" ExternalAccess="Read/Write">
+            <Description>Select Pump B as lead</Description>
+            <DefaultData Format="L5K">0</DefaultData>
+          </Parameter>
+          <Parameter Name="BothFaulted" TagType="Base" DataType="BOOL" Usage="Output" Radix="Decimal" Required="true" Visible="true" ExternalAccess="Read/Write">
+            <Description>Both pumps faulted - critical alarm</Description>
+            <DefaultData Format="L5K">0</DefaultData>
+          </Parameter>
+        </Parameters>
+        <LocalTags>
+          <LocalTag Name="LeadIsA" DataType="BOOL" ExternalAccess="None">
+            <Description>Persistent lead selector - 1=A, 0=B</Description>
+            <DefaultData Format="L5K">1</DefaultData>
+          </LocalTag>
+        </LocalTags>
+        <Routines>
+          <Routine Name="Logic" Type="ST">
+            <STContent>
+              <Line><![CDATA[(* AOI_PumpAlt - lead/lag pump alternator with auto-failover *)]]></Line>
+              <Line/>
+              <Line><![CDATA[(* Both faulted: stop and alarm *)]]></Line>
+              <Line><![CDATA[IF FaultA AND FaultB THEN]]></Line>
+              <Line><![CDATA[    SelectA     := 0;]]></Line>
+              <Line><![CDATA[    SelectB     := 0;]]></Line>
+              <Line><![CDATA[    BothFaulted := 1;]]></Line>
+              <Line><![CDATA[    RETURN;]]></Line>
+              <Line><![CDATA[END_IF;]]></Line>
+              <Line/>
+              <Line><![CDATA[BothFaulted := 0;]]></Line>
+              <Line/>
+              <Line><![CDATA[(* Time-based rotation only when neither pump is currently running *)]]></Line>
+              <Line><![CDATA[IF NOT Request THEN]]></Line>
+              <Line><![CDATA[    IF (LeadIsA AND HoursA >= AltHours)]]></Line>
+              <Line><![CDATA[       OR (NOT LeadIsA AND HoursB >= AltHours)]]></Line>
+              <Line><![CDATA[    THEN]]></Line>
+              <Line><![CDATA[        LeadIsA := NOT LeadIsA;]]></Line>
+              <Line><![CDATA[    END_IF;]]></Line>
+              <Line><![CDATA[END_IF;]]></Line>
+              <Line/>
+              <Line><![CDATA[(* Fault failover: force healthy pump as lead *)]]></Line>
+              <Line><![CDATA[IF FaultA THEN LeadIsA := 0; END_IF;]]></Line>
+              <Line><![CDATA[IF FaultB THEN LeadIsA := 1; END_IF;]]></Line>
+              <Line/>
+              <Line><![CDATA[(* Drive selection outputs *)]]></Line>
+              <Line><![CDATA[IF Request THEN]]></Line>
+              <Line><![CDATA[    SelectA := LeadIsA AND NOT FaultA;]]></Line>
+              <Line><![CDATA[    SelectB := (NOT LeadIsA) AND NOT FaultB;]]></Line>
+              <Line><![CDATA[ELSE]]></Line>
+              <Line><![CDATA[    SelectA := 0;]]></Line>
+              <Line><![CDATA[    SelectB := 0;]]></Line>
+              <Line><![CDATA[END_IF;]]></Line>
+            </STContent>
+          </Routine>
+        </Routines>
+      </AddOnInstructionDefinition>
+    </AddOnInstructionDefinitions>
+    <Modules>
+      <Module Name="Local" CatalogNumber="1756-L85E" Vendor="1" ProductType="14" ProductCode="212" Major="36" Minor="11" ParentModule="Local" ParentModPortId="1" Inhibited="false" MajorFault="true">
+        <EKey State="ExactMatch"/>
+        <Ports>
+          <Port Id="1" Address="0" Type="ICP" Upstream="false"/>
+          <Port Id="2" Type="Ethernet" Upstream="false">
+            <Bus/>
+          </Port>
+        </Ports>
+      </Module>
+      <Module Name="DI_01" CatalogNumber="1756-IB16" Vendor="1" ProductType="7" ProductCode="20" Major="3" Minor="1" ParentModule="Local" ParentModPortId="1" Inhibited="false" MajorFault="false">
+        <EKey State="CompatibleModule"/>
+        <Ports>
+          <Port Id="1" Address="1" Type="ICP" Upstream="true"/>
+        </Ports>
+      </Module>
+      <Module Name="DO_01" CatalogNumber="1756-OB16E" Vendor="1" ProductType="7" ProductCode="21" Major="3" Minor="1" ParentModule="Local" ParentModPortId="1" Inhibited="false" MajorFault="false">
+        <EKey State="CompatibleModule"/>
+        <Ports>
+          <Port Id="1" Address="2" Type="ICP" Upstream="true"/>
+        </Ports>
+      </Module>
+      <Module Name="AI_01" CatalogNumber="1756-IF8" Vendor="1" ProductType="10" ProductCode="70" Major="3" Minor="1" ParentModule="Local" ParentModPortId="1" Inhibited="false" MajorFault="false">
+        <EKey State="CompatibleModule"/>
+        <Ports>
+          <Port Id="1" Address="3" Type="ICP" Upstream="true"/>
+        </Ports>
+      </Module>
+      <Module Name="AO_01" CatalogNumber="1756-OF8" Vendor="1" ProductType="10" ProductCode="78" Major="3" Minor="1" ParentModule="Local" ParentModPortId="1" Inhibited="false" MajorFault="false">
+        <EKey State="CompatibleModule"/>
+        <Ports>
+          <Port Id="1" Address="4" Type="ICP" Upstream="true"/>
+        </Ports>
+      </Module>
+    </Modules>
+    <Tags>
+      <Tag Name="eState" TagType="Base" DataType="DINT" ExternalAccess="Read/Write" Radix="Decimal">
+        <Description>Sequence state: 0=Idle 1=Fill 2=Mix 3=Transfer 99=Fault</Description>
+      </Tag>
+      <Tag Name="eStatePrev" TagType="Base" DataType="DINT" ExternalAccess="Read/Write" Radix="Decimal">
+        <Description>Previous-scan state for edge detection</Description>
+      </Tag>
+      <Tag Name="StartPB" TagType="Alias" DataType="BOOL" ExternalAccess="Read/Write" Radix="Decimal" AliasFor="Local:1:I.Data.0">
+        <Description>Start pushbutton</Description>
+      </Tag>
+      <Tag Name="StopPB" TagType="Alias" DataType="BOOL" ExternalAccess="Read/Write" Radix="Decimal" AliasFor="Local:1:I.Data.1">
+        <Description>Stop pushbutton</Description>
+      </Tag>
+      <Tag Name="ResetPB" TagType="Alias" DataType="BOOL" ExternalAccess="Read/Write" Radix="Decimal" AliasFor="Local:1:I.Data.2">
+        <Description>Reset pushbutton</Description>
+      </Tag>
+      <Tag Name="EStop_NC" TagType="Alias" DataType="BOOL" ExternalAccess="Read/Write" Radix="Decimal" AliasFor="Local:1:I.Data.3">
+        <Description>E-Stop NC contact (TRUE=healthy)</Description>
+      </Tag>
+      <Tag Name="AutoMode" TagType="Alias" DataType="BOOL" ExternalAccess="Read/Write" Radix="Decimal" AliasFor="Local:1:I.Data.4">
+        <Description>Auto/Manual selector</Description>
+      </Tag>
+      <Tag Name="PA_LiOH_Fbk" TagType="Alias" DataType="BOOL" ExternalAccess="Read/Write" Radix="Decimal" AliasFor="Local:1:I.Data.5">
+        <Description>LiOH Pump A running feedback</Description>
+      </Tag>
+      <Tag Name="PB_LiOH_Fbk" TagType="Alias" DataType="BOOL" ExternalAccess="Read/Write" Radix="Decimal" AliasFor="Local:1:I.Data.6">
+        <Description>LiOH Pump B running feedback</Description>
+      </Tag>
+      <Tag Name="PA_Xfr_Fbk" TagType="Alias" DataType="BOOL" ExternalAccess="Read/Write" Radix="Decimal" AliasFor="Local:1:I.Data.7">
+        <Description>Transfer Pump A running feedback</Description>
+      </Tag>
+      <Tag Name="PB_Xfr_Fbk" TagType="Alias" DataType="BOOL" ExternalAccess="Read/Write" Radix="Decimal" AliasFor="Local:1:I.Data.8">
+        <Description>Transfer Pump B running feedback</Description>
+      </Tag>
+      <Tag Name="LT_101" TagType="Alias" DataType="REAL" ExternalAccess="Read/Write" Radix="Float" AliasFor="Local:3:I.Ch0Data">
+        <Description>Tank level transmitter (%)</Description>
+      </Tag>
+      <Tag Name="FT_DIW" TagType="Alias" DataType="REAL" ExternalAccess="Read/Write" Radix="Float" AliasFor="Local:3:I.Ch1Data">
+        <Description>DIW flow transmitter (kg/min)</Description>
+      </Tag>
+      <Tag Name="FT_LiOH" TagType="Alias" DataType="REAL" ExternalAccess="Read/Write" Radix="Float" AliasFor="Local:3:I.Ch2Data">
+        <Description>LiOH flow transmitter (kg/min)</Description>
+      </Tag>
+      <Tag Name="XV_DIW" TagType="Alias" DataType="BOOL" ExternalAccess="Read/Write" Radix="Decimal" AliasFor="Local:2:O.Data.0">
+        <Description>DIW inlet XV-101 open command</Description>
+      </Tag>
+      <Tag Name="XV_LiOH_In_A" TagType="Alias" DataType="BOOL" ExternalAccess="Read/Write" Radix="Decimal" AliasFor="Local:2:O.Data.1">
+        <Description>LiOH Pump A inlet XV</Description>
+      </Tag>
+      <Tag Name="XV_LiOH_Out_A" TagType="Alias" DataType="BOOL" ExternalAccess="Read/Write" Radix="Decimal" AliasFor="Local:2:O.Data.2">
+        <Description>LiOH Pump A outlet XV</Description>
+      </Tag>
+      <Tag Name="XV_LiOH_In_B" TagType="Alias" DataType="BOOL" ExternalAccess="Read/Write" Radix="Decimal" AliasFor="Local:2:O.Data.3">
+        <Description>LiOH Pump B inlet XV</Description>
+      </Tag>
+      <Tag Name="XV_LiOH_Out_B" TagType="Alias" DataType="BOOL" ExternalAccess="Read/Write" Radix="Decimal" AliasFor="Local:2:O.Data.4">
+        <Description>LiOH Pump B outlet XV</Description>
+      </Tag>
+      <Tag Name="PMP_LiOH_A_Run" TagType="Alias" DataType="BOOL" ExternalAccess="Read/Write" Radix="Decimal" AliasFor="Local:2:O.Data.5">
+        <Description>LiOH Pump A run command</Description>
+      </Tag>
+      <Tag Name="PMP_LiOH_B_Run" TagType="Alias" DataType="BOOL" ExternalAccess="Read/Write" Radix="Decimal" AliasFor="Local:2:O.Data.6">
+        <Description>LiOH Pump B run command</Description>
+      </Tag>
+      <Tag Name="XV_Xfer" TagType="Alias" DataType="BOOL" ExternalAccess="Read/Write" Radix="Decimal" AliasFor="Local:2:O.Data.7">
+        <Description>Transfer outlet XV-201</Description>
+      </Tag>
+      <Tag Name="PMP_Xfr_A_Run" TagType="Alias" DataType="BOOL" ExternalAccess="Read/Write" Radix="Decimal" AliasFor="Local:2:O.Data.8">
+        <Description>Transfer Pump A run command</Description>
+      </Tag>
+      <Tag Name="PMP_Xfr_B_Run" TagType="Alias" DataType="BOOL" ExternalAccess="Read/Write" Radix="Decimal" AliasFor="Local:2:O.Data.9">
+        <Description>Transfer Pump B run command</Description>
+      </Tag>
+      <Tag Name="Agitator" TagType="Alias" DataType="BOOL" ExternalAccess="Read/Write" Radix="Decimal" AliasFor="Local:2:O.Data.10">
+        <Description>Agitator/mixer run command</Description>
+      </Tag>
+      <Tag Name="AlmHorn" TagType="Alias" DataType="BOOL" ExternalAccess="Read/Write" Radix="Decimal" AliasFor="Local:2:O.Data.11">
+        <Description>Alarm horn output</Description>
+      </Tag>
+      <Tag Name="VFD_LiOH_Spd" TagType="Alias" DataType="REAL" ExternalAccess="Read/Write" Radix="Float" AliasFor="Local:4:O.Ch0Data">
+        <Description>LiOH pump VFD speed reference (%)</Description>
+      </Tag>
+      <Tag Name="VFD_Xfr_Spd" TagType="Alias" DataType="REAL" ExternalAccess="Read/Write" Radix="Float" AliasFor="Local:4:O.Ch1Data">
+        <Description>Transfer pump VFD speed reference (%)</Description>
+      </Tag>
+      <Tag Name="SP" TagType="Base" DataType="TankSetpoints" ExternalAccess="Read/Write">
+        <Description>HMI-writable batch setpoints</Description>
+        <Data Format="Decorated">
+          <Structure DataType="TankSetpoints">
+            <DataValueMember Name="RatioSP" DataType="REAL" Radix="Float" Value="0.05"/>
+            <DataValueMember Name="LevelHiSP" DataType="REAL" Radix="Float" Value="92.0"/>
+            <DataValueMember Name="LevelLoSP" DataType="REAL" Radix="Float" Value="5.0"/>
+            <DataValueMember Name="LevelHHAlm" DataType="REAL" Radix="Float" Value="96.0"/>
+            <DataValueMember Name="MixTimeSP" DataType="DINT" Radix="Decimal" Value="300000"/>
+            <DataValueMember Name="PumpAltHrs" DataType="DINT" Radix="Decimal" Value="100"/>
+            <DataValueMember Name="RatioDevPct" DataType="REAL" Radix="Float" Value="5.0"/>
+          </Structure>
+        </Data>
+      </Tag>
+      <Tag Name="Faults" TagType="Base" DataType="FaultBits" ExternalAccess="Read/Write">
+        <Description>Latched fault bits aggregated for HMI</Description>
+      </Tag>
+      <Tag Name="MixTmr" TagType="Base" DataType="TIMER" ExternalAccess="Read/Write">
+        <Description>Mix duration timer</Description>
+      </Tag>
+      <Tag Name="PmpA_LiOH" TagType="Base" DataType="AOI_PumpControl" ExternalAccess="Read/Write">
+        <Description>LiOH Pump A control AOI instance</Description>
+      </Tag>
+      <Tag Name="PmpB_LiOH" TagType="Base" DataType="AOI_PumpControl" ExternalAccess="Read/Write">
+        <Description>LiOH Pump B control AOI instance</Description>
+      </Tag>
+      <Tag Name="PmpA_Xfr" TagType="Base" DataType="AOI_PumpControl" ExternalAccess="Read/Write">
+        <Description>Transfer Pump A control AOI instance</Description>
+      </Tag>
+      <Tag Name="PmpB_Xfr" TagType="Base" DataType="AOI_PumpControl" ExternalAccess="Read/Write">
+        <Description>Transfer Pump B control AOI instance</Description>
+      </Tag>
+      <Tag Name="Ratio" TagType="Base" DataType="AOI_RatioCtl" ExternalAccess="Read/Write">
+        <Description>Ratio controller AOI instance</Description>
+      </Tag>
+      <Tag Name="AltLiOH" TagType="Base" DataType="AOI_PumpAlt" ExternalAccess="Read/Write">
+        <Description>LiOH pump alternator instance</Description>
+      </Tag>
+      <Tag Name="AltXfr" TagType="Base" DataType="AOI_PumpAlt" ExternalAccess="Read/Write">
+        <Description>Transfer pump alternator instance</Description>
+      </Tag>
+      <Tag Name="StartPB_OS" TagType="Base" DataType="BOOL" ExternalAccess="Read/Write" Radix="Decimal">
+        <Description>One-shot for start PB rising edge</Description>
+      </Tag>
+    </Tags>
+    <Programs>
+      <Program Name="PRG_Main" TestEdits="false" MainRoutineName="R00_Main" Disabled="false" UseAsFolder="false">
+        <Description>Main program for LiOH/DIW tank system. Implements the IDLE -&gt; FILL -&gt; MIX -&gt; TRANSFER -&gt; IDLE sequence with E-Stop, fault handling, and redundant-pump alternation.</Description>
+        <Tags/>
+        <Routines>
+          <Routine Name="R00_Main" Type="ST">
+            <Description>Top-level orchestrator. Calls safety, sequencer, and fault routines.</Description>
+            <STContent>
+              <Line><![CDATA[(* ============================================================]]></Line>
+              <Line><![CDATA[   R00_Main - Top-level orchestrator]]></Line>
+              <Line><![CDATA[   Calls safety, sequencer, and fault sub-routines each scan.]]></Line>
+              <Line><![CDATA[   ============================================================ *)]]></Line>
+              <Line/>
+              <Line><![CDATA[(* 1. Safety & E-Stop must run first to gate everything *)]]></Line>
+              <Line><![CDATA[JSR(R01_Safety, 0);]]></Line>
+              <Line/>
+              <Line><![CDATA[(* 2. Pump alternator selection (active in Fill / Transfer) *)]]></Line>
+              <Line><![CDATA[JSR(R02_Alternator, 0);]]></Line>
+              <Line/>
+              <Line><![CDATA[(* 3. Ratio controller (active only in eFill = 1) *)]]></Line>
+              <Line><![CDATA[JSR(R03_Ratio, 0);]]></Line>
+              <Line/>
+              <Line><![CDATA[(* 4. Main state machine *)]]></Line>
+              <Line><![CDATA[JSR(R04_Sequencer, 0);]]></Line>
+              <Line/>
+              <Line><![CDATA[(* 5. Fault aggregation and HMI alarm output *)]]></Line>
+              <Line><![CDATA[JSR(R05_Faults, 0);]]></Line>
+            </STContent>
+          </Routine>
+          <Routine Name="R01_Safety" Type="ST">
+            <Description>E-Stop, level high-high, and operator reset handling.</Description>
+            <STContent>
+              <Line><![CDATA[(* ============================================================]]></Line>
+              <Line><![CDATA[   R01_Safety - hardwired safety + reset]]></Line>
+              <Line><![CDATA[   ============================================================ *)]]></Line>
+              <Line/>
+              <Line><![CDATA[(* E-Stop: NC contact - if it opens (=0), latch fault & force eFault *)]]></Line>
+              <Line><![CDATA[IF NOT EStop_NC THEN]]></Line>
+              <Line><![CDATA[    Faults.EStop := 1;]]></Line>
+              <Line><![CDATA[    eState       := 99;]]></Line>
+              <Line><![CDATA[END_IF;]]></Line>
+              <Line/>
+              <Line><![CDATA[(* Independent level high-high interlock *)]]></Line>
+              <Line><![CDATA[IF LT_101 >= SP.LevelHHAlm THEN]]></Line>
+              <Line><![CDATA[    Faults.LevelHH := 1;]]></Line>
+              <Line><![CDATA[    eState         := 99;]]></Line>
+              <Line><![CDATA[END_IF;]]></Line>
+              <Line/>
+              <Line><![CDATA[(* Operator reset - clear all latched faults except EStop while it's still pressed *)]]></Line>
+              <Line><![CDATA[IF ResetPB THEN]]></Line>
+              <Line><![CDATA[    Faults.Ratio       := 0;]]></Line>
+              <Line><![CDATA[    Faults.PumpA_LiOH  := 0;]]></Line>
+              <Line><![CDATA[    Faults.PumpB_LiOH  := 0;]]></Line>
+              <Line><![CDATA[    Faults.PumpA_Xfr   := 0;]]></Line>
+              <Line><![CDATA[    Faults.PumpB_Xfr   := 0;]]></Line>
+              <Line><![CDATA[    Faults.LevelHH     := 0;]]></Line>
+              <Line/>
+              <Line><![CDATA[    IF EStop_NC THEN]]></Line>
+              <Line><![CDATA[        Faults.EStop := 0;]]></Line>
+              <Line><![CDATA[    END_IF;]]></Line>
+              <Line/>
+              <Line><![CDATA[    IF NOT Faults.EStop THEN]]></Line>
+              <Line><![CDATA[        eState := 0;   (* return to Idle *)]]></Line>
+              <Line><![CDATA[    END_IF;]]></Line>
+              <Line><![CDATA[END_IF;]]></Line>
+            </STContent>
+          </Routine>
+          <Routine Name="R02_Alternator" Type="ST">
+            <Description>Lead/lag pump selection for LiOH and Transfer duties.</Description>
+            <STContent>
+              <Line><![CDATA[(* ============================================================]]></Line>
+              <Line><![CDATA[   R02_Alternator - call AOI_PumpAlt for both duties]]></Line>
+              <Line><![CDATA[   ============================================================ *)]]></Line>
+              <Line/>
+              <Line><![CDATA[AOI_PumpAlt(AltLiOH,]]></Line>
+              <Line><![CDATA[            (eState = 1),                  (* Request: Fill state *)]]></Line>
+              <Line><![CDATA[            Faults.PumpA_LiOH,]]></Line>
+              <Line><![CDATA[            Faults.PumpB_LiOH,]]></Line>
+              <Line><![CDATA[            PmpA_LiOH.RunHours,]]></Line>
+              <Line><![CDATA[            PmpB_LiOH.RunHours,]]></Line>
+              <Line><![CDATA[            SP.PumpAltHrs);]]></Line>
+              <Line/>
+              <Line><![CDATA[AOI_PumpAlt(AltXfr,]]></Line>
+              <Line><![CDATA[            (eState = 3),                  (* Request: Transfer state *)]]></Line>
+              <Line><![CDATA[            Faults.PumpA_Xfr,]]></Line>
+              <Line><![CDATA[            Faults.PumpB_Xfr,]]></Line>
+              <Line><![CDATA[            PmpA_Xfr.RunHours,]]></Line>
+              <Line><![CDATA[            PmpB_Xfr.RunHours,]]></Line>
+              <Line><![CDATA[            SP.PumpAltHrs);]]></Line>
+            </STContent>
+          </Routine>
+          <Routine Name="R03_Ratio" Type="ST">
+            <Description>PI ratio controller, active during eFill.</Description>
+            <STContent>
+              <Line><![CDATA[(* ============================================================]]></Line>
+              <Line><![CDATA[   R03_Ratio - PI ratio controller call]]></Line>
+              <Line><![CDATA[   ============================================================ *)]]></Line>
+              <Line/>
+              <Line><![CDATA[AOI_RatioCtl(Ratio,]]></Line>
+              <Line><![CDATA[             (eState = 1),       (* Enable only during Fill *)]]></Line>
+              <Line><![CDATA[             FT_DIW,]]></Line>
+              <Line><![CDATA[             FT_LiOH,]]></Line>
+              <Line><![CDATA[             SP.RatioSP,]]></Line>
+              <Line><![CDATA[             SP.RatioDevPct,]]></Line>
+              <Line><![CDATA[             10000,]]></Line>
+              <Line><![CDATA[             ResetPB);]]></Line>
+              <Line/>
+              <Line><![CDATA[(* Latch the AOI's fault into the system fault register *)]]></Line>
+              <Line><![CDATA[IF Ratio.Fault THEN]]></Line>
+              <Line><![CDATA[    Faults.Ratio := 1;]]></Line>
+              <Line><![CDATA[END_IF;]]></Line>
+            </STContent>
+          </Routine>
+          <Routine Name="R04_Sequencer" Type="ST">
+            <Description>Main state machine: Idle -&gt; Fill -&gt; Mix -&gt; Transfer -&gt; Idle.</Description>
+            <STContent>
+              <Line><![CDATA[(* ============================================================]]></Line>
+              <Line><![CDATA[   R04_Sequencer - main CASE state machine]]></Line>
+              <Line><![CDATA[   ============================================================ *)]]></Line>
+              <Line/>
+              <Line><![CDATA[(* One-shot start button rising edge *)]]></Line>
+              <Line><![CDATA[ONS(StartPB_OS, StartPB);]]></Line>
+              <Line/>
+              <Line><![CDATA[CASE eState OF]]></Line>
+              <Line/>
+              <Line><![CDATA[    (* ---- 0: IDLE ---- *)]]></Line>
+              <Line><![CDATA[    0 :]]></Line>
+              <Line><![CDATA[        XV_DIW   := 0;]]></Line>
+              <Line><![CDATA[        XV_Xfer  := 0;]]></Line>
+              <Line><![CDATA[        Agitator := 0;]]></Line>
+              <Line><![CDATA[        VFD_LiOH_Spd := 0.0;]]></Line>
+              <Line><![CDATA[        VFD_Xfr_Spd  := 0.0;]]></Line>
+              <Line/>
+              <Line><![CDATA[        IF StartPB_OS AND AutoMode AND NOT Faults.Any THEN]]></Line>
+              <Line><![CDATA[            eState := 1;]]></Line>
+              <Line><![CDATA[        END_IF;]]></Line>
+              <Line/>
+              <Line><![CDATA[    (* ---- 1: FILL ---- ratio-controlled simultaneous fill *)]]></Line>
+              <Line><![CDATA[    1 :]]></Line>
+              <Line><![CDATA[        XV_DIW := 1;]]></Line>
+              <Line/>
+              <Line><![CDATA[        (* Drive LiOH redundant pump from selector *)]]></Line>
+              <Line><![CDATA[        AOI_PumpControl(PmpA_LiOH,]]></Line>
+              <Line><![CDATA[                        AltLiOH.SelectA,]]></Line>
+              <Line><![CDATA[                        AltLiOH.SelectA,]]></Line>
+              <Line><![CDATA[                        PA_LiOH_Fbk,]]></Line>
+              <Line><![CDATA[                        ResetPB,]]></Line>
+              <Line><![CDATA[                        5000);]]></Line>
+              <Line/>
+              <Line><![CDATA[        AOI_PumpControl(PmpB_LiOH,]]></Line>
+              <Line><![CDATA[                        AltLiOH.SelectB,]]></Line>
+              <Line><![CDATA[                        AltLiOH.SelectB,]]></Line>
+              <Line><![CDATA[                        PB_LiOH_Fbk,]]></Line>
+              <Line><![CDATA[                        ResetPB,]]></Line>
+              <Line><![CDATA[                        5000);]]></Line>
+              <Line/>
+              <Line><![CDATA[        (* Drive physical pump outputs from AOI run cmd *)]]></Line>
+              <Line><![CDATA[        PMP_LiOH_A_Run := PmpA_LiOH.RunCmd;]]></Line>
+              <Line><![CDATA[        PMP_LiOH_B_Run := PmpB_LiOH.RunCmd;]]></Line>
+              <Line/>
+              <Line><![CDATA[        (* Latch any pump faults *)]]></Line>
+              <Line><![CDATA[        IF PmpA_LiOH.Fault THEN Faults.PumpA_LiOH := 1; END_IF;]]></Line>
+              <Line><![CDATA[        IF PmpB_LiOH.Fault THEN Faults.PumpB_LiOH := 1; END_IF;]]></Line>
+              <Line/>
+              <Line><![CDATA[        (* Send ratio CV to whichever LiOH pump is running *)]]></Line>
+              <Line><![CDATA[        VFD_LiOH_Spd := Ratio.LiOHSpeedSP;]]></Line>
+              <Line/>
+              <Line><![CDATA[        (* Advance to MIX when high level reached *)]]></Line>
+              <Line><![CDATA[        IF LT_101 >= SP.LevelHiSP THEN]]></Line>
+              <Line><![CDATA[            eState := 2;]]></Line>
+              <Line><![CDATA[        END_IF;]]></Line>
+              <Line/>
+              <Line><![CDATA[        IF Faults.Any THEN eState := 99; END_IF;]]></Line>
+              <Line/>
+              <Line><![CDATA[    (* ---- 2: MIX ---- *)]]></Line>
+              <Line><![CDATA[    2 :]]></Line>
+              <Line><![CDATA[        XV_DIW         := 0;]]></Line>
+              <Line><![CDATA[        VFD_LiOH_Spd   := 0.0;]]></Line>
+              <Line><![CDATA[        PMP_LiOH_A_Run := 0;]]></Line>
+              <Line><![CDATA[        PMP_LiOH_B_Run := 0;]]></Line>
+              <Line><![CDATA[        Agitator       := 1;]]></Line>
+              <Line/>
+              <Line><![CDATA[        MixTmr.PRE := SP.MixTimeSP;]]></Line>
+              <Line><![CDATA[        TONR(MixTmr);]]></Line>
+              <Line><![CDATA[        MixTmr.EN := 1;]]></Line>
+              <Line/>
+              <Line><![CDATA[        IF MixTmr.DN THEN]]></Line>
+              <Line><![CDATA[            MixTmr.EN := 0;]]></Line>
+              <Line><![CDATA[            MixTmr.RES := 1;]]></Line>
+              <Line><![CDATA[            eState := 3;]]></Line>
+              <Line><![CDATA[        END_IF;]]></Line>
+              <Line/>
+              <Line><![CDATA[        IF Faults.Any THEN eState := 99; END_IF;]]></Line>
+              <Line/>
+              <Line><![CDATA[    (* ---- 3: TRANSFER ---- *)]]></Line>
+              <Line><![CDATA[    3 :]]></Line>
+              <Line><![CDATA[        Agitator := 0;]]></Line>
+              <Line><![CDATA[        XV_Xfer  := 1;]]></Line>
+              <Line/>
+              <Line><![CDATA[        AOI_PumpControl(PmpA_Xfr,]]></Line>
+              <Line><![CDATA[                        AltXfr.SelectA,]]></Line>
+              <Line><![CDATA[                        AltXfr.SelectA,]]></Line>
+              <Line><![CDATA[                        PA_Xfr_Fbk,]]></Line>
+              <Line><![CDATA[                        ResetPB,]]></Line>
+              <Line><![CDATA[                        5000);]]></Line>
+              <Line/>
+              <Line><![CDATA[        AOI_PumpControl(PmpB_Xfr,]]></Line>
+              <Line><![CDATA[                        AltXfr.SelectB,]]></Line>
+              <Line><![CDATA[                        AltXfr.SelectB,]]></Line>
+              <Line><![CDATA[                        PB_Xfr_Fbk,]]></Line>
+              <Line><![CDATA[                        ResetPB,]]></Line>
+              <Line><![CDATA[                        5000);]]></Line>
+              <Line/>
+              <Line><![CDATA[        PMP_Xfr_A_Run := PmpA_Xfr.RunCmd;]]></Line>
+              <Line><![CDATA[        PMP_Xfr_B_Run := PmpB_Xfr.RunCmd;]]></Line>
+              <Line/>
+              <Line><![CDATA[        IF PmpA_Xfr.Fault THEN Faults.PumpA_Xfr := 1; END_IF;]]></Line>
+              <Line><![CDATA[        IF PmpB_Xfr.Fault THEN Faults.PumpB_Xfr := 1; END_IF;]]></Line>
+              <Line/>
+              <Line><![CDATA[        VFD_Xfr_Spd := 80.0;]]></Line>
+              <Line/>
+              <Line><![CDATA[        (* Done when level reaches low setpoint *)]]></Line>
+              <Line><![CDATA[        IF LT_101 <= SP.LevelLoSP THEN]]></Line>
+              <Line><![CDATA[            XV_Xfer       := 0;]]></Line>
+              <Line><![CDATA[            VFD_Xfr_Spd   := 0.0;]]></Line>
+              <Line><![CDATA[            PMP_Xfr_A_Run := 0;]]></Line>
+              <Line><![CDATA[            PMP_Xfr_B_Run := 0;]]></Line>
+              <Line><![CDATA[            eState        := 0;]]></Line>
+              <Line><![CDATA[        END_IF;]]></Line>
+              <Line/>
+              <Line><![CDATA[        IF Faults.Any THEN eState := 99; END_IF;]]></Line>
+              <Line/>
+              <Line><![CDATA[    (* ---- 99: FAULT ---- all outputs safe *)]]></Line>
+              <Line><![CDATA[    99 :]]></Line>
+              <Line><![CDATA[        XV_DIW         := 0;]]></Line>
+              <Line><![CDATA[        XV_Xfer        := 0;]]></Line>
+              <Line><![CDATA[        Agitator       := 0;]]></Line>
+              <Line><![CDATA[        VFD_LiOH_Spd   := 0.0;]]></Line>
+              <Line><![CDATA[        VFD_Xfr_Spd    := 0.0;]]></Line>
+              <Line><![CDATA[        PMP_LiOH_A_Run := 0;]]></Line>
+              <Line><![CDATA[        PMP_LiOH_B_Run := 0;]]></Line>
+              <Line><![CDATA[        PMP_Xfr_A_Run  := 0;]]></Line>
+              <Line><![CDATA[        PMP_Xfr_B_Run  := 0;]]></Line>
+              <Line><![CDATA[        (* R01_Safety handles reset back to Idle *)]]></Line>
+              <Line/>
+              <Line><![CDATA[END_CASE;]]></Line>
+              <Line/>
+              <Line><![CDATA[eStatePrev := eState;]]></Line>
+            </STContent>
+          </Routine>
+          <Routine Name="R05_Faults" Type="ST">
+            <Description>Aggregate latched fault bits and drive HMI alarm output.</Description>
+            <STContent>
+              <Line><![CDATA[(* ============================================================]]></Line>
+              <Line><![CDATA[   R05_Faults - aggregate fault bits and drive horn]]></Line>
+              <Line><![CDATA[   ============================================================ *)]]></Line>
+              <Line/>
+              <Line><![CDATA[Faults.Any := Faults.Ratio]]></Line>
+              <Line><![CDATA[           OR Faults.PumpA_LiOH]]></Line>
+              <Line><![CDATA[           OR Faults.PumpB_LiOH]]></Line>
+              <Line><![CDATA[           OR Faults.PumpA_Xfr]]></Line>
+              <Line><![CDATA[           OR Faults.PumpB_Xfr]]></Line>
+              <Line><![CDATA[           OR Faults.LevelHH]]></Line>
+              <Line><![CDATA[           OR Faults.EStop;]]></Line>
+              <Line/>
+              <Line><![CDATA[AlmHorn := Faults.Any;]]></Line>
+            </STContent>
+          </Routine>
+        </Routines>
+      </Program>
+    </Programs>
+    <Tasks>
+      <Task Name="MainTask" Type="PERIODIC" Rate="100" Priority="10" Watchdog="500" DisableUpdateOutputs="false" InhibitTask="false">
+        <Description>100 ms periodic task for tank system control.</Description>
+        <ScheduledPrograms>
+          <ScheduledProgram Name="PRG_Main"/>
+        </ScheduledPrograms>
+      </Task>
+    </Tasks>
+    <CST MasterID="0"/>
+    <WallClockTime LocalTimeAdjustment="0" TimeZone="0"/>
+    <Trends/>
+    <DataLogs/>
+    <TimeSynchronize Priority1="128" Priority2="128" PTPEnable="false"/>
+  </Controller>
+</RSLogix5000Content>

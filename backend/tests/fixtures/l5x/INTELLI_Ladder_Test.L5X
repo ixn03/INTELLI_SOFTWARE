@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<RSLogix5000Content SchemaRevision="1.0" SoftwareRevision="35.00" TargetName="INTELLI_Ladder_Test" TargetType="Controller" ContainsContext="true" Owner="INTELLI" ExportDate="Thu Jan 01 00:00:00 2026" ExportOptions="References NoRawData L5KData DecoratedData Context Dependencies ForceProtectedEncoding AllProjDocTrans">
+  <Controller Use="Context" Name="INTELLI_Ladder_Test" ProcessorType="1756-L85E" MajorRev="35" MinorRev="11" TimeSlice="20" ShareUnusedTimeSlice="1" ProjectCreationDate="Tue May 12 22:00:00 2026" LastModifiedDate="Tue May 12 22:00:00 2026" SFCExecutionControl="CurrentActive" SFCRestartPosition="MostRecent" SFCLastScan="DontScan" ProjectSN="16#0000_0000" MatchProjectToController="false" CanUseRPIFromProducer="false" InhibitAutomaticFirmwareUpdate="0" PassThroughConfiguration="EnabledWithAppend" DownloadProjectDocumentationAndExtendedProperties="true" DownloadProjectCustomProperties="true" ReportMinorOverflow="false">
+    <RedundancyInfo Enabled="false" KeepTestEditsOnSwitchOver="false" IOMemoryPadPercentage="90" DataTablePadPercentage="50"/>
+    <Security Code="0" ChangesToDetect="16#ffff_ffff_ffff_ffff"/>
+    <DataTypes/>
+    <Modules/>
+    <AddOnInstructionDefinitions/>
+    <Tags Use="Context">
+      <Tag Name="StartPB" TagType="Base" DataType="BOOL" Radix="Decimal" Constant="false" ExternalAccess="Read/Write"><Description><![CDATA[Start pushbutton command.]]></Description></Tag>
+      <Tag Name="StopPB" TagType="Base" DataType="BOOL" Radix="Decimal" Constant="false" ExternalAccess="Read/Write"><Description><![CDATA[Stop pushbutton command.]]></Description></Tag>
+      <Tag Name="AutoMode" TagType="Base" DataType="BOOL" Radix="Decimal" Constant="false" ExternalAccess="Read/Write"/>
+      <Tag Name="Faults_Any" TagType="Base" DataType="BOOL" Radix="Decimal" Constant="false" ExternalAccess="Read/Write"/>
+      <Tag Name="EStop_OK" TagType="Base" DataType="BOOL" Radix="Decimal" Constant="false" ExternalAccess="Read/Write"/>
+      <Tag Name="State_Idle" TagType="Base" DataType="BOOL" Radix="Decimal" Constant="false" ExternalAccess="Read/Write"/>
+      <Tag Name="State_Fill" TagType="Base" DataType="BOOL" Radix="Decimal" Constant="false" ExternalAccess="Read/Write"/>
+      <Tag Name="State_Mix" TagType="Base" DataType="BOOL" Radix="Decimal" Constant="false" ExternalAccess="Read/Write"/>
+      <Tag Name="XV_Fill_Open" TagType="Base" DataType="BOOL" Radix="Decimal" Constant="false" ExternalAccess="Read/Write"/>
+      <Tag Name="MTR_Agitator_Run" TagType="Base" DataType="BOOL" Radix="Decimal" Constant="false" ExternalAccess="Read/Write"/>
+      <Tag Name="PMP_Discharge_Run" TagType="Base" DataType="BOOL" Radix="Decimal" Constant="false" ExternalAccess="Read/Write"/>
+      <Tag Name="Fill_Timer" TagType="Base" DataType="TIMER" Radix="Decimal" Constant="false" ExternalAccess="Read/Write"/>
+      <Tag Name="Mix_Timer" TagType="Base" DataType="TIMER" Radix="Decimal" Constant="false" ExternalAccess="Read/Write"/>
+      <Tag Name="Tank_Level" TagType="Base" DataType="REAL" Radix="Float" Constant="false" ExternalAccess="Read/Write"/>
+      <Tag Name="Target_Level" TagType="Base" DataType="REAL" Radix="Float" Constant="false" ExternalAccess="Read/Write"/>
+      <Tag Name="High_Level_SP" TagType="Base" DataType="REAL" Radix="Float" Constant="false" ExternalAccess="Read/Write"/>
+      <Tag Name="Batch_Count" TagType="Base" DataType="DINT" Radix="Decimal" Constant="false" ExternalAccess="Read/Write"/>
+      <Tag Name="Batch_Count_Next" TagType="Base" DataType="DINT" Radix="Decimal" Constant="false" ExternalAccess="Read/Write"/>
+      <Tag Name="Selected_Target" TagType="Base" DataType="REAL" Radix="Float" Constant="false" ExternalAccess="Read/Write"/>
+      <Tag Name="Low_Level_OK" TagType="Base" DataType="BOOL" Radix="Decimal" Constant="false" ExternalAccess="Read/Write"/>
+      <Tag Name="Permissive_OK" TagType="Base" DataType="BOOL" Radix="Decimal" Constant="false" ExternalAccess="Read/Write"/>
+      <Tag Name="StartONS" TagType="Base" DataType="BOOL" Radix="Decimal" Constant="false" ExternalAccess="Read/Write"/>
+    </Tags>
+    <Tasks>
+      <Task Use="Context" Name="MainTask" Type="CONTINUOUS" Watchdog="500" DisableUpdateOutputs="false" InhibitTask="false">
+        <ScheduledPrograms>
+          <ScheduledProgram Name="PRG_Batch"/>
+        </ScheduledPrograms>
+      </Task>
+    </Tasks>
+    <Programs Use="Context">
+      <Program Use="Context" Name="PRG_Batch" TestEdits="false" MainRoutineName="R01_Main" Disabled="false" UseAsFolder="false">
+        <Tags/>
+        <Routines Use="Context">
+          <Routine Use="Context" Name="R01_Main" Type="RLL">
+            <RLLContent>
+              <Rung Use="Context" Number="0" Type="N">
+                <Comment><![CDATA[Initialize idle state when system is safe and not filling or mixing.]]></Comment>
+                <Text><![CDATA[XIC(EStop_OK) XIO(State_Fill) XIO(State_Mix) OTE(State_Idle);]]></Text>
+              </Rung>
+              <Rung Use="Context" Number="1" Type="N">
+                <Comment><![CDATA[Start fill sequence with a one-shot when in Auto, safe, and no faults.]]></Comment>
+                <Text><![CDATA[XIC(StartPB) ONS(StartONS) XIC(AutoMode) XIC(EStop_OK) XIO(Faults_Any) XIC(State_Idle) OTL(State_Fill) OTU(State_Idle);]]></Text>
+              </Rung>
+              <Rung Use="Context" Number="2" Type="N">
+                <Comment><![CDATA[Fill valve opens while fill state is active and level is below target.]]></Comment>
+                <Text><![CDATA[XIC(State_Fill) XIC(EStop_OK) XIO(Faults_Any) LES(Tank_Level,Target_Level) OTE(XV_Fill_Open);]]></Text>
+              </Rung>
+              <Rung Use="Context" Number="3" Type="N">
+                <Comment><![CDATA[Fill timer runs during fill state.]]></Comment>
+                <Text><![CDATA[XIC(State_Fill) TON(Fill_Timer,?,5000,0);]]></Text>
+              </Rung>
+              <Rung Use="Context" Number="4" Type="N">
+                <Comment><![CDATA[Transition from fill to mix when target level is reached or fill timer is done. Parallel branch intentionally included.]]></Comment>
+                <Text><![CDATA[XIC(State_Fill) BST GEQ(Tank_Level,Target_Level) NXB XIC(Fill_Timer.DN) BND OTL(State_Mix) OTU(State_Fill);]]></Text>
+              </Rung>
+              <Rung Use="Context" Number="5" Type="N">
+                <Comment><![CDATA[Agitator runs during mix state if level is safe and no fault is active.]]></Comment>
+                <Text><![CDATA[XIC(State_Mix) XIC(Low_Level_OK) XIO(Faults_Any) OTE(MTR_Agitator_Run);]]></Text>
+              </Rung>
+              <Rung Use="Context" Number="6" Type="N">
+                <Comment><![CDATA[Mix timer runs while agitator is running.]]></Comment>
+                <Text><![CDATA[XIC(MTR_Agitator_Run) TON(Mix_Timer,?,10000,0);]]></Text>
+              </Rung>
+              <Rung Use="Context" Number="7" Type="N">
+                <Comment><![CDATA[Discharge pump starts after mix timer done.]]></Comment>
+                <Text><![CDATA[XIC(State_Mix) XIC(Mix_Timer.DN) XIO(Faults_Any) OTE(PMP_Discharge_Run);]]></Text>
+              </Rung>
+              <Rung Use="Context" Number="8" Type="N">
+                <Comment><![CDATA[End sequence on stop command or high level fault condition.]]></Comment>
+                <Text><![CDATA[BST XIC(StopPB) NXB GRT(Tank_Level,High_Level_SP) BND OTU(State_Fill) OTU(State_Mix) RES(Fill_Timer) RES(Mix_Timer);]]></Text>
+              </Rung>
+              <Rung Use="Context" Number="9" Type="N">
+                <Comment><![CDATA[Move target level into selected target for batch reporting.]]></Comment>
+                <Text><![CDATA[XIC(AutoMode) MOV(Target_Level,Selected_Target);]]></Text>
+              </Rung>
+              <Rung Use="Context" Number="10" Type="N">
+                <Comment><![CDATA[Calculate next batch count after discharge starts.]]></Comment>
+                <Text><![CDATA[XIC(PMP_Discharge_Run) ADD(Batch_Count,1,Batch_Count_Next);]]></Text>
+              </Rung>
+            </RLLContent>
+          </Routine>
+        </Routines>
+      </Program>
+    </Programs>
+  </Controller>
+</RSLogix5000Content>

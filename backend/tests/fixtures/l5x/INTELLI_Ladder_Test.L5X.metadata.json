@@ -1,0 +1,24 @@
+{
+  "platform": "rockwell",
+  "language": "ladder",
+  "expected_capabilities": [
+    "ladder",
+    "branch_logic_bst_nxb_bnd",
+    "one_shot_ons",
+    "set_reset_otl_otu",
+    "timers_ton",
+    "timer_reset_res",
+    "comparisons_les_geq_grt",
+    "math_add",
+    "move_mov",
+    "timer_done_bit_member_ref"
+  ],
+  "known_unsupported_features": [
+    "no_aoi",
+    "no_udt",
+    "no_alias_tags",
+    "no_sequencers",
+    "single_task_single_program"
+  ],
+  "parser_notes": "Real single-routine batch state machine (idle->fill->mix->discharge) supplied by the user. Exercises branched rung interlocks (BST/NXB/BND) for transitions and stop/high-level handling, a start one-shot, latch/unlatch state bits, TON fill/mix timers with .DN member reads, RES timer resets, LES/GEQ/GRT comparisons against level setpoints, MOV and ADD. Parser grades A with 100% known-instruction coverage and 51 branch markers detected. Primary value: ladder branch-logic and timer/comparison coverage for Phase 3. Lacks AOIs, UDTs, alias tags, sequencers and multi-task structure. DE-IDENTIFIED (Phase 0 corpus hygiene) via tools/deidentify_l5x.py: header Owner='OpenAI' replaced with 'INTELLI' and ExportDate neutralized; logic byte-identical, parser grade (A) and 100% instruction coverage verified unchanged."
+}

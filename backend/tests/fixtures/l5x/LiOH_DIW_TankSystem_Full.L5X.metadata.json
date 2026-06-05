@@ -1,0 +1,28 @@
+{
+  "platform": "rockwell",
+  "language": "structured_text",
+  "expected_capabilities": [
+    "structured_text",
+    "multi_routine_program",
+    "jsr_subroutine_dispatch",
+    "udt_definitions_present",
+    "udt_typed_tags",
+    "aoi_definition_present",
+    "aoi_definition_st_body",
+    "aoi_instance_typed_tags",
+    "aoi_instance_call_in_st",
+    "alias_tags_present",
+    "alias_io_module_mapping",
+    "task_definitions_present"
+  ],
+  "known_unsupported_features": [
+    "aoi_definition_body_resolution",
+    "aoi_instance_parameter_semantics",
+    "udt_definition_member_typing",
+    "alias_target_resolution",
+    "task_scheduling_model",
+    "complex_st_block_decomposition"
+  ],
+  "parser_notes": "REAL-WORLD full controller export (TargetType=Controller, ~57KB) for a lithium-hydroxide / DI-water tank dosing system. This is the strongest real AOI/UDT fixture in the corpus and is NOT a duplicate of LiOH_DIW_TankSystem_Ladder.L5X (that file is a ~8KB ladder-only subset). Contains three user DataTypes (PumpData, FaultBits, TankSetpoints), three Add-On Instruction definitions with Structured-Text bodies (AOI_PumpControl, AOI_RatioCtl, AOI_PumpAlt), seven AOI-instance-typed base tags, real AOI instance CALLS inside ST routines, ~30 alias tags mapping process I/O to module addresses (Local:1:I/O, Local:3:I.ChxData, Local:4:O.ChxData), a JSR subroutine dispatch chain from R00_Main into R01_Safety/R02_Alternator/R03_Ratio/R04_Sequencer/R05_Faults, and a PERIODIC MainTask. The current Rockwell connector walks only Programs/Program/Routines, so the AOI definition bodies, UDT member typing, alias targets, and Task scheduling are NOT resolved: the three AOI instance calls surface as unknown opcodes (AOI_PUMPCONTROL x4, AOI_PUMPALT x2, AOI_RATIOCTL x1 -> 92% instruction coverage, grade C) and several multi-line ST statements register as too-complex blocks (58.8%). This file is the primary regression target for Phase 2 (AOI/UDT/alias resolution). NOTE: author/vendor metadata is Vendor=ProcessEng and process tag naming may reflect a real plant; review for identifier sanitization before any external sharing.",
+  "source": "user-provided (Downloads/LiOH DIW TankSystem.l5x); renamed to LiOH_DIW_TankSystem_Full.L5X (original name contained a non-breaking space)."
+}

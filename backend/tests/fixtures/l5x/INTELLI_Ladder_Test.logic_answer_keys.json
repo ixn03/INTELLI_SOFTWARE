@@ -1,0 +1,85 @@
+{
+  "fixture": "INTELLI_Ladder_Test.L5X",
+  "confirmed_by": "controls_engineer_sign_off",
+  "rungs": {
+    "4": {
+      "rung_text": "XIC(State_Fill) BST GEQ(Tank_Level,Target_Level) NXB XIC(Fill_Timer.DN) BND OTL(State_Mix) OTU(State_Fill);",
+      "semantics": "State_Fill AND (GEQ(Tank_Level,Target_Level) OR Fill_Timer.DN)",
+      "structure": {
+        "kind": "and",
+        "children": [
+          {"kind": "contact", "tag": "State_Fill", "instruction_type": "XIC", "examined_value": true, "operands": ["State_Fill"]},
+          {
+            "kind": "or",
+            "children": [
+              {
+                "kind": "compare",
+                "instruction_type": "GEQ",
+                "operands": ["Tank_Level", "Target_Level"]
+              },
+              {
+                "kind": "contact",
+                "tag": "Fill_Timer.DN",
+                "instruction_type": "XIC",
+                "examined_value": true,
+                "operands": ["Fill_Timer.DN"]
+              }
+            ]
+          }
+        ]
+      },
+      "eval_pass": {
+        "State_Fill": true,
+        "Tank_Level": 100.0,
+        "Target_Level": 80.0,
+        "Fill_Timer.DN": false
+      },
+      "eval_fail": {
+        "State_Fill": true,
+        "Tank_Level": 50.0,
+        "Target_Level": 80.0,
+        "Fill_Timer.DN": false
+      },
+      "trace_target": "State_Mix",
+      "trace_fail_unsatisfied": [
+        "Tank_Level must be greater than or equal to Target_Level",
+        "Fill_Timer.DN is TRUE"
+      ]
+    },
+    "8": {
+      "rung_text": "BST XIC(StopPB) NXB GRT(Tank_Level,High_Level_SP) BND OTU(State_Fill) OTU(State_Mix) RES(Fill_Timer) RES(Mix_Timer);",
+      "semantics": "StopPB OR GRT(Tank_Level,High_Level_SP)",
+      "structure": {
+        "kind": "or",
+        "children": [
+          {"kind": "contact", "tag": "StopPB", "instruction_type": "XIC", "examined_value": true, "operands": ["StopPB"]},
+          {
+            "kind": "compare",
+            "instruction_type": "GRT",
+            "operands": ["Tank_Level", "High_Level_SP"]
+          }
+        ]
+      },
+      "eval_pass_stop": {
+        "StopPB": true,
+        "Tank_Level": 10.0,
+        "High_Level_SP": 95.0
+      },
+      "eval_pass_high": {
+        "StopPB": false,
+        "Tank_Level": 100.0,
+        "High_Level_SP": 95.0
+      },
+      "eval_fail": {
+        "StopPB": false,
+        "Tank_Level": 50.0,
+        "High_Level_SP": 95.0
+      },
+      "trace_target": "State_Fill",
+      "trace_fail_unsatisfied": [
+        "StopPB is TRUE",
+        "Tank_Level must be greater than High_Level_SP"
+      ]
+    }
+  }
+}

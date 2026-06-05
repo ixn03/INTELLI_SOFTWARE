@@ -1,0 +1,16 @@
+{
+  "platform": "rockwell",
+  "language": "ladder",
+  "expected_capabilities": [
+    "ladder",
+    "branch_logic_bst_nxb_bnd",
+    "parallel_branches",
+    "timers_counters",
+    "tag_extraction"
+  ],
+  "known_unsupported_features": [
+    "end_instruction_semantics"
+  ],
+  "parser_notes": "REAL-WORLD ladder routine export (TargetType=Routine) for a conveyance/material-handling line. Parses cleanly (grade A): 1 controller / 1 program / 1 routine, 32 tags, 88 instructions at 98.9% known coverage with 16 branch markers detected - a strong real branch-heavy ladder example. The single unknown opcode is END (x1), a routine-terminator token that normalization does not model as a cause/effect instruction; harmless but listed honestly. Numeric literals (0, 10000, 30000) show up as 'unresolved operands' because they are timer/counter presets, not tags. Complements Conveyance_ST.L5X (the ST sibling of the same machine).",
+  "source": "user-provided (Downloads/Conveyance LD.l5x), renamed to Conveyance_LD.L5X (space removed)."
+}

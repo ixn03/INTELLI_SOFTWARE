@@ -36,8 +36,9 @@ CONDITION_INSTRUCTIONS = {
 }
 COMPARISON_INSTRUCTIONS = {"EQU", "NEQ", "GRT", "GEQ", "LES", "LEQ", "LIM", "CMP"}
 MATH_INSTRUCTIONS = {"ADD", "SUB", "MUL", "DIV", "MOD", "CPT", "AND", "OR", "XOR"}
-MOVE_INSTRUCTIONS = {"MOV", "COP", "BTR", "BTW", "BTS", "BTT"}
+MOVE_INSTRUCTIONS = {"MOV", "MOVE", "COP", "BTR", "BTW", "BTS", "BTT"}
 CALL_INSTRUCTIONS = {"JSR", "SBR", "RET"}
+NO_OP_INSTRUCTIONS = {"NOP"}
 WRITE_INSTRUCTIONS = (
     BOOLEAN_OUTPUT_INSTRUCTIONS
     | STATEFUL_OUTPUT_INSTRUCTIONS
@@ -166,7 +167,8 @@ def parse_ladder_rung_text(
 
     * ASCII-art rung graphics, /OT latch bars, and FBD-in-text exports.
     * Branch levels beyond one ``BST..BND`` group interpreted together
-      (we only tokenize; we do not build a boolean DAG).
+      (we only tokenize; boolean trees are built separately by
+      :mod:`app.parsers.ladder_logic`).
     """
 
     instructions: list[ControlInstruction] = []
@@ -406,6 +408,8 @@ def _instruction_role(instruction_type: str) -> str:
         return "move"
     if instruction_type in CALL_INSTRUCTIONS:
         return "call"
+    if instruction_type in NO_OP_INSTRUCTIONS:
+        return "no_op"
     return "unknown"
 
 
@@ -426,6 +430,8 @@ def _instruction_family(instruction_type: str) -> str:
         return "move_copy"
     if instruction_type in CALL_INSTRUCTIONS:
         return "routine_call"
+    if instruction_type in NO_OP_INSTRUCTIONS:
+        return "no_op"
     if instruction_type in {"XIC", "XIO"}:
         return "condition"
     if instruction_type in {"ONS", "OSR", "OSF"}:

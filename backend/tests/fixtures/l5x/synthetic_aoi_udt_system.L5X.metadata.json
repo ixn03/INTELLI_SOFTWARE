@@ -1,0 +1,29 @@
+{
+  "platform": "rockwell",
+  "language": "ladder_structured_text",
+  "expected_capabilities": [
+    "ladder",
+    "structured_text",
+    "branch_logic_bst_nxb_bnd",
+    "start_stop_seal_in",
+    "permissive_and_estop_interlocks",
+    "timers_ton",
+    "one_shot_ons",
+    "counter_ctu",
+    "udt_typed_tags",
+    "udt_member_references",
+    "alias_tag_present",
+    "aoi_instance_call_present",
+    "multi_program",
+    "multi_task"
+  ],
+  "known_unsupported_features": [
+    "aoi_definition_body_resolution",
+    "aoi_instance_parameter_semantics",
+    "udt_definition_member_typing",
+    "alias_target_resolution",
+    "sequencer_sqo_semantics",
+    "task_scheduling_model"
+  ],
+  "parser_notes": "Synthetic but industrially-plausible tank/agitator/transfer-pump system authored to exercise features the real test corpus lacks. Contains a user-defined Valve_UDT and Motor_UDT, a MotorStarter Add-On Instruction definition plus an instance call, an alias tag (Start_PB -> HMI_Start), branched START/STOP seal-in interlocks with E-stop/permissive gating, TON/ONS/CTU instructions, UDT member references used as both BOOL and TIMER operands, an SQO step sequencer, and two Tasks/Programs (continuous ladder + periodic structured text). The current Rockwell connector only walks Programs/Program/Routines, so the AOI definition body, UDT definitions, alias targets, and Task scheduling are intentionally NOT resolved by the parser: the AOI instance call (MotorStarter) and the SQO sequencer surface as unknown opcodes, and UDT/alias tags are captured as flat tag references. These are the precise gaps Phase 2 (AOI/UDT resolution) and later phases must close; the fixture is the regression target for that work."
+}

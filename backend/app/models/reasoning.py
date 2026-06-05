@@ -482,6 +482,81 @@ class ExecutionContext(_CoreFields):
 
 
 # ---------------------------------------------------------------------------
+# LogicExpression — universal boolean network (Phase 3)
+# ---------------------------------------------------------------------------
+
+
+class LogicExpressionKind(str, Enum):
+    """Node kind in a vendor-neutral boolean logic tree.
+
+    Ladder series contacts, Siemens AND blocks, and FBD AND gates all
+    map to ``AND``. Parallel branches / OR blocks map to ``OR``.
+    ``CONTACT`` leaves represent examined bits (XIC/XIO today); other
+    gating instructions use ``COMPARE`` or ``INSTRUCTION``.
+    """
+
+    AND = "and"
+    OR = "or"
+    NOT = "not"
+    CONTACT = "contact"
+    COMPARE = "compare"
+    INSTRUCTION = "instruction"
+
+
+class LogicExpression(BaseModel):
+    """A boolean expression tree for ladder / LAD / FBD gating logic.
+
+    Series paths collapse to ``AND`` nodes; parallel branches collapse
+    to ``OR`` nodes. ``XIO`` is represented as a ``CONTACT`` leaf with
+    ``examined_value=False`` (equivalent to ``NOT(XIC)``).
+
+    Example (schematic only)::
+
+
+        LogicExpression(
+            kind=LogicExpressionKind.AND,
+            children=[
+                LogicExpression(
+                    kind=LogicExpressionKind.CONTACT,
+                    tag="Permit_OK",
+                    examined_value=True,
+                    instruction_type="XIC",
+                ),
+                LogicExpression(
+                    kind=LogicExpressionKind.OR,
+                    children=[
+                        LogicExpression(
+                            kind=LogicExpressionKind.CONTACT,
+                            tag="Path_A",
+                            examined_value=True,
+                            instruction_type="XIC",
+                        ),
+                        LogicExpression(
+                            kind=LogicExpressionKind.CONTACT,
+                            tag="Path_B",
+                            examined_value=True,
+                            instruction_type="XIC",
+                        ),
+                    ],
+                ),
+            ],
+        )
+    """
+
+    model_config = ConfigDict(use_enum_values=False, extra="ignore")
+
+    kind: LogicExpressionKind
+    children: list["LogicExpression"] = Field(default_factory=list)
+    tag: Optional[str] = None
+    examined_value: Optional[bool] = None
+    instruction_type: Optional[str] = None
+    operands: list[str] = Field(default_factory=list)
+    instruction_id: Optional[str] = None
+    raw_text: Optional[str] = None
+    branch_index: Optional[int] = None
+
+
+# ---------------------------------------------------------------------------
 # Relationship
 # ---------------------------------------------------------------------------
 
@@ -512,6 +587,7 @@ class Relationship(_CoreFields):
     write_behavior: Optional[WriteBehaviorType] = None
     execution_context_id: Optional[str] = None
     logic_condition: Optional[str] = None
+    logic_expression: Optional[LogicExpression] = None
     timing_behavior: Optional[str] = None
     conflict_risk: Optional[bool] = None
     conflict_notes: Optional[str] = None
@@ -669,6 +745,7 @@ _CoreFields.model_rebuild()
 Evidence.model_rebuild()
 ControlObject.model_rebuild()
 ExecutionContext.model_rebuild()
+LogicExpression.model_rebuild()
 Relationship.model_rebuild()
 TruthConclusion.model_rebuild()
 TraceResult.model_rebuild()
@@ -689,6 +766,8 @@ __all__ = [
     "Evidence",
     "ControlObject",
     "ExecutionContext",
+    "LogicExpressionKind",
+    "LogicExpression",
     "Relationship",
     "TruthConclusion",
     "TraceResult",
