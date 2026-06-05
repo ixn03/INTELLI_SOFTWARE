@@ -7,7 +7,7 @@ from pathlib import Path
 
 from app.connectors.rockwell_l5x import RockwellL5XConnector
 from app.parsers.structured_text_blocks import (
-    STComplexBlock,
+    STFbInvocation,
     STIfBlock,
     parse_structured_text_blocks,
 )
@@ -66,7 +66,7 @@ class TestL5xMiniFixture(unittest.TestCase):
         blocks = parse_structured_text_blocks(st.raw_logic)
         self.assertGreaterEqual(len(blocks), 2)
         self.assertTrue(any(isinstance(b, STIfBlock) for b in blocks))
-        self.assertTrue(any(isinstance(b, STComplexBlock) for b in blocks))
+        self.assertTrue(any(isinstance(b, STFbInvocation) for b in blocks))
 
     def test_mini_normalizes(self) -> None:
         path = FIXTURE_DIR / "mini_routine_mix.L5X"

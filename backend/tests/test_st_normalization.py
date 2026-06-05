@@ -290,15 +290,10 @@ class STBlockParserTests(unittest.TestCase):
         self.assertEqual(labels, [("1", False), ("ELSE", True)])
 
     def test_too_complex_statement_does_not_crash(self) -> None:
-        # FOR loop is outside the supported envelope. We must
-        # produce *some* block (so the normalizer can flag it) and
-        # not raise, even on weird input.
+        # Unsupported shapes must not raise; emit a too-complex marker.
         blocks = parse_structured_text_blocks(
-            "FOR i := 0 TO 10 DO\n"
-            "    Counter := Counter + 1;\n"
-            "END_FOR;"
+            "Out := SQRT(Input) + 1;"
         )
-        # At least one of the emitted blocks should be too-complex.
         too_complex_seen = any(
             isinstance(b, STComplexBlock)
             or (isinstance(b, STAssignment) and b.too_complex)
@@ -627,7 +622,7 @@ class STNormalizationCaseTests(unittest.TestCase):
 class STNormalizationTooComplexTests(unittest.TestCase):
     """Complex ST does not crash and is marked too_complex."""
 
-    def test_for_loop_produces_too_complex_statement_object(self) -> None:
+    def test_for_loop_with_arithmetic_body_is_recognized(self) -> None:
         project = _make_project_with_st_routine(
             routine_name="MainRoutine",
             raw_logic=(
@@ -635,39 +630,36 @@ class STNormalizationTooComplexTests(unittest.TestCase):
                 "    Counter := Counter + 1;\n"
                 "END_FOR;"
             ),
-            tag_names=["Counter"],
+            tag_names=["Counter", "i"],
         )
         out = normalize_l5x_project(project)
         objs = out["control_objects"]
 
-        # At least one ST statement object must carry the too_complex
-        # marker. We don't pin a specific index because the parser may
-        # emit several adjacent complex chunks while consuming the
-        # FOR / END_FOR text.
         st_objs = [
             o
             for o in objs
             if o.object_type == ControlObjectType.INSTRUCTION
             and (o.attributes or {}).get("language") == "structured_text"
+            and (o.platform_specific or {}).get("statement_type", "").startswith(
+                "loop_"
+            )
         ]
-        self.assertTrue(st_objs)
-        too_complex = [
-            o
-            for o in st_objs
-            if (o.platform_specific or {}).get("st_parse_status")
-            == "too_complex"
-        ]
-        self.assertTrue(
-            too_complex,
-            "Expected at least one ST statement with "
-            "st_parse_status='too_complex'.",
+        self.assertEqual(len(st_objs), 1)
+        self.assertEqual(
+            (st_objs[0].platform_specific or {}).get("st_parse_status"),
+            "ok",
         )
+        writes = [
+            r
+            for r in out["relationships"]
+            if r.relationship_type == RelationshipType.WRITES
+            and r.target_id == _tag_id("Counter")
+        ]
+        self.assertEqual(len(writes), 1)
 
-    def test_too_complex_assignment_still_emits_write(self) -> None:
-        # `Motor := SQRT(value);` is recognized as an assignment to
-        # Motor, but the RHS is outside the supported envelope --
-        # the WRITE must still appear so the graph isn't blind to
-        # the writer, just flagged.
+    def test_pure_function_call_rhs_emits_reads(self) -> None:
+        # ``Motor := SQRT(value);`` is a pure function-call RHS: emit
+        # the WRITE plus a READ on the argument tag.
         project = _make_project_with_st_routine(
             routine_name="MainRoutine",
             raw_logic="Motor := SQRT(value);",
@@ -678,12 +670,15 @@ class STNormalizationTooComplexTests(unittest.TestCase):
         writes = _find_writes(rels, target_id=_tag_id("Motor"))
         self.assertEqual(len(writes), 1)
         w = writes[0]
-        self.assertEqual(
-            w.platform_specific.get("st_parse_status"), "too_complex"
-        )
-        # No literal write_behavior because the RHS isn't a literal.
+        self.assertEqual(w.platform_specific.get("st_parse_status"), "ok")
+        reads = [
+            r
+            for r in rels
+            if r.relationship_type == RelationshipType.READS
+            and r.target_id == _tag_id("value")
+        ]
+        self.assertEqual(len(reads), 1)
         self.assertIsNone(w.write_behavior)
-        self.assertEqual(w.confidence, ConfidenceLevel.LOW)
 
 
 class STAndLadderCoexistenceTests(unittest.TestCase):

@@ -96,6 +96,9 @@ class ControlRoutine(BaseModel):
     ] = "unknown"
     instructions: List[ControlInstruction] = Field(default_factory=list)
     raw_logic: Optional[str] = None
+    # Optional subroutine / FB interface (Rockwell Routine Parameters).
+    # Reuses ``AOIParameter`` staging shape: Name / Usage / Required.
+    parameters: List[AOIParameter] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
     parse_status: Optional[Literal["parsed", "unsupported", "preserved_only"]] = None
 

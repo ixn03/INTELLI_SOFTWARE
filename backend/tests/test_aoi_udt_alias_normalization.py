@@ -341,6 +341,52 @@ class SyntheticFixtureTests(unittest.TestCase):
         self.assertTrue(hits)
         self.assertEqual(hits[0].platform_specific.get("udt_member_type"), "BOOL")
 
+    def test_motorstarter_ladder_body_normalized(self) -> None:
+        """Ladder AOI body emits rung-level READS/WRITES under the body routine."""
+        body_objs = [
+            o for o in self.output["control_objects"]
+            if o.attributes.get("is_aoi_body")
+            and o.attributes.get("aoi_name") == "MotorStarter"
+        ]
+        self.assertEqual(len(body_objs), 1)
+        body = body_objs[0]
+        self.assertEqual(
+            (body.platform_specific or {}).get("parse_status"), "ok"
+        )
+        self.assertTrue(
+            (body.platform_specific or {}).get("aoi_body_normalized")
+        )
+        rungs = [
+            o for o in self.output["control_objects"]
+            if o.parent_ids and body.id in o.parent_ids
+            and o.object_type.value == "rung"
+        ]
+        self.assertGreaterEqual(len(rungs), 1)
+        body_writes = [
+            r for r in self.output["relationships"]
+            if r.relationship_type == RelationshipType.WRITES
+            and r.execution_context_id
+            and "MotorStarter" in r.execution_context_id
+            and "Logic" in r.execution_context_id
+        ]
+        self.assertGreaterEqual(len(body_writes), 1)
+
+    def test_st_aoi_body_stays_stub(self) -> None:
+        """ST-bodied AOI definitions remain ``aoi_body_not_extracted``."""
+        raw = (_FIXTURES / "Array_Scroll.L5X").read_bytes()
+        proj = RockwellL5XConnector().parse("Array_Scroll.L5X", raw)
+        output = normalize_l5x_project(proj)
+        bodies = [
+            o for o in output["control_objects"]
+            if o.attributes.get("is_aoi_body")
+        ]
+        self.assertTrue(bodies)
+        for body in bodies:
+            self.assertEqual(
+                (body.platform_specific or {}).get("parse_status"),
+                "aoi_body_not_extracted",
+            )
+
 
 # ---------------------------------------------------------------------------
 # Part B: real logixlib AOI fixtures resolve instead of staying unknown

@@ -76,21 +76,7 @@ def _parse_aoi_definitions(
         if not name:
             continue
 
-        params: list[AOIParameter] = []
-        for p in aoi.findall("./Parameters/Parameter"):
-            pname = _attr(p, "Name")
-            if not pname:
-                continue
-            params.append(
-                AOIParameter(
-                    name=pname,
-                    usage=p.get("Usage"),
-                    data_type=p.get("DataType"),
-                    required=_bool_attr(p, "Required", False),
-                    visible=_bool_attr(p, "Visible", True),
-                    alias_for=p.get("AliasFor") or None,
-                )
-            )
+        params = _parse_l5x_parameters(aoi)
 
         # Internal logic routine: prefer one literally named "Logic",
         # else the first RLL/ST routine, else the first routine.
@@ -171,6 +157,27 @@ def _parse_data_type_defs(
             )
         )
     return defs
+
+
+def _parse_l5x_parameters(parent: etree._Element) -> list[AOIParameter]:
+    """Parse ``./Parameters/Parameter`` children in document order."""
+
+    params: list[AOIParameter] = []
+    for p in parent.findall("./Parameters/Parameter"):
+        pname = _attr(p, "Name")
+        if not pname:
+            continue
+        params.append(
+            AOIParameter(
+                name=pname,
+                usage=p.get("Usage"),
+                data_type=p.get("DataType"),
+                required=_bool_attr(p, "Required", False),
+                visible=_bool_attr(p, "Visible", True),
+                alias_for=p.get("AliasFor") or None,
+            )
+        )
+    return params
 
 
 def _extract_structured_text(routine_element: etree._Element) -> str:
@@ -285,6 +292,32 @@ class RockwellL5XConnector(PlatformConnector):
                 )
             )
 
+        # AOI-definition-only exports (TargetType=AddOnInstructionDefinition)
+        # have no Programs section; surface each AOI's internal routines so
+        # ST/RLL bodies participate in grading and normalization.
+        if controller_element is not None:
+            for aoi_el in controller_element.findall(
+                "./AddOnInstructionDefinitions/AddOnInstructionDefinition"
+            ):
+                aoi_name = _attr(aoi_el, "Name")
+                if not aoi_name:
+                    continue
+                aoi_routines = [
+                    self._parse_routine(routine_el)
+                    for routine_el in aoi_el.findall("./Routines/Routine")
+                ]
+                if not aoi_routines:
+                    continue
+                if any(p.name == f"__AOI__/{aoi_name}" for p in programs):
+                    continue
+                programs.append(
+                    ControlProgram(
+                        name=f"__AOI__/{aoi_name}",
+                        tags=[],
+                        routines=aoi_routines,
+                    )
+                )
+
         project = ControlProject(
             project_name=controller_name,
             source_file=filename,
@@ -310,6 +343,7 @@ class RockwellL5XConnector(PlatformConnector):
         type_raw = _attr(routine_element, "Type", "unknown")
         language, norm_type = _normalize_routine_language(type_raw)
         routine_name = _attr(routine_element, "Name", "Unknown Routine")
+        routine_params = _parse_l5x_parameters(routine_element)
 
         if language == "ladder":
 
@@ -351,6 +385,7 @@ class RockwellL5XConnector(PlatformConnector):
                 language="ladder",
                 instructions=instructions,
                 raw_logic="\n".join(raw_rungs) if raw_rungs else None,
+                parameters=routine_params,
                 parse_status="parsed",
                 metadata={
                     "rockwell_type": routine_element.get("Type"),
@@ -380,6 +415,7 @@ class RockwellL5XConnector(PlatformConnector):
                     routine_name,
                 ),
                 raw_logic=routine_text or None,
+                parameters=routine_params,
                 parse_status="parsed",
                 metadata={
                     "rockwell_type": routine_element.get("Type"),
@@ -399,6 +435,7 @@ class RockwellL5XConnector(PlatformConnector):
                 language="function_block",
                 instructions=instructions,
                 raw_logic=raw_logic or None,
+                parameters=routine_params,
                 parse_status="parsed" if instructions else "unsupported",
                 metadata={
                     "rockwell_type": routine_element.get("Type"),
@@ -418,6 +455,7 @@ class RockwellL5XConnector(PlatformConnector):
                 language="sfc",
                 instructions=instructions,
                 raw_logic=raw_logic or None,
+                parameters=routine_params,
                 parse_status="parsed" if instructions else "unsupported",
                 metadata={
                     "rockwell_type": routine_element.get("Type"),
@@ -430,6 +468,7 @@ class RockwellL5XConnector(PlatformConnector):
             language="unknown",
             instructions=[],
             raw_logic=None,
+            parameters=routine_params,
             parse_status="unsupported",
             metadata={
                 "rockwell_type": routine_element.get("Type"),

@@ -36,8 +36,8 @@ Supported grammar (case-insensitive on keywords)
 
    ``<cond>`` uses the same expression envelope as the assignment
    RHS (so ``IF A OR (B AND C) THEN ...`` parses). Body statements
-   that aren't simple assignments are intentionally ignored here;
-   the normalizer can still consult ``STIfBlock.raw_text``.
+   may include nested ``IF … END_IF`` blocks and standalone FB calls;
+   other shapes remain in ``raw_text`` only.
    Multiple sequential assignments in either branch are supported.
 
 3. ``CASE`` block (integer or identifier labels, optional ``ELSE``)::
@@ -55,11 +55,18 @@ Supported grammar (case-insensitive on keywords)
    ``platform_specific["case_condition_summary"]``. Each branch
    contains one or more :class:`STAssignment`.
 
-Everything else -- ``WHILE``, ``FOR``, ``REPEAT``, function calls,
-nested control flow, arithmetic outside comparison right-hand sides,
-unbalanced parentheses -- lands in :class:`STComplexBlock` (top-level)
-or sets ``too_complex=True`` on the relevant assignment / IF block,
-which the normalizer surfaces with
+4. ``FOR`` / ``WHILE`` / ``REPEAT`` loops as :class:`STLoopBlock`
+   (loop condition -> READS during normalization; body assignments
+   extracted when they are simple ``:=`` statements).
+
+5. Standalone function / FB invocations ``Name(...);`` as
+   :class:`STFbInvocation` (``CALLS`` + parameter READS during
+   normalization).
+
+Everything else -- nested control flow inside IF bodies, unbalanced
+parentheses, arithmetic mixed with boolean operators -- lands in
+:class:`STComplexBlock` (top-level) or sets ``too_complex=True`` on
+the relevant assignment / IF block, which the normalizer surfaces with
 ``st_parse_status="too_complex"``.
 
 At parse entry, comments are removed via
@@ -88,6 +95,10 @@ from typing import Optional, Union
 
 from app.parsers.st_comments import strip_st_comments_for_parsing
 from app.parsers.st_if_elsif_split import parse_outer_if_elsif_else
+from app.parsers.st_arithmetic import (
+    parse_st_arithmetic_operands,
+    parse_st_function_call_operands,
+)
 from app.parsers.st_expression import (
     STComparisonTerm,
     STConjunction,
@@ -114,6 +125,7 @@ _IDENT = (
     r"|\[\d+\]"
     r")*"
 )
+_IDENT_RE = re.compile(_IDENT)
 
 # Match a single ``<target> := <rhs>;`` assignment. DOTALL so the RHS
 # can span lines (rare for booleans but legal). The trailing ``;`` is
@@ -168,6 +180,7 @@ _CASE_LABEL_RE = re.compile(
 # :class:`STComplexBlock` (multi-branch ``IF`` is unsupported in
 # :class:`STIfBlock` without a schema extension).
 _IF_ENDIF_KW = re.compile(r"\b(?:IF|END_IF)\b", re.IGNORECASE)
+_IF_THEN_ELSE_KW = re.compile(r"\b(IF|THEN|ELSE|END_IF)\b", re.IGNORECASE)
 
 
 # ---------------------------------------------------------------------------
@@ -195,8 +208,12 @@ class STAssignment:
             ``None`` when the RHS was a literal ``TRUE`` / ``FALSE``
             (there is no condition to parse).
         too_complex: ``True`` when the RHS could not be parsed as a
-            boolean literal, a conjunction, a disjunction, or a
-            comparison-bearing expression.
+            boolean literal, a conjunction, a disjunction, a
+            comparison-bearing expression, or a simple arithmetic
+            formula.
+        arithmetic_operands: Tag names referenced by a simple
+            arithmetic RHS (e.g. ``Counter + 1`` -> ``["Counter"]``).
+            Empty when the RHS is boolean-shaped or too complex.
         raw_text: The original ST snippet (incl. trailing ``;``).
         statement_index: Monotonic index within the containing scope
             (top-level routine, then THEN body, then ELSE body, then
@@ -209,6 +226,7 @@ class STAssignment:
     assigned_value: Optional[bool] = None
     conditions: list[STCondition] = field(default_factory=list)
     expression: Optional[STExpressionParse] = None
+    arithmetic_operands: list[str] = field(default_factory=list)
     too_complex: bool = False
     raw_text: str = ""
     statement_index: int = 0
@@ -238,6 +256,10 @@ class STIfBlock:
     else_too_complex: bool = False
     then_assignments: list[STAssignment] = field(default_factory=list)
     else_assignments: list[STAssignment] = field(default_factory=list)
+    then_nested_ifs: list["STIfBlock"] = field(default_factory=list)
+    else_nested_ifs: list["STIfBlock"] = field(default_factory=list)
+    then_fb_calls: list["STFbInvocation"] = field(default_factory=list)
+    else_fb_calls: list["STFbInvocation"] = field(default_factory=list)
     raw_text: str = ""
     statement_index: int = 0
 
@@ -259,7 +281,20 @@ class STCaseBranch:
     label: str
     is_default: bool = False
     assignments: list[STAssignment] = field(default_factory=list)
+    nested_ifs: list["STIfBlock"] = field(default_factory=list)
+    fb_calls: list["STFbInvocation"] = field(default_factory=list)
     condition_summary: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class STReturnBlock:
+    """A ``RETURN`` or ``RETURN <expr>;`` statement."""
+
+    value_raw: Optional[str] = None
+    value_operands: list[str] = field(default_factory=list)
+    too_complex_value: bool = False
+    raw_text: str = ""
+    statement_index: int = 0
 
 
 @dataclass(frozen=True)
@@ -290,12 +325,48 @@ class STIfElsifChain:
 
 
 @dataclass(frozen=True)
+class STForMetadata:
+    """Parsed ``FOR`` header: ``FOR i := 0 TO Limit BY 1 DO``."""
+
+    loop_var: str
+    start_expr: str
+    end_expr: str
+    step_expr: str = "1"
+
+    @property
+    def display(self) -> str:
+        step = self.step_expr.strip()
+        if step in {"1", "1.0"}:
+            return f"{self.loop_var} from {self.start_expr} to {self.end_expr}"
+        return (
+            f"{self.loop_var} from {self.start_expr} to {self.end_expr}"
+            f" by {step}"
+        )
+
+
+@dataclass(frozen=True)
 class STLoopBlock:
     """A ``FOR`` / ``WHILE`` / ``REPEAT`` loop with extracted body assignments."""
 
     loop_kind: str
+    condition_raw: str = ""
+    condition_expression: Optional[STExpressionParse] = None
+    condition_operands: list[str] = field(default_factory=list)
+    for_metadata: Optional[STForMetadata] = None
+    too_complex_condition: bool = False
     body_assignments: list[STAssignment] = field(default_factory=list)
     too_complex_body: bool = False
+    raw_text: str = ""
+    statement_index: int = 0
+
+
+@dataclass(frozen=True)
+class STFbInvocation:
+    """A standalone ``Callee(...);`` function or FB call line."""
+
+    callee_name: str
+    parameters: list[str] = field(default_factory=list)
+    too_complex_parameters: bool = False
     raw_text: str = ""
     statement_index: int = 0
 
@@ -321,6 +392,8 @@ STBlock = Union[
     STIfElsifChain,
     STCaseBlock,
     STLoopBlock,
+    STFbInvocation,
+    STReturnBlock,
     STComplexBlock,
 ]
 
@@ -372,6 +445,105 @@ def _find_balanced_loop_end(text: str, pos: int, open_kw: str, close_kw: str) ->
     return -1
 
 
+_FOR_HEADER_SKIP = frozenset({"TO", "BY"})
+
+_FOR_HEADER_RE = re.compile(
+    r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:=\s*(.+?)\s+TO\s+(.+?)"
+    r"(?:\s+BY\s+(.+?))?\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _parse_for_header(header: str) -> Optional[STForMetadata]:
+    m = _FOR_HEADER_RE.match(header.strip())
+    if not m:
+        return None
+    step = (m.group(4) or "1").strip()
+    return STForMetadata(
+        loop_var=m.group(1),
+        start_expr=m.group(2).strip(),
+        end_expr=m.group(3).strip(),
+        step_expr=step,
+    )
+
+
+def _extract_for_header_operands(header: str) -> list[str]:
+    """Collect tag-shaped identifiers from a ``FOR`` header."""
+
+    tags: list[str] = []
+    seen: set[str] = set()
+    for m in _IDENT_RE.finditer(header):
+        ident = m.group(0)
+        if ident.upper() in _FOR_HEADER_SKIP:
+            continue
+        if ident not in seen:
+            seen.add(ident)
+            tags.append(ident)
+    return tags
+
+
+def _split_top_level_commas(text: str) -> list[str]:
+    """Split ``text`` on commas at parenthesis depth zero."""
+
+    parts: list[str] = []
+    depth = 0
+    last = 0
+    for i, ch in enumerate(text):
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth < 0:
+                return []
+        elif ch == "," and depth == 0:
+            parts.append(text[last:i].strip())
+            last = i + 1
+    if depth != 0:
+        return []
+    parts.append(text[last:].strip())
+    return parts
+
+
+def _extract_loop_condition(
+    raw_loop: str, loop_kind: str
+) -> tuple[str, Optional[STExpressionParse], list[str], bool]:
+    """Return ``(condition_raw, expression, operands, too_complex)``."""
+
+    if loop_kind == "WHILE":
+        m = re.search(
+            r"\bWHILE\s+(.+?)\s+DO\b", raw_loop, re.IGNORECASE | re.DOTALL
+        )
+        if not m:
+            return "", None, [], True
+        cond = m.group(1).strip()
+        expr = parse_st_expression(cond)
+        return cond, expr, [], expr.too_complex
+
+    if loop_kind == "REPEAT":
+        m = re.search(
+            r"\bUNTIL\b(.+?)(?:\bEND_REPEAT\b)", raw_loop, re.IGNORECASE | re.DOTALL
+        )
+        if not m:
+            return "", None, [], True
+        cond = m.group(1).strip().rstrip(";").strip()
+        expr = parse_st_expression(cond)
+        return cond, expr, [], expr.too_complex
+
+    if loop_kind == "FOR":
+        m = re.search(
+            r"\bFOR\s+(.+?)\s+DO\b", raw_loop, re.IGNORECASE | re.DOTALL
+        )
+        if not m:
+            return "", None, [], True
+        header = m.group(1).strip()
+        operands = _extract_for_header_operands(header)
+        if not operands:
+            return header, None, [], True
+        return header, None, operands, False
+
+    return "", None, [], True
+
+
 def _extract_loop_body(raw_loop: str, open_kw: str, close_kw: str) -> str:
     """Return the inner body text between loop header and ``close_kw``."""
 
@@ -412,6 +584,12 @@ def _try_consume_loop_block(
             continue
         raw = text[pos:end_idx].strip()
         body = _extract_loop_body(raw, open_kw, close_kw)
+        cond_raw, cond_expr, cond_ops, cond_bad = _extract_loop_condition(
+            raw, open_kw
+        )
+        for_meta = (
+            _parse_for_header(cond_raw) if open_kw == "FOR" and cond_raw else None
+        )
         body_fix = body.strip()
         if body_fix and not body_fix.endswith(";"):
             body_fix = body_fix + ";"
@@ -425,6 +603,11 @@ def _try_consume_loop_block(
         return (
             STLoopBlock(
                 loop_kind=open_kw,
+                condition_raw=cond_raw,
+                condition_expression=cond_expr,
+                condition_operands=cond_ops,
+                for_metadata=for_meta,
+                too_complex_condition=cond_bad,
                 body_assignments=assignments,
                 too_complex_body=too_complex_body,
                 raw_text=raw,
@@ -437,7 +620,7 @@ def _try_consume_loop_block(
 
 def _try_consume_fb_invocation(
     text: str, pos: int, stmt_idx: int
-) -> tuple[Optional[STComplexBlock], int]:
+) -> tuple[Optional[STFbInvocation], int]:
     m = re.match(r"\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(", text[pos:], re.IGNORECASE)
     if not m:
         return None, pos
@@ -450,16 +633,39 @@ def _try_consume_fb_invocation(
         j += 1
     if j < len(text) and text[j] == ";":
         raw = text[pos : j + 1].strip()
+        inner = text[open_paren + 1 : close_paren].strip()
+        params = _split_top_level_commas(inner) if inner else []
+        too_complex_params = False
+        for param in params:
+            p = param.strip()
+            if not p:
+                too_complex_params = True
+                continue
+            if _looks_like_tag_operand_text(p):
+                continue
+            if re.fullmatch(r"-?\d+(?:\.\d+)?", p):
+                continue
+            expr = parse_st_expression(p)
+            if expr.too_complex:
+                arith = parse_st_arithmetic_operands(p)
+                fn = parse_st_function_call_operands(p)
+                if arith.too_complex and fn.too_complex:
+                    too_complex_params = True
         return (
-            STComplexBlock(
+            STFbInvocation(
+                callee_name=m.group(1),
+                parameters=params,
+                too_complex_parameters=too_complex_params,
                 raw_text=raw,
                 statement_index=stmt_idx,
-                fragment_kind="fb_invocation",
-                callee_name=m.group(1),
             ),
             j + 1,
         )
     return None, pos
+
+
+def _looks_like_tag_operand_text(value: str) -> bool:
+    return bool(_IDENT_RE.fullmatch((value or "").strip()))
 
 
 def _find_matching_end_if(text: str, pos: int) -> int:
@@ -494,6 +700,159 @@ def _consume_end_if_trailer(text: str, end_after_end_if: int) -> int:
     if i < len(text) and text[i] == ";":
         i += 1
     return i
+
+
+def _split_if_then_else(text: str) -> Optional[tuple[str, str, str]]:
+    """Split a balanced ``IF … END_IF`` block into condition and bodies."""
+
+    m0 = re.match(r"\s*IF\b", text, re.IGNORECASE)
+    if not m0:
+        return None
+
+    after_if = m0.end()
+    depth = 1
+    then_kw_start = -1
+    then_kw_end = -1
+    else_kw_start = -1
+    else_kw_end = -1
+    end_if_start = -1
+
+    for m in _IF_THEN_ELSE_KW.finditer(text, after_if):
+        kw = m.group(1).upper()
+        if kw == "IF":
+            depth += 1
+        elif kw == "END_IF":
+            depth -= 1
+            if depth == 0:
+                end_if_start = m.start()
+                break
+        elif kw == "THEN" and depth == 1 and then_kw_start == -1:
+            then_kw_start = m.start()
+            then_kw_end = m.end()
+        elif kw == "ELSE" and depth == 1 and else_kw_start == -1:
+            else_kw_start = m.start()
+            else_kw_end = m.end()
+
+    if then_kw_start == -1 or end_if_start == -1:
+        return None
+
+    cond = text[after_if:then_kw_start].strip()
+    if else_kw_start != -1:
+        then_body = text[then_kw_end:else_kw_start].strip()
+        else_body = text[else_kw_end:end_if_start].strip()
+    else:
+        then_body = text[then_kw_end:end_if_start].strip()
+        else_body = ""
+
+    return cond, then_body, else_body
+
+
+@dataclass(frozen=True)
+class _STBodyParse:
+    assignments: list[STAssignment] = field(default_factory=list)
+    nested_ifs: list[STIfBlock] = field(default_factory=list)
+    fb_calls: list[STFbInvocation] = field(default_factory=list)
+
+
+def _parse_body_statements(body: str) -> _STBodyParse:
+    """Extract assignments, nested IF blocks, and FB calls from a body."""
+
+    if not body.strip():
+        return _STBodyParse()
+
+    assignments: list[STAssignment] = []
+    nested_ifs: list[STIfBlock] = []
+    fb_calls: list[STFbInvocation] = []
+    pos = 0
+    assign_idx = 0
+
+    while pos < len(body):
+        ws = re.match(r"[\s;]+", body[pos:])
+        if ws:
+            pos += ws.end()
+            if pos >= len(body):
+                break
+
+        if re.match(r"IF\b", body[pos:], re.IGNORECASE):
+            end = _find_matching_end_if(body, pos)
+            if end == -1:
+                break
+            end_consumed = _consume_end_if_trailer(body, end)
+            block_src = body[pos:end_consumed].strip()
+            nested_ifs.append(_parse_if_block_from_text(block_src, assign_idx))
+            pos = end_consumed
+            assign_idx += 1
+            continue
+
+        fb, new_pos = _try_consume_fb_invocation(body, pos, assign_idx)
+        if fb is not None:
+            fb_calls.append(fb)
+            pos = new_pos
+            assign_idx += 1
+            continue
+
+        m = _ASSIGNMENT_RE.match(body, pos)
+        if m:
+            assignments.append(_make_assignment(m, assign_idx))
+            pos = m.end()
+            assign_idx += 1
+            continue
+
+        end = body.find(";", pos)
+        if end == -1:
+            break
+        pos = end + 1
+
+    return _STBodyParse(
+        assignments=assignments,
+        nested_ifs=nested_ifs,
+        fb_calls=fb_calls,
+    )
+
+
+def _try_consume_return(
+    text: str, pos: int, stmt_idx: int
+) -> tuple[Optional[STReturnBlock], int]:
+    m = re.match(r"\s*RETURN\b", text[pos:], re.IGNORECASE)
+    if not m:
+        return None, pos
+    start = pos + m.end()
+    end = text.find(";", start)
+    if end == -1:
+        return None, pos
+    raw = text[pos : end + 1].strip()
+    value_raw = text[start:end].strip() or None
+    operands: list[str] = []
+    too_complex_value = False
+    if value_raw:
+        if _looks_like_tag_operand_text(value_raw):
+            operands = [value_raw]
+        elif re.fullmatch(r"-?\d+(?:\.\d+)?", value_raw):
+            operands = []
+        else:
+            expr = parse_st_expression(value_raw)
+            if not expr.too_complex:
+                plans = _legacy_conditions_from(expr)
+                operands = [c.tag for c in plans if hasattr(c, "tag")]
+            else:
+                arith = parse_st_arithmetic_operands(value_raw)
+                fn = parse_st_function_call_operands(value_raw)
+                if not arith.too_complex and arith.operand_tags:
+                    operands = list(arith.operand_tags)
+                elif not fn.too_complex and fn.operand_tags:
+                    operands = list(fn.operand_tags)
+                else:
+                    too_complex_value = True
+    return (
+        STReturnBlock(
+            value_raw=value_raw,
+            value_operands=operands,
+            too_complex_value=too_complex_value,
+            raw_text=raw,
+            statement_index=stmt_idx,
+        ),
+        end + 1,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -535,6 +894,14 @@ def parse_structured_text_blocks(routine_text: Optional[str]) -> list[STBlock]:
         lb, new_pos = _try_consume_loop_block(text, pos, stmt_idx)
         if lb is not None:
             blocks.append(lb)
+            pos = new_pos
+            stmt_idx += 1
+            continue
+
+        # Standalone RETURN.
+        ret, new_pos = _try_consume_return(text, pos, stmt_idx)
+        if ret is not None:
+            blocks.append(ret)
             pos = new_pos
             stmt_idx += 1
             continue
@@ -596,20 +963,7 @@ def parse_structured_text_blocks(routine_text: Optional[str]) -> list[STBlock]:
                         )
                     )
             else:
-                m_if = _IF_BLOCK_RE.match(text, pos)
-                if (
-                    m_if
-                    and m_if.start() == pos
-                    and m_if.end() == end_consumed
-                ):
-                    blocks.append(_make_if_block(m_if, stmt_idx))
-                else:
-                    blocks.append(
-                        STComplexBlock(
-                            raw_text=block_src,
-                            statement_index=stmt_idx,
-                        )
-                    )
+                blocks.append(_parse_if_block_from_text(block_src, stmt_idx))
             pos = end_consumed
             stmt_idx += 1
             continue
@@ -730,14 +1084,54 @@ def _parse_assignment_text(
         )
 
     expr = parse_st_expression(rhs_clean)
-    legacy_conditions = _legacy_conditions_from(expr)
+    if not expr.too_complex:
+        legacy_conditions = _legacy_conditions_from(expr)
+        return STAssignment(
+            target=target,
+            raw_expression=rhs_clean,
+            assigned_value=None,
+            conditions=legacy_conditions,
+            expression=expr,
+            too_complex=False,
+            raw_text=raw_text,
+            statement_index=statement_index,
+        )
+
+    arith = parse_st_arithmetic_operands(rhs_clean)
+    if not arith.too_complex and arith.operand_tags:
+        return STAssignment(
+            target=target,
+            raw_expression=rhs_clean,
+            assigned_value=None,
+            conditions=[],
+            expression=None,
+            arithmetic_operands=list(arith.operand_tags),
+            too_complex=False,
+            raw_text=raw_text,
+            statement_index=statement_index,
+        )
+
+    fn = parse_st_function_call_operands(rhs_clean)
+    if not fn.too_complex and fn.operand_tags:
+        return STAssignment(
+            target=target,
+            raw_expression=rhs_clean,
+            assigned_value=None,
+            conditions=[],
+            expression=None,
+            arithmetic_operands=list(fn.operand_tags),
+            too_complex=False,
+            raw_text=raw_text,
+            statement_index=statement_index,
+        )
+
     return STAssignment(
         target=target,
         raw_expression=rhs_clean,
         assigned_value=None,
-        conditions=legacy_conditions,
+        conditions=[],
         expression=expr,
-        too_complex=expr.too_complex,
+        too_complex=True,
         raw_text=raw_text,
         statement_index=statement_index,
     )
@@ -760,37 +1154,30 @@ def _legacy_conditions_from(
     return [t for t in expr.branches[0].terms if isinstance(t, STCondition)]
 
 
-def _make_if_block(
-    match: re.Match[str], statement_index: int
-) -> STIfBlock:
-    cond_text = match.group("cond").strip()
-    then_body = (match.group("then_body") or "").strip()
-    else_body = (match.group("else_body") or "").strip()
+def _parse_if_block_from_text(text: str, statement_index: int) -> STIfBlock:
+    """Build an :class:`STIfBlock` from a balanced ``IF … END_IF`` snippet."""
 
+    parts = _split_if_then_else(text)
+    if parts is None:
+        return STIfBlock(
+            condition_raw="",
+            too_complex_condition=True,
+            else_too_complex=True,
+            raw_text=text.strip(),
+            statement_index=statement_index,
+        )
+
+    cond_text, then_body, else_body = parts
     expr = parse_st_expression(cond_text)
     too_complex_condition = expr.too_complex
     condition_terms = _legacy_conditions_from(expr)
 
-    # The ELSE branch's gating condition is the negation of THEN's. We
-    # can only represent that mechanically when THEN is exactly one
-    # term *and* that term is invertible:
-    #   * one identifier term  -> NOT it.
-    #   * one comparison term  -> invert the operator (handled below
-    #     by the normalizer reading ``condition_expression``).
-    # Anything else (multi-term conjunctions, OR, mixed) becomes
-    # ``else_too_complex=True`` so the normalizer doesn't fabricate
-    # a wrong gating condition.
-    one_branch = (
-        not too_complex_condition
-        and len(expr.branches) == 1
-    )
-    one_term_in_only_branch = (
-        one_branch and len(expr.branches[0].terms) == 1
-    )
+    one_branch = not too_complex_condition and len(expr.branches) == 1
+    one_term_in_only_branch = one_branch and len(expr.branches[0].terms) == 1
     else_too_complex = not one_term_in_only_branch
 
-    then_assignments = _parse_body_assignments(then_body)
-    else_assignments = _parse_body_assignments(else_body)
+    then_parsed = _parse_body_statements(then_body)
+    else_parsed = _parse_body_statements(else_body)
 
     return STIfBlock(
         condition_raw=cond_text,
@@ -798,11 +1185,21 @@ def _make_if_block(
         condition_expression=expr,
         too_complex_condition=too_complex_condition,
         else_too_complex=else_too_complex,
-        then_assignments=then_assignments,
-        else_assignments=else_assignments,
-        raw_text=match.group(0).strip(),
+        then_assignments=then_parsed.assignments,
+        else_assignments=else_parsed.assignments,
+        then_nested_ifs=then_parsed.nested_ifs,
+        else_nested_ifs=else_parsed.nested_ifs,
+        then_fb_calls=then_parsed.fb_calls,
+        else_fb_calls=else_parsed.fb_calls,
+        raw_text=text.strip(),
         statement_index=statement_index,
     )
+
+
+def _make_if_block(
+    match: re.Match[str], statement_index: int
+) -> STIfBlock:
+    return _parse_if_block_from_text(match.group(0).strip(), statement_index)
 
 
 def _make_case_block(
@@ -815,7 +1212,7 @@ def _make_case_block(
     # treat it as a "real" tag (for READS) when it's a bare
     # identifier. Anything else (expression / arithmetic / function
     # call) is flagged too_complex_selector.
-    if re.fullmatch(_IDENT, selector_raw):
+    if _IDENT_RE.fullmatch(selector_raw):
         selector_tag: Optional[str] = selector_raw
         too_complex_selector = False
     else:
@@ -841,27 +1238,11 @@ def _make_case_block(
 def _parse_body_assignments(body: str) -> list[STAssignment]:
     """Extract assignments from a THEN / ELSE body in source order.
 
-    Other shapes inside the body (nested IF, function calls, ...) are
-    intentionally *not* preserved as STComplexBlock here: doing so
-    would push complex-block semantics into the IF/CASE structure
-    types. They're simply not extracted -- the normalizer can still
-    see the raw body via ``STIfBlock.raw_text``.
+    Nested IF blocks and FB calls inside the body are ignored here;
+    use :func:`_parse_body_statements` when those must be preserved.
     """
 
-    if not body.strip():
-        return []
-
-    out: list[STAssignment] = []
-    for idx, match in enumerate(_ASSIGNMENT_RE.finditer(body)):
-        out.append(
-            _parse_assignment_text(
-                target=match.group("target").strip(),
-                rhs=match.group("rhs").strip(),
-                raw_text=match.group(0).strip(),
-                statement_index=idx,
-            )
-        )
-    return out
+    return _parse_body_statements(body).assignments
 
 
 def _parse_case_branches(
@@ -898,6 +1279,8 @@ def _parse_case_branches(
         if branch_body and not branch_body.endswith(";"):
             branch_body = branch_body + ";"
 
+        parsed = _parse_body_statements(branch_body)
+
         is_else = bool(marker.group("is_else"))
         label = "ELSE" if is_else else (marker.group("label") or "").strip()
 
@@ -910,7 +1293,9 @@ def _parse_case_branches(
             STCaseBranch(
                 label=label,
                 is_default=is_else,
-                assignments=_parse_body_assignments(branch_body),
+                assignments=parsed.assignments,
+                nested_ifs=parsed.nested_ifs,
+                fb_calls=parsed.fb_calls,
                 condition_summary=summary,
             )
         )
@@ -920,10 +1305,13 @@ def _parse_case_branches(
 __all__ = [
     "STBlock",
     "STAssignment",
+    "STFbInvocation",
     "STIfElsifChain",
+    "STForMetadata",
     "STLoopBlock",
     "STCaseBlock",
     "STCaseBranch",
+    "STReturnBlock",
     "STComplexBlock",
     "STComparisonTerm",
     "STCondition",

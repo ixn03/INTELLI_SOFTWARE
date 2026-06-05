@@ -163,9 +163,11 @@ from typing import Any, Optional
 
 from app.models.control_model import (
     AddOnInstructionDef,
+    AOIParameter,
     ControlController,
     ControlInstruction,
     ControlProject,
+    ControlRoutine,
     ControlTag,
     DataTypeDef,
 )
@@ -184,6 +186,10 @@ from app.parsers.ladder_logic import (
     build_rung_logic_expression,
     logic_expression_to_text,
 )
+from app.parsers.st_arithmetic import (
+    parse_st_arithmetic_operands,
+    parse_st_function_call_operands,
+)
 from app.parsers.st_expression import parse_st_expression
 from app.parsers.structured_text_blocks import (
     STAssignment,
@@ -194,9 +200,12 @@ from app.parsers.structured_text_blocks import (
     STCondition,
     STConjunction,
     STExpressionParse,
+    STFbInvocation,
+    STForMetadata,
     STIfBlock,
     STIfElsifChain,
     STLoopBlock,
+    STReturnBlock,
     STTerm,
     parse_structured_text_blocks,
 )
@@ -630,12 +639,16 @@ def normalize_l5x_project(parsed_project: ControlProject) -> dict:
     routine_index: dict[tuple[str, str, str], str] = _build_routine_index(
         parsed_project
     )
+    routine_param_index: dict[tuple[str, str, str], list[AOIParameter]] = (
+        _build_routine_param_index(parsed_project)
+    )
 
     for controller in parsed_project.controllers:
         _normalize_controller(
             controller=controller,
             parsed_project=parsed_project,
             routine_index=routine_index,
+            routine_param_index=routine_param_index,
             control_objects=control_objects,
             relationships=relationships,
             execution_contexts=execution_contexts,
@@ -662,6 +675,7 @@ def _normalize_controller(
     controller: ControlController,
     parsed_project: ControlProject,
     routine_index: dict[tuple[str, str, str], str],
+    routine_param_index: dict[tuple[str, str, str], list[AOIParameter]],
     control_objects: list[ControlObject],
     relationships: list[Relationship],
     execution_contexts: list[ExecutionContext],
@@ -702,10 +716,22 @@ def _normalize_controller(
             if _t.alias_for:
                 alias_map.setdefault(_t.name, _t.alias_for)
 
+    aoi_body_routines: dict[str, ControlRoutine] = {}
+    for prog in controller.programs:
+        if not prog.name.startswith("__AOI__/"):
+            continue
+        aoi_name_upper = prog.name.split("/", 1)[1].upper()
+        aoi_def = aoi_defs_by_name.get(aoi_name_upper)
+        logic_name = aoi_def.logic_routine if aoi_def else None
+        for routine in prog.routines:
+            if logic_name is None or routine.name == logic_name:
+                aoi_body_routines[aoi_name_upper] = routine
+                break
+
     # Materialize one synthetic ROUTINE object per AOI definition that
     # exposes an internal logic routine, so instances can CALLS into the
-    # body. The body's own instructions are intentionally NOT extracted
-    # here (deferred); the object marks where the logic lives.
+    # body. Ladder (RLL) bodies are normalized into READS/WRITES here;
+    # ST bodies remain stubbed until a future pass.
     for upper_name, aoi_def in aoi_defs_by_name.items():
         if not aoi_def.logic_routine:
             continue
@@ -714,29 +740,58 @@ def _normalize_controller(
             f"/{aoi_def.logic_routine}"
         )
         aoi_body_routine_ids[upper_name] = body_id
-        control_objects.append(
-            ControlObject(
-                id=body_id,
-                name=aoi_def.logic_routine,
-                object_type=ControlObjectType.ROUTINE,
-                source_platform=source_platform,
-                source_location=(
-                    f"Controller:{controller.name}"
-                    f"/AddOnInstructionDefinition:{aoi_def.name}"
-                    f"/Routine:{aoi_def.logic_routine}"
-                ),
-                parent_ids=[controller_id],
-                attributes={
-                    "is_aoi_body": True,
-                    "aoi_name": aoi_def.name,
-                },
-                confidence=ConfidenceLevel.MEDIUM,
-                platform_specific={
-                    "parse_status": "aoi_body_not_extracted",
-                    "aoi_revision": aoi_def.revision,
-                },
-            )
+        body_routine = aoi_body_routines.get(upper_name)
+        is_ladder_body = (
+            body_routine is not None
+            and body_routine.language == "ladder"
+            and body_routine.instructions
         )
+        body_co = ControlObject(
+            id=body_id,
+            name=aoi_def.logic_routine,
+            object_type=ControlObjectType.ROUTINE,
+            source_platform=source_platform,
+            source_location=(
+                f"Controller:{controller.name}"
+                f"/AddOnInstructionDefinition:{aoi_def.name}"
+                f"/Routine:{aoi_def.logic_routine}"
+            ),
+            parent_ids=[controller_id],
+            attributes={
+                "is_aoi_body": True,
+                "aoi_name": aoi_def.name,
+                "language": body_routine.language if body_routine else None,
+            },
+            confidence=ConfidenceLevel.MEDIUM,
+            platform_specific={
+                "parse_status": (
+                    "ok" if is_ladder_body else "aoi_body_not_extracted"
+                ),
+                "aoi_revision": aoi_def.revision,
+            },
+        )
+        control_objects.append(body_co)
+        if is_ladder_body and body_routine is not None:
+            _normalize_aoi_ladder_body(
+                controller_name=controller.name,
+                controller_id=controller_id,
+                aoi_def=aoi_def,
+                body_routine=body_routine,
+                body_id=body_id,
+                body_co=body_co,
+                source_platform=source_platform,
+                tag_index=tag_index,
+                routine_index=routine_index,
+                routine_param_index=routine_param_index,
+                control_objects=control_objects,
+                relationships=relationships,
+                execution_contexts=execution_contexts,
+                aoi_defs=aoi_defs_by_name,
+                udt_defs=udt_defs_by_name,
+                tag_type_map=tag_type_map,
+                aoi_body_routine_ids=aoi_body_routine_ids,
+                alias_map=alias_map,
+            )
 
     control_objects.append(
         ControlObject(
@@ -805,6 +860,11 @@ def _normalize_controller(
     pending_alias_edges.clear()
 
     for program in controller.programs:
+        # AOI bodies are normalized via the synthetic body-routine path
+        # above; skip duplicate program/routine materialization.
+        if program.name.startswith("__AOI__/"):
+            continue
+
         program_id = _program_id(controller.name, program.name)
         program_loc = (
             f"Controller:{controller.name}/Program:{program.name}"
@@ -880,6 +940,7 @@ def _normalize_controller(
                 source_platform=source_platform,
                 tag_index=tag_index,
                 routine_index=routine_index,
+                routine_param_index=routine_param_index,
                 control_objects=control_objects,
                 relationships=relationships,
                 execution_contexts=execution_contexts,
@@ -896,6 +957,82 @@ def _normalize_controller(
 # ---------------------------------------------------------------------------
 
 
+def _normalize_aoi_ladder_body(
+    *,
+    controller_name: str,
+    controller_id: str,
+    aoi_def: AddOnInstructionDef,
+    body_routine: ControlRoutine,
+    body_id: str,
+    body_co: ControlObject,
+    source_platform: str,
+    tag_index: dict[tuple[str, str], str],
+    routine_index: dict[tuple[str, str, str], str],
+    routine_param_index: dict[tuple[str, str, str], list[AOIParameter]],
+    control_objects: list[ControlObject],
+    relationships: list[Relationship],
+    execution_contexts: list[ExecutionContext],
+    aoi_defs: dict[str, AddOnInstructionDef],
+    udt_defs: dict[str, DataTypeDef],
+    tag_type_map: dict[str, str],
+    aoi_body_routine_ids: dict[str, str],
+    alias_map: dict[str, str],
+) -> None:
+    """Normalize a ladder AOI logic routine into the synthetic body object."""
+
+    program_name = f"__AOI__/{aoi_def.name}"
+    routine_name = body_routine.name
+    routine_loc = (
+        f"Controller:{controller_name}"
+        f"/AddOnInstructionDefinition:{aoi_def.name}"
+        f"/Routine:{routine_name}"
+    )
+    exec_ctx_id = _exec_ctx_id(controller_name, program_name, routine_name)
+    execution_contexts.append(
+        ExecutionContext(
+            id=exec_ctx_id,
+            name=f"{routine_name} AOI body scan",
+            context_type=ExecutionContextType.ROUTINE,
+            description=f"AOI body scope for {routine_loc}",
+            controller_id=controller_id,
+            source_platform=source_platform,
+            source_location=routine_loc,
+            confidence=ConfidenceLevel.MEDIUM,
+        )
+    )
+    attrs = dict(body_co.attributes or {})
+    attrs["language"] = "ladder"
+    attrs["instruction_count"] = len(body_routine.instructions)
+    body_co.attributes = attrs
+    ps = dict(body_co.platform_specific or {})
+    ps["parse_status"] = "ok"
+    ps["aoi_body_normalized"] = True
+    body_co.platform_specific = ps
+    body_co.confidence = ConfidenceLevel.HIGH
+
+    _normalize_ladder_routine(
+        controller_name=controller_name,
+        controller_id=controller_id,
+        program_name=program_name,
+        program_id=controller_id,
+        routine_name=routine_name,
+        routine_id=body_id,
+        routine_loc=routine_loc,
+        instructions=list(body_routine.instructions),
+        exec_ctx_id=exec_ctx_id,
+        tag_index=tag_index,
+        routine_index=routine_index,
+        routine_param_index=routine_param_index,
+        control_objects=control_objects,
+        relationships=relationships,
+        aoi_defs=aoi_defs,
+        udt_defs=udt_defs,
+        tag_type_map=tag_type_map,
+        aoi_body_routine_ids=aoi_body_routine_ids,
+        alias_map=alias_map,
+    )
+
+
 def _normalize_routine(
     controller_name: str,
     controller_id: str,
@@ -906,6 +1043,7 @@ def _normalize_routine(
     source_platform: str,
     tag_index: dict[tuple[str, str], str],
     routine_index: dict[tuple[str, str, str], str],
+    routine_param_index: dict[tuple[str, str, str], list[AOIParameter]],
     control_objects: list[ControlObject],
     relationships: list[Relationship],
     execution_contexts: list[ExecutionContext],
@@ -994,6 +1132,7 @@ def _normalize_routine(
             exec_ctx_id=exec_ctx_id,
             tag_index=tag_index,
             routine_index=routine_index,
+            routine_param_index=routine_param_index,
             control_objects=control_objects,
             relationships=relationships,
             aoi_defs=aoi_defs,
@@ -1017,8 +1156,12 @@ def _normalize_routine(
             instructions=list(routine.instructions),
             exec_ctx_id=exec_ctx_id,
             tag_index=tag_index,
+            routine_index=routine_index,
+            routine_param_index=routine_param_index,
             control_objects=control_objects,
             relationships=relationships,
+            aoi_defs=aoi_defs,
+            aoi_body_routine_ids=aoi_body_routine_ids,
         )
         return
 
@@ -1132,6 +1275,7 @@ class _RungContext:
     exec_ctx_id: str
     tag_index: dict[tuple[str, str], str]
     routine_index: dict[tuple[str, str, str], str]
+    routine_param_index: dict[tuple[str, str, str], list[AOIParameter]]
     control_objects: list[ControlObject] = field(default_factory=list)
     relationships: list[Relationship] = field(default_factory=list)
     rung_has_branches: bool = False
@@ -1160,6 +1304,7 @@ def _normalize_ladder_routine(
     exec_ctx_id: str,
     tag_index: dict[tuple[str, str], str],
     routine_index: dict[tuple[str, str, str], str],
+    routine_param_index: dict[tuple[str, str, str], list[AOIParameter]],
     control_objects: list[ControlObject],
     relationships: list[Relationship],
     aoi_defs: Optional[dict[str, AddOnInstructionDef]] = None,
@@ -1283,6 +1428,7 @@ def _normalize_ladder_routine(
             exec_ctx_id=exec_ctx_id,
             tag_index=tag_index,
             routine_index=routine_index,
+            routine_param_index=routine_param_index,
             control_objects=control_objects,
             relationships=relationships,
             rung_has_branches=rung_has_branches,
@@ -1424,8 +1570,12 @@ def _normalize_structured_text_routine(
     instructions: list[ControlInstruction],
     exec_ctx_id: str,
     tag_index: dict[tuple[str, str], str],
+    routine_index: dict[tuple[str, str, str], str],
+    routine_param_index: dict[tuple[str, str, str], list[AOIParameter]],
     control_objects: list[ControlObject],
     relationships: list[Relationship],
+    aoi_defs: Optional[dict[str, AddOnInstructionDef]] = None,
+    aoi_body_routine_ids: Optional[dict[str, str]] = None,
 ) -> None:
     """Convert an ST routine into per-block WRITES / READS edges.
 
@@ -1442,6 +1592,8 @@ def _normalize_structured_text_routine(
     """
 
     blocks = parse_structured_text_blocks(raw_logic) if raw_logic else []
+    aoi_defs = aoi_defs or {}
+    aoi_body_routine_ids = aoi_body_routine_ids or {}
 
     for block in blocks:
         _normalize_st_block(
@@ -1455,8 +1607,12 @@ def _normalize_structured_text_routine(
             routine_loc=routine_loc,
             exec_ctx_id=exec_ctx_id,
             tag_index=tag_index,
+            routine_index=routine_index,
+            routine_param_index=routine_param_index,
             control_objects=control_objects,
             relationships=relationships,
+            aoi_defs=aoi_defs,
+            aoi_body_routine_ids=aoi_body_routine_ids,
         )
 
     # Preserve the existing per-instruction structural surface so the
@@ -1504,10 +1660,17 @@ def _normalize_st_block(
     routine_loc: str,
     exec_ctx_id: str,
     tag_index: dict[tuple[str, str], str],
+    routine_index: dict[tuple[str, str, str], str],
+    routine_param_index: dict[tuple[str, str, str], list[AOIParameter]],
     control_objects: list[ControlObject],
     relationships: list[Relationship],
+    aoi_defs: Optional[dict[str, AddOnInstructionDef]] = None,
+    aoi_body_routine_ids: Optional[dict[str, str]] = None,
 ) -> None:
     """Dispatch on block type and emit the synthetic statement + edges."""
+
+    aoi_defs = aoi_defs or {}
+    aoi_body_routine_ids = aoi_body_routine_ids or {}
 
     statement_id, statement_loc = _make_st_statement_object(
         controller_name=controller_name,
@@ -1551,6 +1714,24 @@ def _normalize_st_block(
             tag_index=tag_index,
             control_objects=control_objects,
             relationships=relationships,
+            routine_index=routine_index,
+            routine_param_index=routine_param_index,
+            aoi_defs=aoi_defs,
+            aoi_body_routine_ids=aoi_body_routine_ids,
+        )
+        return
+
+    if isinstance(block, STReturnBlock):
+        _emit_st_return_edges(
+            block=block,
+            statement_id=statement_id,
+            statement_loc=statement_loc,
+            controller_name=controller_name,
+            program_name=program_name,
+            exec_ctx_id=exec_ctx_id,
+            tag_index=tag_index,
+            control_objects=control_objects,
+            relationships=relationships,
         )
         return
 
@@ -1569,19 +1750,47 @@ def _normalize_st_block(
         return
 
     if isinstance(block, STLoopBlock):
-        for assign in block.body_assignments:
-            _emit_st_assignment_edges(
-                assignment=assign,
-                extra_conditions=[],
-                condition_source="rhs",
+        _emit_st_loop_edges(
+            block=block,
+            statement_id=statement_id,
+            statement_loc=statement_loc,
+            controller_name=controller_name,
+            program_name=program_name,
+            exec_ctx_id=exec_ctx_id,
+            tag_index=tag_index,
+            control_objects=control_objects,
+            relationships=relationships,
+        )
+        return
+
+    if isinstance(block, STFbInvocation):
+        aoi_def = aoi_defs.get(block.callee_name.upper())
+        if aoi_def is not None:
+            _emit_st_aoi_invocation_edges(
+                block=block,
                 statement_id=statement_id,
+                statement_obj=control_objects[-1],
                 statement_loc=statement_loc,
-                statement_type="loop",
-                block_raw_text=block.raw_text,
                 controller_name=controller_name,
                 program_name=program_name,
                 exec_ctx_id=exec_ctx_id,
                 tag_index=tag_index,
+                aoi_def=aoi_def,
+                aoi_body_routine_ids=aoi_body_routine_ids,
+                control_objects=control_objects,
+                relationships=relationships,
+            )
+        else:
+            _emit_st_fb_invocation_edges(
+                block=block,
+                statement_id=statement_id,
+                statement_loc=statement_loc,
+                controller_name=controller_name,
+                program_name=program_name,
+                exec_ctx_id=exec_ctx_id,
+                tag_index=tag_index,
+                routine_index=routine_index,
+                routine_param_index=routine_param_index,
                 control_objects=control_objects,
                 relationships=relationships,
             )
@@ -1598,6 +1807,10 @@ def _normalize_st_block(
             tag_index=tag_index,
             control_objects=control_objects,
             relationships=relationships,
+            routine_index=routine_index,
+            routine_param_index=routine_param_index,
+            aoi_defs=aoi_defs,
+            aoi_body_routine_ids=aoi_body_routine_ids,
         )
         return
 
@@ -1663,12 +1876,26 @@ def _make_st_statement_object(
         )
     )
     stmt_obj = control_objects[-1]
-    if isinstance(block, STComplexBlock):
+    if isinstance(block, STLoopBlock) and block.for_metadata:
         ps = dict(stmt_obj.platform_specific)
-        if block.fragment_kind:
+        fm = block.for_metadata
+        ps["for_loop"] = {
+            "loop_var": fm.loop_var,
+            "start": fm.start_expr,
+            "end": fm.end_expr,
+            "step": fm.step_expr,
+            "display": fm.display,
+        }
+        stmt_obj.platform_specific = ps
+    if isinstance(block, (STComplexBlock, STFbInvocation)):
+        ps = dict(stmt_obj.platform_specific)
+        if isinstance(block, STComplexBlock) and block.fragment_kind:
             ps["fragment_kind"] = block.fragment_kind
-        if block.callee_name:
+        if isinstance(block, STComplexBlock) and block.callee_name:
             ps["callee_name"] = block.callee_name
+        if isinstance(block, STFbInvocation):
+            ps["callee_name"] = block.callee_name
+            ps["parameter_count"] = len(block.parameters)
         stmt_obj.platform_specific = ps
     relationships.append(
         Relationship(
@@ -1694,7 +1921,23 @@ def _st_block_summary(block: STBlock) -> tuple[str, str, str]:
             if block.too_complex_condition
             else "ok"
         )
+        for assign in block.then_assignments + block.else_assignments:
+            if assign.too_complex:
+                status = "too_complex"
+                break
+        for nested in block.then_nested_ifs + block.else_nested_ifs:
+            _, nested_status, _ = _st_block_summary(nested)
+            if nested_status == "too_complex":
+                status = "too_complex"
+                break
+        for fb in block.then_fb_calls + block.else_fb_calls:
+            if fb.too_complex_parameters:
+                status = "too_complex"
+                break
         return "if", status, block.raw_text
+    if isinstance(block, STReturnBlock):
+        status = "too_complex" if block.too_complex_value else "ok"
+        return "return", status, block.raw_text
     if isinstance(block, STCaseBlock):
         status = (
             "too_complex"
@@ -1712,17 +1955,20 @@ def _st_block_summary(block: STBlock) -> tuple[str, str, str]:
         return "if_elsif_chain", ("too_complex" if bad else "ok"), block.raw_text
     if isinstance(block, STLoopBlock):
         status = "too_complex" if block.too_complex_body else "ok"
+        if block.too_complex_condition:
+            status = "too_complex"
         if not block.too_complex_body:
             for assign in block.body_assignments:
                 if assign.too_complex:
                     status = "too_complex"
                     break
         return f"loop_{block.loop_kind.lower()}", status, block.raw_text
+    if isinstance(block, STFbInvocation):
+        status = "too_complex" if block.too_complex_parameters else "ok"
+        return "fb_invocation", status, block.raw_text
     if isinstance(block, STComplexBlock):
         if block.fragment_kind and block.fragment_kind.startswith("loop_"):
             return "loop", "too_complex", block.raw_text
-        if block.fragment_kind == "fb_invocation":
-            return "fb_invocation", "ok", block.raw_text
         return "complex", "too_complex", block.raw_text
     return "complex", "too_complex", getattr(block, "raw_text", "")
 
@@ -1958,6 +2204,17 @@ def _emit_st_assignment_edges(
         _plan_st_reads_from_conditions(extra_conditions)
     )
     rhs_plans = _plan_st_reads_from_expression(assignment.expression)
+    if not rhs_plans and assignment.arithmetic_operands:
+        rhs_plans = [
+            _STBranchPlan(
+                or_branch_index=0,
+                total_or_branches=1,
+                reads=[
+                    _STReadPlan(target_tag=tag, examined_value=True)
+                    for tag in assignment.arithmetic_operands
+                ],
+            )
+        ]
 
     too_complex_rhs = (
         assignment.too_complex and assignment.assigned_value is None
@@ -2112,6 +2369,345 @@ def _emit_st_assignment_edges(
                 )
 
 
+def _emit_st_reads_from_plans(
+    *,
+    plans: list[_STBranchPlan],
+    condition_source: str,
+    statement_id: str,
+    statement_loc: str,
+    statement_type: str,
+    logic_condition: str,
+    exec_ctx_id: str,
+    controller_name: str,
+    program_name: str,
+    tag_index: dict[tuple[str, str], str],
+    control_objects: list[ControlObject],
+    relationships: list[Relationship],
+) -> None:
+    """Emit READS edges from pre-built branch plans."""
+
+    seen_keys: set[tuple] = set()
+    for plan in plans:
+        for read in plan.reads:
+            key = (
+                read.target_tag,
+                read.examined_value,
+                plan.or_branch_index,
+                condition_source,
+            )
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            cond_target_id = _resolve_tag_id_or_stub(
+                operand=read.target_tag,
+                controller_name=controller_name,
+                program_name=program_name,
+                tag_index=tag_index,
+                control_objects=control_objects,
+            )
+            cond_platform: dict = {
+                "language": _ST_LANGUAGE_KEY,
+                "statement_type": statement_type,
+                "examined_value": read.examined_value,
+                "instruction_type": (
+                    "ST_COMPARE"
+                    if read.comparison_operator is not None
+                    else ("XIC" if read.examined_value else "XIO")
+                ),
+                "condition_source": condition_source,
+                "raw_text": logic_condition,
+            }
+            if plan.total_or_branches > 1:
+                cond_platform["or_branch_index"] = plan.or_branch_index
+                cond_platform["or_branch_count"] = plan.total_or_branches
+            if read.comparison_operator is not None:
+                cond_platform["comparison_operator"] = read.comparison_operator
+                cond_platform["compared_with"] = read.compared_with
+                cond_platform["gating_kind"] = "comparison"
+            relationships.append(
+                Relationship(
+                    source_id=statement_id,
+                    target_id=cond_target_id,
+                    relationship_type=RelationshipType.READS,
+                    execution_context_id=exec_ctx_id,
+                    logic_condition=logic_condition,
+                    source_platform="rockwell",
+                    source_location=statement_loc,
+                    confidence=ConfidenceLevel.HIGH,
+                    platform_specific=cond_platform,
+                )
+            )
+
+
+def _emit_st_loop_edges(
+    *,
+    block: STLoopBlock,
+    statement_id: str,
+    statement_loc: str,
+    controller_name: str,
+    program_name: str,
+    exec_ctx_id: str,
+    tag_index: dict[tuple[str, str], str],
+    control_objects: list[ControlObject],
+    relationships: list[Relationship],
+) -> None:
+    """Emit loop-condition READS and body assignment edges."""
+
+    if block.condition_expression is not None and not block.too_complex_condition:
+        cond_plans = _plan_st_reads_from_expression(block.condition_expression)
+        _emit_st_reads_from_plans(
+            plans=cond_plans,
+            condition_source="loop_condition",
+            statement_id=statement_id,
+            statement_loc=statement_loc,
+            statement_type=f"loop_{block.loop_kind.lower()}",
+            logic_condition=block.raw_text,
+            exec_ctx_id=exec_ctx_id,
+            controller_name=controller_name,
+            program_name=program_name,
+            tag_index=tag_index,
+            control_objects=control_objects,
+            relationships=relationships,
+        )
+    elif block.condition_operands and not block.too_complex_condition:
+        cond_plans = [
+            _STBranchPlan(
+                or_branch_index=0,
+                total_or_branches=1,
+                reads=[
+                    _STReadPlan(target_tag=tag, examined_value=True)
+                    for tag in block.condition_operands
+                ],
+            )
+        ]
+        _emit_st_reads_from_plans(
+            plans=cond_plans,
+            condition_source="loop_condition",
+            statement_id=statement_id,
+            statement_loc=statement_loc,
+            statement_type=f"loop_{block.loop_kind.lower()}",
+            logic_condition=block.raw_text,
+            exec_ctx_id=exec_ctx_id,
+            controller_name=controller_name,
+            program_name=program_name,
+            tag_index=tag_index,
+            control_objects=control_objects,
+            relationships=relationships,
+        )
+
+    for assign in block.body_assignments:
+        _emit_st_assignment_edges(
+            assignment=assign,
+            extra_conditions=[],
+            condition_source="rhs",
+            statement_id=statement_id,
+            statement_loc=statement_loc,
+            statement_type="loop",
+            block_raw_text=block.raw_text,
+            controller_name=controller_name,
+            program_name=program_name,
+            exec_ctx_id=exec_ctx_id,
+            tag_index=tag_index,
+            control_objects=control_objects,
+            relationships=relationships,
+        )
+
+
+def _resolve_st_callee_id_or_stub(
+    *,
+    callee_name: str,
+    controller_name: str,
+    program_name: str,
+    routine_index: dict[tuple[str, str, str], str],
+    control_objects: list[ControlObject],
+    is_jsr: bool,
+) -> str:
+    """Resolve a CALLS target for an ST invocation."""
+
+    if is_jsr:
+        return _resolve_routine_id_or_stub(
+            target_name=callee_name,
+            controller_name=controller_name,
+            program_name=program_name,
+            routine_index=routine_index,
+            control_objects=control_objects,
+        )
+
+    stub_id = f"fb::{controller_name}/{callee_name}#stub"
+    if any(obj.id == stub_id for obj in control_objects):
+        return stub_id
+    control_objects.append(
+        ControlObject(
+            id=stub_id,
+            name=callee_name,
+            object_type=ControlObjectType.FUNCTION_BLOCK,
+            source_platform="rockwell",
+            source_location=stub_id,
+            parent_ids=[],
+            attributes={"callee_kind": "st_invocation"},
+            confidence=ConfidenceLevel.LOW,
+            platform_specific={
+                "language": _ST_LANGUAGE_KEY,
+                "callee_name": callee_name,
+                "stub_reason": "st_fb_invocation",
+            },
+        )
+    )
+    return stub_id
+
+
+def _plan_st_reads_from_invocation_parameter(param: str) -> list[_STBranchPlan]:
+    """Best-effort READ plans for one FB/JSR call parameter."""
+
+    p = param.strip()
+    if not p:
+        return []
+    if _looks_like_tag_operand(p):
+        return [
+            _STBranchPlan(
+                or_branch_index=0,
+                total_or_branches=1,
+                reads=[_STReadPlan(target_tag=p, examined_value=True)],
+            )
+        ]
+    if re.fullmatch(r"-?\d+(?:\.\d+)?", p):
+        return []
+    expr = parse_st_expression(p)
+    if not expr.too_complex:
+        return _plan_st_reads_from_expression(expr)
+    arith = parse_st_arithmetic_operands(p)
+    if not arith.too_complex and arith.operand_tags:
+        return [
+            _STBranchPlan(
+                or_branch_index=0,
+                total_or_branches=1,
+                reads=[
+                    _STReadPlan(target_tag=tag, examined_value=True)
+                    for tag in arith.operand_tags
+                ],
+            )
+        ]
+    fn = parse_st_function_call_operands(p)
+    if not fn.too_complex and fn.operand_tags:
+        return [
+            _STBranchPlan(
+                or_branch_index=0,
+                total_or_branches=1,
+                reads=[
+                    _STReadPlan(target_tag=tag, examined_value=True)
+                    for tag in fn.operand_tags
+                ],
+            )
+        ]
+    return []
+
+
+def _emit_st_fb_invocation_edges(
+    *,
+    block: STFbInvocation,
+    statement_id: str,
+    statement_loc: str,
+    controller_name: str,
+    program_name: str,
+    exec_ctx_id: str,
+    tag_index: dict[tuple[str, str], str],
+    routine_index: dict[tuple[str, str, str], str],
+    routine_param_index: dict[tuple[str, str, str], list[AOIParameter]],
+    control_objects: list[ControlObject],
+    relationships: list[Relationship],
+) -> None:
+    """Emit CALLS and parameter READS/WRITES for ``Callee(...);`` lines."""
+
+    callee_upper = block.callee_name.upper()
+    is_jsr = callee_upper == "JSR"
+    call_target_name = block.callee_name
+    param_operands = list(block.parameters)
+    if is_jsr and block.parameters:
+        call_target_name = block.parameters[0].strip()
+        param_operands = block.parameters[1:]
+
+    target_id = _resolve_st_callee_id_or_stub(
+        callee_name=call_target_name,
+        controller_name=controller_name,
+        program_name=program_name,
+        routine_index=routine_index,
+        control_objects=control_objects,
+        is_jsr=is_jsr,
+    )
+    relationships.append(
+        Relationship(
+            source_id=statement_id,
+            target_id=target_id,
+            relationship_type=RelationshipType.CALLS,
+            execution_context_id=exec_ctx_id,
+            logic_condition=block.raw_text,
+            source_platform="rockwell",
+            source_location=statement_loc,
+            confidence=ConfidenceLevel.HIGH,
+            platform_specific={
+                "language": _ST_LANGUAGE_KEY,
+                "statement_type": "fb_invocation",
+                "callee_name": block.callee_name,
+                "call_target": call_target_name,
+                "parameters": list(block.parameters),
+                "st_parse_status": (
+                    "too_complex" if block.too_complex_parameters else "ok"
+                ),
+            },
+        )
+    )
+
+    if is_jsr:
+        _emit_jsr_parameter_edges(
+            source_id=statement_id,
+            source_loc=statement_loc,
+            logic_condition=block.raw_text,
+            exec_ctx_id=exec_ctx_id,
+            controller_name=controller_name,
+            program_name=program_name,
+            target_routine_name=call_target_name,
+            param_operands=param_operands,
+            tag_index=tag_index,
+            routine_param_index=routine_param_index,
+            control_objects=control_objects,
+            relationships=relationships,
+            platform_base={
+                "language": _ST_LANGUAGE_KEY,
+                "statement_type": "fb_invocation",
+                "gating_kind": "jsr_parameter",
+            },
+            expression_reads=True,
+        )
+        return
+
+    for idx, param in enumerate(block.parameters, start=0):
+        plans = _plan_st_reads_from_invocation_parameter(param)
+        if not plans:
+            continue
+        rel_count_before = len(relationships)
+        _emit_st_reads_from_plans(
+            plans=plans,
+            condition_source="call_parameter",
+            statement_id=statement_id,
+            statement_loc=statement_loc,
+            statement_type="fb_invocation",
+            logic_condition=block.raw_text,
+            exec_ctx_id=exec_ctx_id,
+            controller_name=controller_name,
+            program_name=program_name,
+            tag_index=tag_index,
+            control_objects=control_objects,
+            relationships=relationships,
+        )
+        for rel in relationships[rel_count_before:]:
+            if rel.relationship_type != RelationshipType.READS:
+                continue
+            ps = dict(rel.platform_specific or {})
+            ps["parameter_index"] = idx
+            ps["gating_kind"] = "call_parameter"
+            rel.platform_specific = ps
+
+
 def _emit_st_if_elsif_chain_edges(
     block: STIfElsifChain,
     statement_id: str,
@@ -2162,12 +2758,20 @@ def _emit_st_if_edges(
     tag_index: dict[tuple[str, str], str],
     control_objects: list[ControlObject],
     relationships: list[Relationship],
+    routine_index: Optional[dict[tuple[str, str, str], str]] = None,
+    routine_param_index: Optional[dict[tuple[str, str, str], list[AOIParameter]]] = None,
+    aoi_defs: Optional[dict[str, AddOnInstructionDef]] = None,
+    aoi_body_routine_ids: Optional[dict[str, str]] = None,
+    enclosing_gating_expression: Optional[STExpressionParse] = None,
 ) -> None:
     """Emit edges for each THEN / ELSE assignment under an IF block.
 
     THEN-branch assignments inherit ``block.condition_expression`` as
     the gating expression -- this is what carries OR / comparison
-    information through to the assignment-level emitter.
+    information through to the assignment-level emitter. When nested
+    inside another IF branch, ``enclosing_gating_expression`` is ANDed
+    onto the local condition so nested THEN writes carry the full
+    gating chain.
     ELSE-branch assignments inherit the boolean negation of the
     THEN condition when it is exactly one term (single identifier
     or single comparison); anything else marks
@@ -2175,7 +2779,8 @@ def _emit_st_if_edges(
     carry no parsed gating reads.
     """
 
-    # THEN: pass the full expression through unmodified.
+    # THEN: pass the full expression through unmodified, ANDed with any
+    # enclosing IF gating from outer blocks.
     then_expression = (
         block.condition_expression
         if (
@@ -2183,6 +2788,9 @@ def _emit_st_if_edges(
             and not block.too_complex_condition
         )
         else None
+    )
+    effective_then_gating = _and_st_gating_expressions(
+        enclosing_gating_expression, then_expression
     )
 
     for assignment in block.then_assignments:
@@ -2201,13 +2809,35 @@ def _emit_st_if_edges(
             control_objects=control_objects,
             relationships=relationships,
             branch_label="THEN",
-            gating_expression=then_expression,
+            gating_expression=effective_then_gating,
         )
 
-    if not block.else_assignments:
+    _emit_st_if_body_extras(
+        nested_ifs=block.then_nested_ifs,
+        fb_calls=block.then_fb_calls,
+        branch_label="THEN",
+        statement_id=statement_id,
+        statement_loc=statement_loc,
+        controller_name=controller_name,
+        program_name=program_name,
+        exec_ctx_id=exec_ctx_id,
+        tag_index=tag_index,
+        control_objects=control_objects,
+        relationships=relationships,
+        routine_index=routine_index or {},
+        routine_param_index=routine_param_index or {},
+        aoi_defs=aoi_defs or {},
+        aoi_body_routine_ids=aoi_body_routine_ids or {},
+        enclosing_gating_expression=effective_then_gating,
+    )
+
+    if not block.else_assignments and not block.else_nested_ifs and not block.else_fb_calls:
         return
 
     else_expression, else_label = _build_else_gating(block)
+    effective_else_gating = _and_st_gating_expressions(
+        enclosing_gating_expression, else_expression
+    )
 
     for assignment in block.else_assignments:
         _emit_st_assignment_edges(
@@ -2225,7 +2855,136 @@ def _emit_st_if_edges(
             control_objects=control_objects,
             relationships=relationships,
             branch_label=else_label,
-            gating_expression=else_expression,
+            gating_expression=effective_else_gating,
+        )
+
+    _emit_st_if_body_extras(
+        nested_ifs=block.else_nested_ifs,
+        fb_calls=block.else_fb_calls,
+        branch_label=else_label,
+        statement_id=statement_id,
+        statement_loc=statement_loc,
+        controller_name=controller_name,
+        program_name=program_name,
+        exec_ctx_id=exec_ctx_id,
+        tag_index=tag_index,
+        control_objects=control_objects,
+        relationships=relationships,
+        routine_index=routine_index or {},
+        routine_param_index=routine_param_index or {},
+        aoi_defs=aoi_defs or {},
+        aoi_body_routine_ids=aoi_body_routine_ids or {},
+        enclosing_gating_expression=effective_else_gating,
+    )
+
+
+def _emit_st_if_body_extras(
+    *,
+    nested_ifs: list[STIfBlock],
+    fb_calls: list[STFbInvocation],
+    branch_label: str,
+    statement_id: str,
+    statement_loc: str,
+    controller_name: str,
+    program_name: str,
+    exec_ctx_id: str,
+    tag_index: dict[tuple[str, str], str],
+    control_objects: list[ControlObject],
+    relationships: list[Relationship],
+    routine_index: dict[tuple[str, str, str], str],
+    routine_param_index: dict[tuple[str, str, str], list[AOIParameter]],
+    aoi_defs: dict[str, AddOnInstructionDef],
+    aoi_body_routine_ids: dict[str, str],
+    enclosing_gating_expression: Optional[STExpressionParse] = None,
+) -> None:
+    for nested in nested_ifs:
+        _emit_st_if_edges(
+            block=nested,
+            statement_id=statement_id,
+            statement_loc=statement_loc,
+            controller_name=controller_name,
+            program_name=program_name,
+            exec_ctx_id=exec_ctx_id,
+            tag_index=tag_index,
+            control_objects=control_objects,
+            relationships=relationships,
+            routine_index=routine_index,
+            routine_param_index=routine_param_index,
+            aoi_defs=aoi_defs,
+            aoi_body_routine_ids=aoi_body_routine_ids,
+            enclosing_gating_expression=enclosing_gating_expression,
+        )
+    for fb in fb_calls:
+        aoi_def = aoi_defs.get(fb.callee_name.upper())
+        if aoi_def is not None:
+            _emit_st_aoi_invocation_edges(
+                block=fb,
+                statement_id=statement_id,
+                statement_obj=control_objects[-1],
+                statement_loc=statement_loc,
+                controller_name=controller_name,
+                program_name=program_name,
+                exec_ctx_id=exec_ctx_id,
+                tag_index=tag_index,
+                aoi_def=aoi_def,
+                aoi_body_routine_ids=aoi_body_routine_ids,
+                control_objects=control_objects,
+                relationships=relationships,
+            )
+        else:
+            _emit_st_fb_invocation_edges(
+                block=fb,
+                statement_id=statement_id,
+                statement_loc=statement_loc,
+                controller_name=controller_name,
+                program_name=program_name,
+                exec_ctx_id=exec_ctx_id,
+                tag_index=tag_index,
+                routine_index=routine_index,
+                routine_param_index=routine_param_index,
+                control_objects=control_objects,
+                relationships=relationships,
+            )
+
+
+def _emit_st_return_edges(
+    *,
+    block: STReturnBlock,
+    statement_id: str,
+    statement_loc: str,
+    controller_name: str,
+    program_name: str,
+    exec_ctx_id: str,
+    tag_index: dict[tuple[str, str], str],
+    control_objects: list[ControlObject],
+    relationships: list[Relationship],
+) -> None:
+    if block.too_complex_value or not block.value_operands:
+        return
+    for tag in block.value_operands:
+        target_id = _resolve_tag_id_or_stub(
+            operand=tag,
+            controller_name=controller_name,
+            program_name=program_name,
+            tag_index=tag_index,
+            control_objects=control_objects,
+        )
+        relationships.append(
+            Relationship(
+                source_id=statement_id,
+                target_id=target_id,
+                relationship_type=RelationshipType.READS,
+                execution_context_id=exec_ctx_id,
+                logic_condition=block.raw_text,
+                source_platform="rockwell",
+                source_location=statement_loc,
+                confidence=ConfidenceLevel.HIGH,
+                platform_specific={
+                    "language": _ST_LANGUAGE_KEY,
+                    "statement_type": "return",
+                    "condition_source": "return_value",
+                },
+            )
         )
 
 
@@ -2314,6 +3073,10 @@ def _emit_st_case_edges(
     tag_index: dict[tuple[str, str], str],
     control_objects: list[ControlObject],
     relationships: list[Relationship],
+    routine_index: Optional[dict[tuple[str, str, str], str]] = None,
+    routine_param_index: Optional[dict[tuple[str, str, str], list[AOIParameter]]] = None,
+    aoi_defs: Optional[dict[str, AddOnInstructionDef]] = None,
+    aoi_body_routine_ids: Optional[dict[str, str]] = None,
 ) -> None:
     """Emit edges for each branch assignment under a CASE block.
 
@@ -2358,6 +3121,23 @@ def _emit_st_case_edges(
                 branch_label=branch.label,
                 case_condition_summary=branch.condition_summary,
             )
+        _emit_st_if_body_extras(
+            nested_ifs=branch.nested_ifs,
+            fb_calls=branch.fb_calls,
+            branch_label=branch.label,
+            statement_id=statement_id,
+            statement_loc=statement_loc,
+            controller_name=controller_name,
+            program_name=program_name,
+            exec_ctx_id=exec_ctx_id,
+            tag_index=tag_index,
+            control_objects=control_objects,
+            relationships=relationships,
+            routine_index=routine_index or {},
+            routine_param_index=routine_param_index or {},
+            aoi_defs=aoi_defs or {},
+            aoi_body_routine_ids=aoi_body_routine_ids or {},
+        )
         # Emit one READS edge per branch for the selector so the
         # graph captures the selector dependency. We do this per
         # branch (rather than once for the whole CASE) so each branch
@@ -2393,6 +3173,59 @@ def _emit_st_case_edges(
 # ---------------------------------------------------------------------------
 # Small ST helpers
 # ---------------------------------------------------------------------------
+
+
+def _and_st_gating_expressions(
+    outer: Optional[STExpressionParse],
+    inner: Optional[STExpressionParse],
+) -> Optional[STExpressionParse]:
+    """Conjoin two boolean gating expressions (DNF cartesian product).
+
+    Used to AND parent IF conditions onto nested IF THEN/ELSE writes.
+    Returns ``None`` when both inputs are absent; marks ``too_complex``
+    when either operand is too complex.
+    """
+
+    if outer is None:
+        return inner
+    if inner is None:
+        return outer
+    if outer.too_complex or inner.too_complex:
+        return STExpressionParse(
+            branches=[],
+            too_complex=True,
+            raw_text=f"({outer.raw_text}) AND ({inner.raw_text})",
+            gating_logic_type="too_complex",
+        )
+    merged_branches: list[STConjunction] = []
+    for outer_branch in outer.branches:
+        for inner_branch in inner.branches:
+            merged_branches.append(
+                STConjunction(
+                    terms=list(outer_branch.terms) + list(inner_branch.terms)
+                )
+            )
+    raw = f"({outer.raw_text}) AND ({inner.raw_text})"
+    has_compare = any(
+        any(isinstance(t, STComparisonTerm) for t in conj.terms)
+        for conj in merged_branches
+    )
+    if has_compare:
+        gating = "comparison"
+    elif len(merged_branches) > 1 and any(
+        len(c.terms) > 1 for c in merged_branches
+    ):
+        gating = "and_or"
+    elif len(merged_branches) > 1:
+        gating = "or"
+    else:
+        gating = "and"
+    return STExpressionParse(
+        branches=merged_branches,
+        too_complex=False,
+        raw_text=raw,
+        gating_logic_type=gating,
+    )
 
 
 def _write_behavior_for_assignment(
@@ -2649,10 +3482,6 @@ def _handle_routine_call(
         routine_index=ctx.routine_index,
         control_objects=ctx.control_objects,
     )
-    # TODO(intelli/normalization): JSR additionally passes input / output
-    # parameters (operands 1..N), which should become READS / WRITES
-    # against the caller-side and parameter-side tags once we model
-    # routine parameters.
     ctx.relationships.append(
         Relationship(
             source_id=ctx.rung_id,
@@ -2673,38 +3502,25 @@ def _handle_routine_call(
             ),
         )
     )
-    for idx, op in enumerate(instruction.operands[1:], start=1):
-        if not op or not _looks_like_tag_operand(op):
-            continue
-        tag_id = _resolve_tag_id_or_stub(
-            operand=op,
-            controller_name=ctx.controller_name,
-            program_name=ctx.program_name,
-            tag_index=ctx.tag_index,
-            control_objects=ctx.control_objects,
-        )
-        ctx.relationships.append(
-            Relationship(
-                source_id=ctx.rung_id,
-                target_id=tag_id,
-                relationship_type=RelationshipType.READS,
-                execution_context_id=ctx.exec_ctx_id,
-                logic_condition=ctx.rung_raw_text,
-                source_platform="rockwell",
-                source_location=ctx.rung_loc,
-                confidence=ConfidenceLevel.MEDIUM,
-                platform_specific=_rel_meta(
-                    ctx,
-                    instruction,
-                    operand=op,
-                    extras={
-                        "operand_index": idx,
-                        "operand_role": "jsr_parameter",
-                        "gating_kind": "jsr_parameter",
-                    },
-                ),
-            )
-        )
+    _emit_jsr_parameter_edges(
+        source_id=ctx.rung_id,
+        source_loc=ctx.rung_loc,
+        logic_condition=ctx.rung_raw_text or "",
+        exec_ctx_id=ctx.exec_ctx_id,
+        controller_name=ctx.controller_name,
+        program_name=ctx.program_name,
+        target_routine_name=target_operand,
+        param_operands=list(instruction.operands[1:]),
+        tag_index=ctx.tag_index,
+        routine_param_index=ctx.routine_param_index,
+        control_objects=ctx.control_objects,
+        relationships=ctx.relationships,
+        platform_base=_rel_meta(ctx, instruction, extras={"operand_role": "jsr_parameter"}),
+        expression_reads=False,
+        rel_meta_fn=lambda operand, extras: _rel_meta(
+            ctx, instruction, operand=operand, extras=extras
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2715,6 +3531,342 @@ def _handle_routine_call(
 # call site (EnableIn is driven by the rung condition; EnableOut is the
 # rung-out state). Compared upper-case.
 _AOI_SYSTEM_PARAMS = frozenset({"ENABLEIN", "ENABLEOUT"})
+
+
+def _resolve_call_param_mapping(
+    param_defs: list[AOIParameter],
+    bound_operands: list[str],
+    *,
+    exclude_system_params: bool,
+) -> tuple[Optional[list[AOIParameter]], Optional[str]]:
+    """Map positional operands to declared parameters when counts align."""
+
+    params_all = [
+        p
+        for p in param_defs
+        if not exclude_system_params or p.name.upper() not in _AOI_SYSTEM_PARAMS
+    ]
+    params_required = [p for p in params_all if p.required]
+    n_args = len(bound_operands)
+    if n_args == len(params_required):
+        return params_required, "required_params"
+    if n_args == len(params_all):
+        return params_all, "all_visible_params"
+    return None, None
+
+
+def _emit_bound_parameter_edges(
+    *,
+    source_id: str,
+    source_loc: str,
+    logic_condition: str,
+    exec_ctx_id: str,
+    controller_name: str,
+    program_name: str,
+    tag_index: dict[tuple[str, str], str],
+    control_objects: list[ControlObject],
+    relationships: list[Relationship],
+    mapped_params: list[AOIParameter],
+    bound_operands: list[str],
+    platform_base: dict,
+    binding_kind: str,
+    block_name: Optional[str] = None,
+    expression_reads: bool = False,
+    rel_meta_fn=None,
+) -> None:
+    """Emit READS / WRITES per parameter Usage for aligned call bindings."""
+
+    for idx, (param, operand) in enumerate(
+        zip(mapped_params, bound_operands), start=1
+    ):
+        operand = (operand or "").strip()
+        if not operand:
+            continue
+        rel_types = _aoi_usage_to_relationships(param.usage)
+        if not rel_types:
+            continue
+
+        extras_base = {
+            **platform_base,
+            "parameter_name": param.name,
+            "parameter_usage": param.usage,
+            "parameter_data_type": param.data_type,
+            "operand_index": idx,
+            "gating_kind": binding_kind,
+        }
+        if block_name:
+            extras_base["aoi_name"] = block_name
+
+        if _looks_like_tag_operand(operand):
+            target_id = _resolve_tag_id_or_stub(
+                operand=operand,
+                controller_name=controller_name,
+                program_name=program_name,
+                tag_index=tag_index,
+                control_objects=control_objects,
+            )
+            for rel_type in rel_types:
+                write_behavior = (
+                    WriteBehaviorType.MOVES_VALUE
+                    if rel_type == RelationshipType.WRITES
+                    else None
+                )
+                ps = {**extras_base, "operand": operand}
+                if rel_meta_fn is not None:
+                    ps = rel_meta_fn(operand, extras_base)
+                relationships.append(
+                    Relationship(
+                        source_id=source_id,
+                        target_id=target_id,
+                        relationship_type=rel_type,
+                        write_behavior=write_behavior,
+                        execution_context_id=exec_ctx_id,
+                        logic_condition=logic_condition,
+                        source_platform="rockwell",
+                        source_location=source_loc,
+                        confidence=ConfidenceLevel.HIGH,
+                        platform_specific=ps,
+                    )
+                )
+            continue
+
+        if not expression_reads or RelationshipType.READS not in rel_types:
+            continue
+        plans = _plan_st_reads_from_invocation_parameter(operand)
+        if not plans:
+            continue
+        rel_count_before = len(relationships)
+        _emit_st_reads_from_plans(
+            plans=plans,
+            condition_source="call_parameter",
+            statement_id=source_id,
+            statement_loc=source_loc,
+            statement_type=binding_kind,
+            logic_condition=logic_condition,
+            exec_ctx_id=exec_ctx_id,
+            controller_name=controller_name,
+            program_name=program_name,
+            tag_index=tag_index,
+            control_objects=control_objects,
+            relationships=relationships,
+        )
+        for rel in relationships[rel_count_before:]:
+            if rel.relationship_type != RelationshipType.READS:
+                continue
+            ps = dict(rel.platform_specific or {})
+            ps.update(extras_base)
+            rel.platform_specific = ps
+
+
+def _emit_jsr_parameter_edges(
+    *,
+    source_id: str,
+    source_loc: str,
+    logic_condition: str,
+    exec_ctx_id: str,
+    controller_name: str,
+    program_name: str,
+    target_routine_name: str,
+    param_operands: list[str],
+    tag_index: dict[tuple[str, str], str],
+    routine_param_index: dict[tuple[str, str, str], list[AOIParameter]],
+    control_objects: list[ControlObject],
+    relationships: list[Relationship],
+    platform_base: dict,
+    expression_reads: bool = False,
+    rel_meta_fn=None,
+) -> None:
+    """Map JSR operands to subroutine parameters when the interface is known."""
+
+    key = (controller_name, program_name, target_routine_name)
+    routine_params = routine_param_index.get(key)
+    if routine_params:
+        mapped, basis = _resolve_call_param_mapping(
+            routine_params,
+            param_operands,
+            exclude_system_params=False,
+        )
+        if mapped is not None:
+            base = dict(platform_base)
+            base["jsr_binding_basis"] = basis
+            base["target_routine"] = target_routine_name
+            _emit_bound_parameter_edges(
+                source_id=source_id,
+                source_loc=source_loc,
+                logic_condition=logic_condition,
+                exec_ctx_id=exec_ctx_id,
+                controller_name=controller_name,
+                program_name=program_name,
+                tag_index=tag_index,
+                control_objects=control_objects,
+                relationships=relationships,
+                mapped_params=mapped,
+                bound_operands=param_operands,
+                platform_base=base,
+                binding_kind="jsr_parameter",
+                expression_reads=expression_reads,
+                rel_meta_fn=rel_meta_fn,
+            )
+            return
+
+    for idx, op in enumerate(param_operands, start=1):
+        if not op or not _looks_like_tag_operand(op):
+            continue
+        tag_id = _resolve_tag_id_or_stub(
+            operand=op,
+            controller_name=controller_name,
+            program_name=program_name,
+            tag_index=tag_index,
+            control_objects=control_objects,
+        )
+        ps = dict(platform_base)
+        ps["operand_index"] = idx
+        ps["operand"] = op
+        ps["gating_kind"] = "jsr_parameter"
+        ps["jsr_binding_status"] = "interface_unknown"
+        if rel_meta_fn is not None:
+            ps = rel_meta_fn(op, ps)
+        relationships.append(
+            Relationship(
+                source_id=source_id,
+                target_id=tag_id,
+                relationship_type=RelationshipType.READS,
+                execution_context_id=exec_ctx_id,
+                logic_condition=logic_condition,
+                source_platform="rockwell",
+                source_location=source_loc,
+                confidence=ConfidenceLevel.MEDIUM,
+                platform_specific=ps,
+            )
+        )
+
+
+def _emit_st_aoi_invocation_edges(
+    *,
+    block: STFbInvocation,
+    statement_id: str,
+    statement_obj: ControlObject,
+    statement_loc: str,
+    controller_name: str,
+    program_name: str,
+    exec_ctx_id: str,
+    tag_index: dict[tuple[str, str], str],
+    aoi_def: AddOnInstructionDef,
+    aoi_body_routine_ids: dict[str, str],
+    control_objects: list[ControlObject],
+    relationships: list[Relationship],
+) -> None:
+    """Resolve an ST AOI call into a universal LogicBlock (Phase 2 parity)."""
+
+    statement_obj.object_type = ControlObjectType.FUNCTION_BLOCK
+    attrs = dict(statement_obj.attributes or {})
+    attrs["is_aoi_instance"] = True
+    attrs["aoi_name"] = aoi_def.name
+    attrs["block_kind"] = "add_on_instruction"
+    attrs["semantic_family"] = _InstructionFamily.LOGIC_BLOCK.value
+    attrs["semantic_implemented"] = True
+    statement_obj.attributes = attrs
+    ps = dict(statement_obj.platform_specific or {})
+    ps["aoi_name"] = aoi_def.name
+    ps["aoi_revision"] = aoi_def.revision
+    ps["callee_name"] = block.callee_name
+    ps["parameter_count"] = len(block.parameters)
+    statement_obj.platform_specific = ps
+
+    if not block.parameters:
+        return
+
+    backing_operand = block.parameters[0].strip()
+    if backing_operand and _looks_like_tag_operand(backing_operand):
+        backing_id = _resolve_tag_id_or_stub(
+            operand=backing_operand,
+            controller_name=controller_name,
+            program_name=program_name,
+            tag_index=tag_index,
+            control_objects=control_objects,
+        )
+        relationships.append(
+            Relationship(
+                source_id=statement_id,
+                target_id=backing_id,
+                relationship_type=RelationshipType.REFERENCES,
+                execution_context_id=exec_ctx_id,
+                logic_condition=block.raw_text,
+                source_platform="rockwell",
+                source_location=statement_loc,
+                confidence=ConfidenceLevel.HIGH,
+                platform_specific={
+                    "language": _ST_LANGUAGE_KEY,
+                    "aoi_name": aoi_def.name,
+                    "aoi_role": "backing_tag",
+                    "gating_kind": "aoi_backing",
+                    "operand": backing_operand,
+                },
+            )
+        )
+
+    bound_operands = [p.strip() for p in block.parameters[1:]]
+    mapped, basis = _resolve_call_param_mapping(
+        aoi_def.parameters,
+        bound_operands,
+        exclude_system_params=True,
+    )
+    if mapped is None:
+        ps = dict(statement_obj.platform_specific or {})
+        params_all = [
+            p
+            for p in aoi_def.parameters
+            if p.name.upper() not in _AOI_SYSTEM_PARAMS
+        ]
+        params_required = [p for p in params_all if p.required]
+        ps["aoi_binding_status"] = "operand_count_mismatch"
+        ps["aoi_arg_count"] = len(bound_operands)
+        ps["aoi_required_param_count"] = len(params_required)
+        ps["aoi_total_param_count"] = len(params_all)
+        statement_obj.platform_specific = ps
+        return
+
+    statement_obj.attributes["aoi_binding_basis"] = basis
+    _emit_bound_parameter_edges(
+        source_id=statement_id,
+        source_loc=statement_loc,
+        logic_condition=block.raw_text,
+        exec_ctx_id=exec_ctx_id,
+        controller_name=controller_name,
+        program_name=program_name,
+        tag_index=tag_index,
+        control_objects=control_objects,
+        relationships=relationships,
+        mapped_params=mapped,
+        bound_operands=bound_operands,
+        platform_base={
+            "language": _ST_LANGUAGE_KEY,
+            "statement_type": "fb_invocation",
+        },
+        binding_kind="aoi_parameter",
+        block_name=aoi_def.name,
+        expression_reads=True,
+    )
+
+    body_id = aoi_body_routine_ids.get(aoi_def.name.upper())
+    if body_id:
+        relationships.append(
+            Relationship(
+                source_id=statement_id,
+                target_id=body_id,
+                relationship_type=RelationshipType.CALLS,
+                execution_context_id=exec_ctx_id,
+                source_platform="rockwell",
+                source_location=statement_loc,
+                confidence=ConfidenceLevel.MEDIUM,
+                platform_specific={
+                    "language": _ST_LANGUAGE_KEY,
+                    "aoi_name": aoi_def.name,
+                    "calls_kind": "aoi_body",
+                    "callee_name": block.callee_name,
+                },
+            )
+        )
 
 
 def _aoi_usage_to_relationships(
@@ -2816,30 +3968,21 @@ def _handle_aoi_instance(
 
     # --- Determine the call-parameter ordering ----------------------------
     bound_operands = operands[1:]
-    n_args = len(bound_operands)
-
-    params_all = [
-        p for p in aoi_def.parameters
-        if p.name.upper() not in _AOI_SYSTEM_PARAMS
-    ]
-    params_required = [p for p in params_all if p.required]
-
-    mapped_params = None
-    binding_basis = None
-    if n_args == len(params_required):
-        mapped_params = params_required
-        binding_basis = "required_params"
-    elif n_args == len(params_all):
-        mapped_params = params_all
-        binding_basis = "all_visible_params"
+    mapped_params, binding_basis = _resolve_call_param_mapping(
+        aoi_def.parameters,
+        bound_operands,
+        exclude_system_params=True,
+    )
 
     if mapped_params is None:
-        # Operand count matches neither the Required-only nor the full
-        # call-parameter list. Do NOT guess a misaligned mapping; record
-        # the ambiguity so a controls engineer can review.
+        params_all = [
+            p for p in aoi_def.parameters
+            if p.name.upper() not in _AOI_SYSTEM_PARAMS
+        ]
+        params_required = [p for p in params_all if p.required]
         ps = dict(instr_obj.platform_specific or {})
         ps["aoi_binding_status"] = "operand_count_mismatch"
-        ps["aoi_arg_count"] = n_args
+        ps["aoi_arg_count"] = len(bound_operands)
         ps["aoi_required_param_count"] = len(params_required)
         ps["aoi_total_param_count"] = len(params_all)
         instr_obj.platform_specific = ps
@@ -2847,56 +3990,29 @@ def _handle_aoi_instance(
 
     instr_obj.attributes["aoi_binding_basis"] = binding_basis
 
-    # --- Bind operands -> parameters by position --------------------------
-    for idx, (param, operand) in enumerate(
-        zip(mapped_params, bound_operands), start=1
-    ):
-        if not operand or not _looks_like_tag_operand(operand):
-            # Literal / constant argument: nothing to wire, but keep going
-            # so later positional bindings stay aligned.
-            continue
-        rel_types = _aoi_usage_to_relationships(param.usage)
-        if not rel_types:
-            continue
-        target_id = _resolve_tag_id_or_stub(
+    _emit_bound_parameter_edges(
+        source_id=instr_id,
+        source_loc=ctx.rung_loc,
+        logic_condition=ctx.rung_raw_text or "",
+        exec_ctx_id=ctx.exec_ctx_id,
+        controller_name=ctx.controller_name,
+        program_name=ctx.program_name,
+        tag_index=ctx.tag_index,
+        control_objects=ctx.control_objects,
+        relationships=ctx.relationships,
+        mapped_params=mapped_params,
+        bound_operands=bound_operands,
+        platform_base={},
+        binding_kind="aoi_parameter",
+        block_name=aoi_def.name,
+        expression_reads=False,
+        rel_meta_fn=lambda operand, extras: _rel_meta(
+            ctx,
+            instruction,
             operand=operand,
-            controller_name=ctx.controller_name,
-            program_name=ctx.program_name,
-            tag_index=ctx.tag_index,
-            control_objects=ctx.control_objects,
-        )
-        for rel_type in rel_types:
-            write_behavior = (
-                WriteBehaviorType.MOVES_VALUE
-                if rel_type == RelationshipType.WRITES
-                else None
-            )
-            ctx.relationships.append(
-                Relationship(
-                    source_id=instr_id,
-                    target_id=target_id,
-                    relationship_type=rel_type,
-                    write_behavior=write_behavior,
-                    execution_context_id=ctx.exec_ctx_id,
-                    logic_condition=ctx.rung_raw_text,
-                    source_platform="rockwell",
-                    source_location=ctx.rung_loc,
-                    confidence=ConfidenceLevel.HIGH,
-                    platform_specific=_rel_meta(
-                        ctx,
-                        instruction,
-                        operand=operand,
-                        extras={
-                            "aoi_name": aoi_def.name,
-                            "parameter_name": param.name,
-                            "parameter_usage": param.usage,
-                            "parameter_data_type": param.data_type,
-                            "operand_index": idx,
-                            "gating_kind": "aoi_parameter",
-                        },
-                    ),
-                )
-            )
+            extras=extras,
+        ),
+    )
 
     # --- Optional: link the instance to its internal logic routine --------
     body_id = ctx.aoi_body_routine_ids.get(aoi_def.name.upper())
@@ -3832,6 +4948,14 @@ def _resolve_routine_id_or_stub(
     if key in routine_index:
         return routine_index[key]
 
+    cross_program = [
+        rid
+        for (c, p, n), rid in routine_index.items()
+        if c == controller_name and n == target_name and p != program_name
+    ]
+    if len(cross_program) == 1:
+        return cross_program[0]
+
     stub_id = (
         f"routine::{controller_name}/{program_name}/{target_name}"
         f"#unresolved"
@@ -3880,6 +5004,21 @@ def _build_routine_index(
                 index[key] = _routine_id(
                     controller.name, program.name, routine.name
                 )
+    return index
+
+
+def _build_routine_param_index(
+    parsed_project: ControlProject,
+) -> dict[tuple[str, str, str], list[AOIParameter]]:
+    """Map (controller, program, routine) -> declared subroutine parameters."""
+
+    index: dict[tuple[str, str, str], list[AOIParameter]] = {}
+    for controller in parsed_project.controllers:
+        for program in controller.programs:
+            for routine in program.routines:
+                if routine.parameters:
+                    key = (controller.name, program.name, routine.name)
+                    index[key] = list(routine.parameters)
     return index
 
 

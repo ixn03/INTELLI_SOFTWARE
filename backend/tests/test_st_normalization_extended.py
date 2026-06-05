@@ -26,6 +26,8 @@ if str(_BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(_BACKEND_ROOT))
 
 from app.models.control_model import (  # noqa: E402
+    AddOnInstructionDef,
+    AOIParameter,
     ControlController,
     ControlProgram,
     ControlProject,
@@ -33,6 +35,7 @@ from app.models.control_model import (  # noqa: E402
     ControlTag,
 )
 from app.models.reasoning import (  # noqa: E402
+    ControlObjectType,
     RelationshipType,
     WriteBehaviorType,
 )
@@ -43,10 +46,13 @@ from app.parsers.st_expression import (  # noqa: E402
 from app.parsers.structured_text import (  # noqa: E402
     parse_structured_text,
 )
+from app.parsers.st_arithmetic import parse_st_arithmetic_operands  # noqa: E402
 from app.parsers.structured_text_blocks import (  # noqa: E402
     STAssignment,
+    STFbInvocation,
     STIfBlock,
     STLoopBlock,
+    STCaseBlock,
     parse_structured_text_blocks,
 )
 from app.services.normalization_service import (  # noqa: E402
@@ -113,6 +119,14 @@ def _reads_to(rels, target_id):
     return [
         r for r in rels
         if r.relationship_type == RelationshipType.READS
+        and r.target_id == target_id
+    ]
+
+
+def _calls_to(rels, target_id):
+    return [
+        r for r in rels
+        if r.relationship_type == RelationshipType.CALLS
         and r.target_id == target_id
     ]
 
@@ -675,6 +689,403 @@ class STExpressionXorTests(unittest.TestCase):
         self.assertFalse(expr.too_complex)
         self.assertEqual(expr.gating_logic_type, "xor")
         self.assertEqual(len(expr.branches), 2)
+
+
+class STPhase4Tests(unittest.TestCase):
+    """Phase 4: loops, arithmetic RHS, FB invocations."""
+
+    def test_arithmetic_operands_from_simple_rhs(self) -> None:
+        arith = parse_st_arithmetic_operands("Counter + 1")
+        self.assertFalse(arith.too_complex)
+        self.assertEqual(arith.operand_tags, ["Counter"])
+
+    def test_arithmetic_assignment_emits_reads(self) -> None:
+        project = _make_project(
+            "Total := Base + Offset;",
+            ["Total", "Base", "Offset"],
+        )
+        output = normalize_l5x_project(project)
+        reads = _reads_to(output["relationships"], _tag_id("Base"))
+        reads += _reads_to(output["relationships"], _tag_id("Offset"))
+        self.assertEqual(len(reads), 2)
+        write = _writes_to(output["relationships"], _tag_id("Total"))[0]
+        self.assertEqual(
+            (write.platform_specific or {}).get("st_parse_status"),
+            "ok",
+        )
+
+    def test_tonr_invocation_emits_calls_and_reads(self) -> None:
+        blocks = parse_structured_text_blocks("TONR(Tmr);")
+        self.assertIsInstance(blocks[0], STFbInvocation)
+        project = _make_project("TONR(Tmr);", ["Tmr"])
+        output = normalize_l5x_project(project)
+        calls = [
+            r
+            for r in output["relationships"]
+            if r.relationship_type == RelationshipType.CALLS
+        ]
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(len(_reads_to(output["relationships"], _tag_id("Tmr"))), 1)
+
+    def test_jsr_invocation_calls_named_routine(self) -> None:
+        routine = ControlRoutine(
+            name="Sub",
+            language="structured_text",
+            instructions=[],
+            raw_logic="x := TRUE;",
+            metadata={"rockwell_type": "ST"},
+        )
+        caller = ControlRoutine(
+            name="Main",
+            language="structured_text",
+            instructions=parse_structured_text("JSR(Sub, 0);", "Main"),
+            raw_logic="JSR(Sub, 0);",
+            metadata={"rockwell_type": "ST"},
+        )
+        project = ControlProject(
+            project_name="PLC01",
+            source_file="jsr.L5X",
+            file_hash="jsr-hash",
+            controllers=[
+                ControlController(
+                    name="PLC01",
+                    platform="rockwell",
+                    controller_tags=[],
+                    programs=[
+                        ControlProgram(
+                            name="MainProgram",
+                            tags=[],
+                            routines=[caller, routine],
+                        )
+                    ],
+                )
+            ],
+        )
+        output = normalize_l5x_project(project)
+        routine_id = "routine::PLC01/MainProgram/Sub"
+        calls = _calls_to(output["relationships"], routine_id)
+        self.assertEqual(len(calls), 1)
+
+    def test_while_loop_condition_reads(self) -> None:
+        project = _make_project(
+            "WHILE Run AND Enabled DO Out := InVal; END_WHILE;",
+            ["Run", "Enabled", "Out", "InVal"],
+        )
+        output = normalize_l5x_project(project)
+        self.assertEqual(len(_reads_to(output["relationships"], _tag_id("Run"))), 1)
+        self.assertEqual(
+            len(_reads_to(output["relationships"], _tag_id("Enabled"))), 1
+        )
+        self.assertEqual(len(_writes_to(output["relationships"], _tag_id("Out"))), 1)
+
+    def test_for_loop_header_operand_reads(self) -> None:
+        blocks = parse_structured_text_blocks(
+            "FOR i := 0 TO Limit DO Counter := Counter + 1; END_FOR;"
+        )
+        loop = blocks[0]
+        self.assertIsInstance(loop, STLoopBlock)
+        assert isinstance(loop, STLoopBlock)
+        self.assertIn("i", loop.condition_operands)
+        self.assertIn("Limit", loop.condition_operands)
+
+
+class STPhase4Slice2Tests(unittest.TestCase):
+    """Phase 4 slice 2: JSR params, ST AOI binding, FOR metadata."""
+
+    def test_jsr_emits_typed_parameter_edges(self) -> None:
+        sub = ControlRoutine(
+            name="Sub",
+            language="structured_text",
+            instructions=[],
+            raw_logic="x := TRUE;",
+            parameters=[
+                AOIParameter(name="InVal", usage="Input", required=True),
+                AOIParameter(name="OutVal", usage="Output", required=True),
+            ],
+            metadata={"rockwell_type": "ST"},
+        )
+        caller = ControlRoutine(
+            name="Main",
+            language="structured_text",
+            instructions=parse_structured_text(
+                "JSR(Sub, SourceTag, DestTag);", "Main"
+            ),
+            raw_logic="JSR(Sub, SourceTag, DestTag);",
+            metadata={"rockwell_type": "ST"},
+        )
+        project = ControlProject(
+            project_name="PLC01",
+            source_file="jsr_params.L5X",
+            file_hash="jsr-params",
+            controllers=[
+                ControlController(
+                    name="PLC01",
+                    platform="rockwell",
+                    controller_tags=[],
+                    programs=[
+                        ControlProgram(
+                            name="MainProgram",
+                            tags=[
+                                ControlTag(
+                                    name=n,
+                                    data_type="BOOL",
+                                    scope="PRG",
+                                    platform_source="rockwell_l5x",
+                                )
+                                for n in ("SourceTag", "DestTag")
+                            ],
+                            routines=[caller, sub],
+                        )
+                    ],
+                )
+            ],
+        )
+        output = normalize_l5x_project(project)
+        reads = _reads_to(output["relationships"], _tag_id("SourceTag"))
+        writes = _writes_to(output["relationships"], _tag_id("DestTag"))
+        self.assertEqual(len(reads), 1)
+        self.assertEqual(len(writes), 1)
+        self.assertEqual(
+            (reads[0].platform_specific or {}).get("parameter_usage"), "Input"
+        )
+        self.assertEqual(
+            (writes[0].platform_specific or {}).get("parameter_usage"), "Output"
+        )
+
+    def test_st_aoi_invocation_becomes_function_block(self) -> None:
+        aoi = AddOnInstructionDef(
+            name="Pump",
+            logic_routine="Logic",
+            parameters=[
+                AOIParameter(name="EnableIn", usage="Input", required=False, visible=False),
+                AOIParameter(name="EnableOut", usage="Output", required=False, visible=False),
+                AOIParameter(name="Start", usage="Input", required=True),
+                AOIParameter(name="Run", usage="Output", required=True),
+            ],
+        )
+        raw = "Pump(Pump_01, Start_PB, Run_Out);"
+        routine = ControlRoutine(
+            name="STExt",
+            language="structured_text",
+            instructions=parse_structured_text(raw, "STExt"),
+            raw_logic=raw,
+            metadata={"rockwell_type": "ST"},
+        )
+        project = ControlProject(
+            project_name="PLC01",
+            controllers=[
+                ControlController(
+                    name="PLC01",
+                    platform="rockwell",
+                    add_on_instruction_defs=[aoi],
+                    programs=[
+                        ControlProgram(
+                            name="MainProgram",
+                            tags=[
+                                ControlTag(
+                                    name=n,
+                                    data_type="BOOL",
+                                    scope="PRG",
+                                    platform_source="rockwell_l5x",
+                                )
+                                for n in ("Pump_01", "Start_PB", "Run_Out")
+                            ],
+                            routines=[routine],
+                        )
+                    ],
+                )
+            ],
+        )
+        output = normalize_l5x_project(project)
+        fbs = [
+            o
+            for o in output["control_objects"]
+            if o.object_type == ControlObjectType.FUNCTION_BLOCK
+        ]
+        self.assertEqual(len(fbs), 1)
+        self.assertEqual(fbs[0].attributes.get("aoi_name"), "Pump")
+        reads = _reads_to(output["relationships"], _tag_id("Start_PB"))
+        writes = _writes_to(output["relationships"], _tag_id("Run_Out"))
+        self.assertEqual(len(reads), 1)
+        self.assertEqual(len(writes), 1)
+
+    def test_for_loop_metadata_on_statement(self) -> None:
+        project = _make_project(
+            "FOR i := 0 TO Limit BY 1 DO Counter := Counter + 1; END_FOR;",
+            ["i", "Limit", "Counter"],
+        )
+        output = normalize_l5x_project(project)
+        stmts = [
+            o
+            for o in output["control_objects"]
+            if (o.platform_specific or {}).get("statement_type") == "loop_for"
+        ]
+        self.assertEqual(len(stmts), 1)
+        for_loop = (stmts[0].platform_specific or {}).get("for_loop") or {}
+        self.assertEqual(for_loop.get("loop_var"), "i")
+        self.assertEqual(for_loop.get("start"), "0")
+        self.assertEqual(for_loop.get("end"), "Limit")
+        self.assertEqual(for_loop.get("step"), "1")
+        self.assertIn("i from 0 to Limit", for_loop.get("display", ""))
+
+
+class STPhase4Slice3Tests(unittest.TestCase):
+    """Phase 4 slice 3: nested IF, function RHS, RETURN, cross-program JSR."""
+
+    def test_nested_if_inside_if_body_parses(self) -> None:
+        raw = (
+            "IF ResetPB THEN\n"
+            "    Faults.Ratio := 0;\n"
+            "    IF EStop_NC THEN Faults.EStop := 0; END_IF;\n"
+            "END_IF;"
+        )
+        blocks = parse_structured_text_blocks(raw)
+        self.assertEqual(len(blocks), 1)
+        outer = blocks[0]
+        self.assertIsInstance(outer, STIfBlock)
+        assert isinstance(outer, STIfBlock)
+        self.assertEqual(len(outer.then_assignments), 1)
+        self.assertEqual(len(outer.then_nested_ifs), 1)
+        inner = outer.then_nested_ifs[0]
+        self.assertEqual(inner.then_assignments[0].target, "Faults.EStop")
+
+    def test_nested_if_in_case_branch_parses(self) -> None:
+        raw = (
+            "CASE eState OF\n"
+            "    0:\n"
+            "        IF StartPB THEN eState := 1; END_IF;\n"
+            "END_CASE;"
+        )
+        blocks = parse_structured_text_blocks(raw)
+        case = blocks[0]
+        self.assertIsInstance(case, STCaseBlock)
+        assert isinstance(case, STCaseBlock)
+        self.assertEqual(len(case.branches[0].nested_ifs), 1)
+
+    def test_nested_if_then_write_and_gates_parent_and_child(self) -> None:
+        raw = (
+            "IF ResetPB THEN\n"
+            "    Faults.Ratio := 0;\n"
+            "    IF EStop_NC THEN Faults.EStop := 0; END_IF;\n"
+            "END_IF;"
+        )
+        project = _make_project(raw, ["ResetPB", "EStop_NC", "Faults.Ratio", "Faults.EStop"])
+        output = normalize_l5x_project(project)
+        writes = _writes_to(output["relationships"], _tag_id("Faults.EStop"))
+        self.assertEqual(len(writes), 1)
+        meta = writes[0].platform_specific or {}
+        extracted = meta.get("extracted_conditions") or []
+        if_sources = [e for e in extracted if e.get("source") == "if_condition"]
+        tags = {e["tag"] for e in if_sources}
+        self.assertIn("ResetPB", tags)
+        self.assertIn("EStop_NC", tags)
+        self.assertEqual(meta.get("gating_logic_type"), "and")
+
+    def test_nested_if_lioh_r01_safety_estop_clear(self) -> None:
+        """LiOH R01_Safety: nested EStop clear requires ResetPB AND EStop_NC."""
+        raw = (
+            "IF ResetPB THEN\n"
+            "    Faults.Ratio := 0;\n"
+            "    IF EStop_NC THEN Faults.EStop := 0; END_IF;\n"
+            "END_IF;"
+        )
+        project = _make_project(
+            raw,
+            ["ResetPB", "EStop_NC", "Faults.Ratio", "Faults.EStop"],
+        )
+        output = normalize_l5x_project(project)
+        outer_writes = _writes_to(output["relationships"], _tag_id("Faults.Ratio"))
+        inner_writes = _writes_to(output["relationships"], _tag_id("Faults.EStop"))
+        self.assertEqual(len(outer_writes), 1)
+        self.assertEqual(len(inner_writes), 1)
+        outer_tags = {
+            e["tag"]
+            for e in (outer_writes[0].platform_specific or {}).get(
+                "extracted_conditions", []
+            )
+            if e.get("source") == "if_condition"
+        }
+        inner_tags = {
+            e["tag"]
+            for e in (inner_writes[0].platform_specific or {}).get(
+                "extracted_conditions", []
+            )
+            if e.get("source") == "if_condition"
+        }
+        self.assertEqual(outer_tags, {"ResetPB"})
+        self.assertEqual(inner_tags, {"ResetPB", "EStop_NC"})
+
+    def test_pure_function_call_rhs_reads_operand(self) -> None:
+        project = _make_project("Out := SQRT(A);", ["Out", "A"])
+        output = normalize_l5x_project(project)
+        reads = _reads_to(output["relationships"], _tag_id("A"))
+        self.assertEqual(len(reads), 1)
+        writes = _writes_to(output["relationships"], _tag_id("Out"))
+        self.assertEqual(
+            (writes[0].platform_specific or {}).get("st_parse_status"), "ok"
+        )
+
+    def test_return_with_value_emits_reads(self) -> None:
+        project = _make_project("RETURN Result;", ["Result"])
+        output = normalize_l5x_project(project)
+        stmts = [
+            o
+            for o in output["control_objects"]
+            if (o.platform_specific or {}).get("statement_type") == "return"
+        ]
+        self.assertEqual(len(stmts), 1)
+        reads = _reads_to(output["relationships"], _tag_id("Result"))
+        self.assertEqual(len(reads), 1)
+
+    def test_cross_program_jsr_resolves_unique_routine(self) -> None:
+        sub = ControlRoutine(
+            name="Sub",
+            language="structured_text",
+            instructions=[],
+            raw_logic="x := TRUE;",
+            metadata={"rockwell_type": "ST"},
+        )
+        caller = ControlRoutine(
+            name="Main",
+            language="structured_text",
+            instructions=parse_structured_text("JSR(Sub, 0);", "Main"),
+            raw_logic="JSR(Sub, 0);",
+            metadata={"rockwell_type": "ST"},
+        )
+        other = ControlProgram(
+            name="OtherProgram",
+            tags=[],
+            routines=[sub],
+        )
+        project = ControlProject(
+            project_name="PLC01",
+            source_file="cross_jsr.L5X",
+            file_hash="cross-jsr",
+            controllers=[
+                ControlController(
+                    name="PLC01",
+                    platform="rockwell",
+                    controller_tags=[],
+                    programs=[
+                        ControlProgram(
+                            name="MainProgram",
+                            tags=[],
+                            routines=[caller],
+                        ),
+                        other,
+                    ],
+                )
+            ],
+        )
+        output = normalize_l5x_project(project)
+        calls = [
+            r
+            for r in output["relationships"]
+            if r.relationship_type == RelationshipType.CALLS
+            and "Sub" in r.target_id
+        ]
+        self.assertEqual(len(calls), 1)
+        self.assertNotIn("#unresolved", calls[0].target_id)
 
 
 if __name__ == "__main__":
