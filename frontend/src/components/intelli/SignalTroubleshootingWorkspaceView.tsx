@@ -41,13 +41,12 @@ export function SignalTroubleshootingWorkspaceView({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
-      <LevelOneAnswer
-        targetName={targetName}
-        workspace={workspace}
-        unified={unified}
-      />
-
-      {unified ? <LevelTwoVerification unified={unified} /> : null}
+      <SignalHeader targetName={targetName} workspace={workspace} unified={unified} />
+      <WhatControlsSection workspace={workspace} unified={unified} />
+      <WhatThisControlsSection workspace={workspace} unified={unified} />
+      <CurrentStateSection workspace={workspace} />
+      <EvidenceSourcesSection workspace={workspace} unified={unified} />
+      <KnowledgeSection workspace={workspace} />
 
       <details className="rounded-lg border border-zinc-800/80 bg-zinc-950/55">
         <summary className="cursor-pointer px-5 py-3 text-sm font-medium text-zinc-200">
@@ -59,7 +58,7 @@ export function SignalTroubleshootingWorkspaceView({
   );
 }
 
-function LevelOneAnswer({
+function SignalHeader({
   targetName,
   workspace,
   unified,
@@ -71,165 +70,193 @@ function LevelOneAnswer({
   const confidence =
     unified?.confidence_summary.confidence ??
     workspace.confidence_summary.confidence;
-  const answer =
-    unified?.summary.answer ?? workspace.deterministic_explanation;
-
-  const controls =
-    unified?.what_controls_this_signal ??
-    workspace.upstream_required_conditions.map((item) => ({
-      signal_name: item.target_name,
-      source_provenance: {
-        originating_language: "ladder" as const,
-        routine: null,
-        rung_number: null,
-        instruction_type: item.instruction_type,
-        source_location: item.source_location,
-      },
-      confidence: item.confidence,
-    }));
-
-  const writers =
-    unified?.who_writes_this_signal ??
-    workspace.writer_rungs.map((item) => ({
-      writer_type: "ladder_rung",
-      signal_name: item.target_name,
-      source_provenance: {
-        originating_language: "ladder" as const,
-        routine: item.source_name,
-        rung_number: null,
-        instruction_type: item.instruction_type,
-        source_location: item.source_location,
-      },
-      condition_signal_names: item.condition_signal_names,
-      confidence: item.confidence,
-      write_behavior: item.write_behavior,
-    }));
-
-  const readers =
-    unified?.where_is_it_used ??
-    workspace.downstream_readers.map((item) => ({
-      signal_name: item.target_name,
-      source_provenance: {
-        originating_language: "ladder" as const,
-        routine: item.source_name,
-        source_location: item.source_location,
-        instruction_type: item.instruction_type,
-      },
-      confidence: item.confidence,
-    }));
-
-  const unknowns =
-    unified?.unknowns ??
-    workspace.unknown_direction_blocks.map((item) => ({
-      message:
-        "Referenced by unknown-direction block. INTELLI preserved the relationship but did not infer causality.",
-      reference_source_name: item.source_name,
-      source_provenance: { source_location: item.source_location },
-      confidence: item.confidence,
-    }));
+  const scope = workspace.resolved_scope;
 
   return (
     <section className="rounded-lg border border-zinc-800/80 bg-zinc-950/55">
-      <div className="border-b border-zinc-800/70 px-5 py-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500">
-              Signal troubleshooting
-            </p>
-            <h2 className="mt-1 text-lg font-semibold text-white">
-              {targetName}
-            </h2>
-          </div>
-          <ConfidencePill value={confidence} />
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-zinc-800/70 px-5 py-4">
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500">
+            Signal intelligence
+          </p>
+          <h2 className="mt-1 text-lg font-semibold text-white">{targetName}</h2>
+          <p className="mt-2 text-sm leading-6 text-zinc-300">
+            {unified?.summary.answer ?? workspace.deterministic_explanation}
+          </p>
         </div>
-        <p className="mt-3 text-sm leading-6 text-zinc-300">{answer}</p>
+        <ConfidencePill value={confidence} />
       </div>
-
-      <div className="grid gap-4 p-5 lg:grid-cols-2 xl:grid-cols-4">
-        <AnswerColumn
-          title="What controls this signal?"
-          empty="No upstream required conditions were found."
-          count={controls.length}
-        >
-          {controls.map((item, idx) => (
-            <MiniCard
-              key={`control-${idx}`}
-              title={item.signal_name ?? "Unknown signal"}
-              subtitle={formatProvenance(item.source_provenance)}
-              confidence={item.confidence}
-            />
-          ))}
-        </AnswerColumn>
-
-        <AnswerColumn
-          title="Written by"
-          empty="No deterministic writer was found."
-          count={writers.length}
-        >
-          {writers.map((item, idx) => (
-            <MiniCard
-              key={`writer-${idx}`}
-              title={item.signal_name ?? targetName}
-              subtitle={formatWriterSubtitle(item)}
-              confidence={item.confidence}
-              badges={[
-                item.write_behavior,
-                item.source_provenance?.instruction_type,
-              ].filter(Boolean)}
-            />
-          ))}
-        </AnswerColumn>
-
-        <AnswerColumn
-          title="Where is it used?"
-          empty="No downstream readers were found."
-          count={readers.length}
-        >
-          {readers.map((item, idx) => (
-            <MiniCard
-              key={`reader-${idx}`}
-              title={item.signal_name ?? targetName}
-              subtitle={formatProvenance(item.source_provenance)}
-              confidence={item.confidence}
-            />
-          ))}
-        </AnswerColumn>
-
-        <AnswerColumn
-          title="Unknowns"
-          empty="No direction-unknown references were found."
-          count={unknowns.length}
-          warning
-        >
-          {unknowns.map((item, idx) => (
-            <MiniCard
-              key={`unknown-${idx}`}
-              title={item.reference_source_name ?? "Unknown reference"}
-              subtitle={item.message}
-              confidence={item.confidence}
-              warning
-            />
-          ))}
-        </AnswerColumn>
-      </div>
-
-      {unified ? (
-        <div className="border-t border-zinc-800/70 px-5 py-3">
-          <EvidenceSourceChips counts={unified.evidence_sources} />
+      {scope ? (
+        <div className="flex flex-wrap gap-2 px-5 py-3">
+          <Badge tone="outline">Controller: {scope.controller ?? "unknown"}</Badge>
+          <Badge tone="outline">Program: {scope.program ?? "unknown"}</Badge>
+          <Badge tone={scope.duplicate_name_status === "duplicates_found" ? "warning" : "neutral"}>
+            {scope.duplicate_name_status.replaceAll("_", " ")}
+          </Badge>
         </div>
       ) : null}
+    </section>
+  );
+}
 
-      <div className="border-t border-zinc-800/70 px-5 py-4">
-        <MissingEvidencePanel
-          missing={
-            unified?.confidence_summary.missing_evidence ??
-            workspace.confidence_summary.missing_evidence
-          }
-          warnings={
-            unified?.confidence_summary.warnings ??
-            workspace.confidence_summary.warnings
-          }
-        />
+function WhatControlsSection({
+  workspace,
+  unified,
+}: {
+  workspace: SignalTroubleshootingWorkspace;
+  unified: UnifiedSignalEvidence | null;
+}) {
+  const controls =
+    workspace.what_controls_this_signal?.upstream_required_conditions ??
+    workspace.upstream_required_conditions;
+  const unifiedControls = unified?.what_controls_this_signal ?? [];
+  const controlCount = controls.length || unifiedControls.length;
+  const dependencies =
+    workspace.what_controls_this_signal?.upstream_dependencies ?? [];
+  const unknowns =
+    workspace.what_controls_this_signal?.unknown_direction_references ??
+    workspace.unknown_direction_blocks;
+  const writers = workspace.who_writes_this_signal ?? {
+    ladder: workspace.writer_rungs,
+    fbd: [],
+    aoi: [],
+    structured_text: [],
+    sfc: [],
+    unknown: [],
+  };
+
+  return (
+    <section className="rounded-lg border border-zinc-800/80 bg-zinc-950/55">
+      <SectionTitle title="What controls this?" detail="Upstream permissives, interlocks, writer conditions, and direction-unknown references are separated." />
+      <div className="grid gap-4 p-5 lg:grid-cols-2 xl:grid-cols-4">
+        <AnswerColumn title="Upstream required conditions" empty="No deterministic upstream conditions were found." count={controlCount}>
+          {controls.length
+            ? controls.map((item) => <EvidenceMini key={item.metadata.relationship_id ?? `${item.source_id}-${item.target_id}`} item={item} />)
+            : unifiedControls.map((item, idx) => (
+                <MiniCard
+                  key={`unified-control-${idx}`}
+                  title={item.signal_name ?? "Unknown signal"}
+                  subtitle={formatProvenance(item.source_provenance)}
+                  confidence={item.confidence}
+                />
+              ))}
+        </AnswerColumn>
+        <AnswerColumn title="Upstream dependencies" empty="No additional upstream dependency edges were found." count={dependencies.length}>
+          {dependencies.map((item) => <EvidenceMini key={item.metadata.relationship_id ?? `${item.source_id}-${item.target_id}`} item={item} />)}
+        </AnswerColumn>
+        <AnswerColumn title="Writer conditions" empty="No writer conditions were found." count={controlCount}>
+          {controls.length
+            ? controls.map((item) => <EvidenceMini key={`writer-condition-${item.metadata.relationship_id ?? item.target_id}`} item={item} />)
+            : unifiedControls.map((item, idx) => (
+                <MiniCard
+                  key={`unified-writer-condition-${idx}`}
+                  title={item.signal_name ?? "Unknown signal"}
+                  subtitle={formatProvenance(item.source_provenance)}
+                  confidence={item.confidence}
+                />
+              ))}
+        </AnswerColumn>
+        <AnswerColumn title="Unknown-direction references" empty="No unknown-direction references were found." count={unknowns.length} warning>
+          {unknowns.map((item) => <EvidenceMini key={item.metadata.relationship_id ?? item.source_id} item={item} warning />)}
+        </AnswerColumn>
+      </div>
+      <div className="border-t border-zinc-800/70 px-5 py-3">
+        <EvidenceSourceChips counts={unified?.evidence_sources ?? fallbackEvidenceCounts(writers)} />
+      </div>
+    </section>
+  );
+}
+
+function WhatThisControlsSection({
+  workspace,
+}: {
+  workspace: SignalTroubleshootingWorkspace;
+  unified: UnifiedSignalEvidence | null;
+}) {
+  const impact = workspace.what_this_signal_controls;
+  const readers = impact?.downstream_readers ?? workspace.downstream_readers;
+  const influenced = impact?.downstream_writes_influenced ?? [];
+  const fbd = impact?.downstream_fbd_blocks ?? [];
+  const st = impact?.downstream_st_statements ?? [];
+
+  return (
+    <section className="rounded-lg border border-zinc-800/80 bg-zinc-950/55">
+      <SectionTitle title="What does this control?" detail="Downstream readers and writes influenced by this signal through shared routines or blocks." />
+      <div className="grid gap-4 p-5 lg:grid-cols-2 xl:grid-cols-4">
+        <AnswerColumn title="Downstream readers" empty="No downstream readers were found." count={readers.length}>
+          {readers.map((item) => <EvidenceMini key={item.metadata.relationship_id ?? item.source_id} item={item} />)}
+        </AnswerColumn>
+        <AnswerColumn title="Writes influenced" empty="No downstream writes were influenced by this signal in the normalized graph." count={influenced.length}>
+          {influenced.map((item) => <EvidenceMini key={item.metadata.relationship_id ?? item.target_id} item={item} />)}
+        </AnswerColumn>
+        <AnswerColumn title="FBD/AOI blocks" empty="No downstream FBD or AOI blocks were found." count={fbd.length + (impact?.downstream_aoi_blocks.length ?? 0)}>
+          {[...fbd, ...(impact?.downstream_aoi_blocks ?? [])].map((item) => <EvidenceMini key={item.metadata.relationship_id ?? item.source_id} item={item} />)}
+        </AnswerColumn>
+        <AnswerColumn title="ST statements" empty="No downstream ST statements were found." count={st.length}>
+          {st.map((item) => <EvidenceMini key={item.metadata.relationship_id ?? item.source_id} item={item} />)}
+        </AnswerColumn>
+      </div>
+    </section>
+  );
+}
+
+function CurrentStateSection({ workspace }: { workspace: SignalTroubleshootingWorkspace }) {
+  const state = workspace.current_state_explanation;
+  return (
+    <section className="rounded-lg border border-zinc-800/80 bg-zinc-950/55">
+      <SectionTitle title="Current state explanation" detail="Live values are used only when they are supplied; missing live data is reported explicitly." />
+      <div className="grid gap-4 p-5 lg:grid-cols-3">
+        <StatusCard title="Status" value={state?.status?.replaceAll("_", " ") ?? "live data missing"} />
+        <AnswerColumn title="Blocking conditions" empty="No blocking live conditions are known." count={state?.blocking_conditions.length ?? 0} warning>
+          {(state?.blocking_conditions ?? []).map((item, idx) => <LiveValueMini key={`blocking-${idx}`} item={item} warning />)}
+        </AnswerColumn>
+        <AnswerColumn title="Satisfied conditions" empty="No satisfied live conditions are known." count={state?.satisfied_conditions.length ?? 0}>
+          {(state?.satisfied_conditions ?? []).map((item, idx) => <LiveValueMini key={`satisfied-${idx}`} item={item} />)}
+        </AnswerColumn>
+      </div>
+    </section>
+  );
+}
+
+function EvidenceSourcesSection({
+  workspace,
+  unified,
+}: {
+  workspace: SignalTroubleshootingWorkspace;
+  unified: UnifiedSignalEvidence | null;
+}) {
+  const provenance = workspace.where_evidence_comes_from ?? [];
+  return (
+    <section className="rounded-lg border border-zinc-800/80 bg-zinc-950/55">
+      <SectionTitle title="Evidence sources" detail="Ladder, FBD, AOI, ST, SFC, and unknown provenance for every relationship INTELLI used." />
+      <div className="space-y-3 p-5">
+        {unified ? <LevelTwoVerification unified={unified} /> : null}
+        <AnswerColumn title="Relationship provenance" empty="No relationship provenance is available." count={provenance.length}>
+          {provenance.map((item) => (
+            <MiniCard
+              key={item.relationship_id}
+              title={`${item.language.toUpperCase()} ${item.relationship_type}`}
+              subtitle={[item.routine, item.rung != null ? `Rung ${item.rung}` : null, item.block, item.pin ? `Pin ${item.pin}` : null, item.statement ? `Statement ${item.statement}` : null].filter(Boolean).join(" · ") || item.source_location}
+              confidence={item.confidence}
+              badges={[item.deterministic ? "deterministic" : "direction unknown"]}
+              warning={!item.deterministic}
+            />
+          ))}
+        </AnswerColumn>
+      </div>
+    </section>
+  );
+}
+
+function KnowledgeSection({ workspace }: { workspace: SignalTroubleshootingWorkspace }) {
+  const context = workspace.knowledge_context;
+  return (
+    <section className="rounded-lg border border-zinc-800/80 bg-zinc-950/55">
+      <SectionTitle title="Engineer/documentation knowledge" detail="Engineer notes and documentation facts supplement deterministic logic; they do not override parsed evidence." />
+      <div className="grid gap-4 p-5 lg:grid-cols-3">
+        <KnowledgeBucket title="Engineer notes" items={context?.engineer_notes ?? []} />
+        <KnowledgeBucket title="Control narrative facts" items={context?.control_narrative_facts ?? []} />
+        <KnowledgeBucket title="Documentation facts" items={context?.documentation_facts ?? []} />
       </div>
     </section>
   );
@@ -467,6 +494,97 @@ function FBDEvidenceCard({ item }: { item: FBDEvidenceGroup }) {
   );
 }
 
+function SectionTitle({ title, detail }: { title: string; detail: string }) {
+  return (
+    <div className="border-b border-zinc-800/70 px-5 py-4">
+      <h3 className="text-base font-semibold text-white">{title}</h3>
+      <p className="mt-1 text-sm leading-6 text-zinc-400">{detail}</p>
+    </div>
+  );
+}
+
+function EvidenceMini({
+  item,
+  warning = false,
+}: {
+  item: SignalTroubleshootingWorkspace["writer_rungs"][number];
+  warning?: boolean;
+}) {
+  return (
+    <MiniCard
+      title={item.target_name ?? item.source_name ?? "Unknown signal"}
+      subtitle={
+        formatWriterSubtitle({
+          source_provenance: {
+            routine: item.source_name,
+            instruction_type: item.instruction_type,
+            source_location: item.source_location,
+          },
+          condition_signal_names: item.condition_signal_names,
+        }) || formatEvidenceItem(item)
+      }
+      confidence={item.confidence}
+      badges={[item.relationship_type, item.instruction_type, item.write_behavior]}
+      warning={warning}
+    />
+  );
+}
+
+function LiveValueMini({ item, warning = false }: { item: unknown; warning?: boolean }) {
+  const value = item as {
+    signal_name?: string | null;
+    signal_id?: string;
+    value?: unknown;
+    timestamp?: string | null;
+  };
+  return (
+    <MiniCard
+      title={value.signal_name ?? value.signal_id ?? "Unknown signal"}
+      subtitle={`Value: ${String(value.value)}${value.timestamp ? ` · ${value.timestamp}` : ""}`}
+      warning={warning}
+    />
+  );
+}
+
+function StatusCard({ title, value }: { title: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-zinc-800/80 bg-zinc-900/35 p-4">
+      <h3 className="text-sm font-semibold text-zinc-100">{title}</h3>
+      <p className="mt-2 text-sm text-zinc-300">{value}</p>
+    </div>
+  );
+}
+
+function KnowledgeBucket({ title, items }: { title: string; items: unknown[] }) {
+  return (
+    <AnswerColumn title={title} empty="No linked knowledge facts were found." count={items.length}>
+      {items.map((item, idx) => {
+        const fact = item as { statement?: string; knowledge_type?: string; source?: string };
+        return (
+          <MiniCard
+            key={`${title}-${idx}`}
+            title={fact.knowledge_type?.replaceAll("_", " ") ?? "Knowledge fact"}
+            subtitle={fact.statement ?? fact.source ?? "Linked knowledge item"}
+          />
+        );
+      })}
+    </AnswerColumn>
+  );
+}
+
+function fallbackEvidenceCounts(
+  writers: NonNullable<SignalTroubleshootingWorkspace["who_writes_this_signal"]>,
+): UnifiedSignalEvidence["evidence_sources"] {
+  return {
+    ladder: writers.ladder.length,
+    fbd: writers.fbd.length,
+    structured_text: writers.structured_text.length,
+    sfc: writers.sfc.length,
+    aoi: writers.aoi.length,
+    unknown: writers.unknown.length,
+  };
+}
+
 function AnswerColumn({
   title,
   empty,
@@ -589,51 +707,6 @@ function EvidenceSourceChips({
   );
 }
 
-function MissingEvidencePanel({
-  missing,
-  warnings,
-}: {
-  missing: string[];
-  warnings: string[];
-}) {
-  return (
-    <div className="grid gap-3 md:grid-cols-2">
-      <div>
-        <h3 className="mb-2 text-sm font-semibold text-zinc-100">
-          Missing evidence
-        </h3>
-        <ul className="space-y-1">
-          {missing.map((item) => (
-            <li
-              key={item}
-              className="rounded-lg border border-zinc-800 bg-zinc-900/45 px-3 py-2 text-xs text-zinc-400"
-            >
-              {item.replaceAll("_", " ")}
-            </li>
-          ))}
-        </ul>
-      </div>
-      {warnings.length ? (
-        <div>
-          <h3 className="mb-2 text-sm font-semibold text-amber-100">
-            Warnings
-          </h3>
-          <ul className="space-y-1">
-            {warnings.map((item) => (
-              <li
-                key={item}
-                className="rounded-lg border border-amber-800/70 bg-amber-950/20 px-3 py-2 text-xs text-amber-100"
-              >
-                {item}
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 function formatProvenance(
   prov:
     | {
@@ -655,6 +728,17 @@ function formatProvenance(
   if (prov.instruction_type) parts.push(prov.instruction_type);
   if (parts.length) return parts.join(" · ");
   return prov.source_location ?? "";
+}
+
+function formatEvidenceItem(
+  item: SignalTroubleshootingWorkspace["writer_rungs"][number],
+): string {
+  const parts = [
+    item.source_name,
+    item.source_location,
+    item.instruction_type,
+  ].filter(Boolean);
+  return parts.join(" · ");
 }
 
 function formatWriterSubtitle(item: {

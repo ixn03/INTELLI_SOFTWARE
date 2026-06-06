@@ -25,7 +25,9 @@ from app.models.reasoning import (
     WriteBehaviorType,
 )
 from app.models.unified_evidence import UnifiedSignalEvidence
+from app.models.knowledge import KnowledgeItem, KnowledgeType
 from app.services.dependency_graph_service import build_control_dependency_graph
+from app.services.knowledge_service import knowledge_rank_score, knowledge_service
 from app.services.unified_evidence_service import get_signal_evidence
 
 
@@ -95,13 +97,124 @@ class ConfidenceSummary(BaseModel):
     evidence: list[str] = Field(default_factory=list)
     missing_evidence: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    static_logic_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    missing_live_state: bool = True
+    missing_history: bool = True
+    missing_engineer_knowledge: bool = True
+
+
+class ScopedTagCandidate(BaseModel):
+    id: str
+    name: str | None = None
+    controller: str | None = None
+    program: str | None = None
+    source_location: str | None = None
+    match_type: str
+    score: float
+
+
+class ResolvedScope(BaseModel):
+    controller: str | None = None
+    program: str | None = None
+    duplicate_name_status: Literal["unique", "duplicates_found", "unknown"] = "unknown"
+    candidate_scoped_tags: list[ScopedTagCandidate] = Field(default_factory=list)
+
+
+class SignalControlBreakdown(BaseModel):
+    upstream_required_conditions: list[EvidenceItem] = Field(default_factory=list)
+    upstream_dependencies: list[EvidenceItem] = Field(default_factory=list)
+    writer_conditions: list[EvidenceItem] = Field(default_factory=list)
+    unknown_direction_references: list[EvidenceItem] = Field(default_factory=list)
+
+
+class DownstreamImpactBreakdown(BaseModel):
+    downstream_readers: list[EvidenceItem] = Field(default_factory=list)
+    downstream_writes_influenced: list[EvidenceItem] = Field(default_factory=list)
+    downstream_routines: list[EvidenceItem] = Field(default_factory=list)
+    downstream_aoi_blocks: list[EvidenceItem] = Field(default_factory=list)
+    downstream_fbd_blocks: list[EvidenceItem] = Field(default_factory=list)
+    downstream_st_statements: list[EvidenceItem] = Field(default_factory=list)
+
+
+class WriterEvidenceGroups(BaseModel):
+    ladder: list[EvidenceItem] = Field(default_factory=list)
+    fbd: list[EvidenceItem] = Field(default_factory=list)
+    aoi: list[EvidenceItem] = Field(default_factory=list)
+    structured_text: list[EvidenceItem] = Field(default_factory=list)
+    sfc: list[EvidenceItem] = Field(default_factory=list)
+    unknown: list[EvidenceItem] = Field(default_factory=list)
+
+
+class EvidenceProvenanceItem(BaseModel):
+    relationship_id: str
+    relationship_type: str
+    language: str = "unknown"
+    source_id: str
+    source_name: str | None = None
+    source_type: str | None = None
+    target_id: str
+    target_name: str | None = None
+    routine: str | None = None
+    rung: int | None = None
+    block: str | None = None
+    pin: str | None = None
+    statement: str | None = None
+    source_location: str | None = None
+    confidence: float = Field(ge=0.0, le=1.0)
+    deterministic: bool = True
+
+
+class KnowledgeContext(BaseModel):
+    engineer_notes: list[KnowledgeItem] = Field(default_factory=list)
+    control_narrative_facts: list[KnowledgeItem] = Field(default_factory=list)
+    documentation_facts: list[KnowledgeItem] = Field(default_factory=list)
+    upstream_dependency_facts: list[KnowledgeItem] = Field(default_factory=list)
+    writer_facts: list[KnowledgeItem] = Field(default_factory=list)
+    conflicts: list[KnowledgeItem] = Field(default_factory=list)
+    confidence_contribution: float = Field(default=0.0, ge=0.0, le=1.0)
+    status: Literal["available", "empty"] = "empty"
+
+
+class LiveValue(BaseModel):
+    signal_id: str
+    signal_name: str | None = None
+    value: Any = None
+    timestamp: str | None = None
+    stale: bool = False
+
+
+class CurrentStateExplanation(BaseModel):
+    status: Literal["live_data_available", "live_data_missing"] = "live_data_missing"
+    target_current_value: LiveValue | None = None
+    upstream_condition_current_values: list[LiveValue] = Field(default_factory=list)
+    blocking_conditions: list[LiveValue] = Field(default_factory=list)
+    satisfied_conditions: list[LiveValue] = Field(default_factory=list)
+    stale_values: list[LiveValue] = Field(default_factory=list)
+    missing_values: list[SignalRef] = Field(default_factory=list)
+    confidence_contribution: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
+class HistoricalContext(BaseModel):
+    recent_changes: list[Any] = Field(default_factory=list)
+    repeated_patterns: list[Any] = Field(default_factory=list)
+    related_alarms: list[Any] = Field(default_factory=list)
+    last_transition: Any = None
+    status: Literal["not_available"] = "not_available"
 
 
 class SignalTroubleshootingWorkspace(BaseModel):
     question: str
     interpretation: QuestionInterpretation
     target_signal: SignalRef | None = None
+    resolved_scope: ResolvedScope = Field(default_factory=ResolvedScope)
     unified_evidence: UnifiedSignalEvidence | None = None
+    what_controls_this_signal: SignalControlBreakdown = Field(default_factory=SignalControlBreakdown)
+    what_this_signal_controls: DownstreamImpactBreakdown = Field(default_factory=DownstreamImpactBreakdown)
+    who_writes_this_signal: WriterEvidenceGroups = Field(default_factory=WriterEvidenceGroups)
+    where_evidence_comes_from: list[EvidenceProvenanceItem] = Field(default_factory=list)
+    knowledge_context: KnowledgeContext = Field(default_factory=KnowledgeContext)
+    current_state_explanation: CurrentStateExplanation = Field(default_factory=CurrentStateExplanation)
+    historical_context: HistoricalContext = Field(default_factory=HistoricalContext)
     writer_rungs: list[EvidenceItem] = Field(default_factory=list)
     upstream_required_conditions: list[EvidenceItem] = Field(default_factory=list)
     downstream_readers: list[EvidenceItem] = Field(default_factory=list)
@@ -133,6 +246,7 @@ def build_signal_workspace(
     question: str,
     control_objects: list[ControlObject],
     relationships: list[Relationship],
+    runtime_snapshot: dict[str, Any] | None = None,
 ) -> SignalTroubleshootingWorkspace:
     object_index = {obj.id: obj for obj in control_objects}
     interpretation = interpret_question(question, control_objects)
@@ -195,13 +309,51 @@ def build_signal_workspace(
         evidence=unified.confidence_summary.evidence,
         missing_evidence=unified.confidence_summary.missing_evidence,
         warnings=unified.confidence_summary.warnings,
+        static_logic_confidence=unified.confidence_summary.confidence,
     )
+    downstream_impact = _downstream_impact(
+        target_id,
+        downstream_items,
+        relationships,
+        object_index,
+    )
+    knowledge_context = _knowledge_context(
+        target_id=target_id,
+        upstream_items=upstream_items,
+        writer_items=writer_items,
+    )
+    current_state = _current_state_explanation(
+        target=_signal_ref(target, target_id),
+        upstream_items=upstream_items,
+        runtime_snapshot=runtime_snapshot,
+        object_index=object_index,
+    )
+    confidence_summary.missing_live_state = current_state.status == "live_data_missing"
+    confidence_summary.missing_engineer_knowledge = knowledge_context.status == "empty"
 
     return SignalTroubleshootingWorkspace(
         question=question,
         interpretation=interpretation,
         target_signal=_signal_ref(target, target_id),
+        resolved_scope=_resolved_scope(selected, interpretation.target_signal_candidates),
         unified_evidence=unified,
+        what_controls_this_signal=SignalControlBreakdown(
+            upstream_required_conditions=upstream_items,
+            upstream_dependencies=_dependency_items_for_target(
+                target_id, relationships, object_index
+            ),
+            writer_conditions=upstream_items,
+            unknown_direction_references=unknown_items,
+        ),
+        what_this_signal_controls=downstream_impact,
+        who_writes_this_signal=_writer_groups(writer_items),
+        where_evidence_comes_from=_evidence_provenance(
+            [*writer_rels, *reader_rels, *unknown_rels],
+            object_index,
+        ),
+        knowledge_context=knowledge_context,
+        current_state_explanation=current_state,
+        historical_context=HistoricalContext(),
         writer_rungs=writer_items,
         upstream_required_conditions=upstream_items,
         downstream_readers=downstream_items,
@@ -368,6 +520,283 @@ def _upstream_items_for_target(
     return out
 
 
+def _dependency_items_for_target(
+    target_id: str,
+    relationships: list[Relationship],
+    object_index: dict[str, ControlObject],
+) -> list[EvidenceItem]:
+    return [
+        _evidence_item(rel, object_index, None)
+        for rel in relationships
+        if rel.target_id == target_id
+        and rel.relationship_type
+        in {
+            RelationshipType.DEPENDS_ON,
+            RelationshipType.CONDITION_FOR,
+            RelationshipType.PERMITS,
+            RelationshipType.INHIBITS,
+        }
+    ]
+
+
+def _downstream_impact(
+    target_id: str,
+    downstream_items: list[EvidenceItem],
+    relationships: list[Relationship],
+    object_index: dict[str, ControlObject],
+) -> DownstreamImpactBreakdown:
+    reader_source_ids = {item.source_id for item in downstream_items}
+    writes_influenced = [
+        _evidence_item(rel, object_index, None)
+        for rel in relationships
+        if rel.source_id in reader_source_ids
+        and rel.target_id != target_id
+        and rel.relationship_type in WRITER_TYPES
+    ]
+    routines: list[EvidenceItem] = []
+    aoi_blocks: list[EvidenceItem] = []
+    fbd_blocks: list[EvidenceItem] = []
+    st_statements: list[EvidenceItem] = []
+    for item in downstream_items:
+        language = _language_for_item(item)
+        if language == "aoi":
+            aoi_blocks.append(item)
+        elif language == "fbd":
+            fbd_blocks.append(item)
+        elif language == "structured_text":
+            st_statements.append(item)
+        else:
+            routines.append(item)
+    return DownstreamImpactBreakdown(
+        downstream_readers=downstream_items,
+        downstream_writes_influenced=writes_influenced,
+        downstream_routines=routines,
+        downstream_aoi_blocks=aoi_blocks,
+        downstream_fbd_blocks=fbd_blocks,
+        downstream_st_statements=st_statements,
+    )
+
+
+def _writer_groups(writer_items: list[EvidenceItem]) -> WriterEvidenceGroups:
+    groups = WriterEvidenceGroups()
+    for item in writer_items:
+        language = _language_for_item(item)
+        if language == "ladder":
+            groups.ladder.append(item)
+        elif language == "fbd":
+            groups.fbd.append(item)
+        elif language == "aoi":
+            groups.aoi.append(item)
+        elif language == "structured_text":
+            groups.structured_text.append(item)
+        elif language == "sfc":
+            groups.sfc.append(item)
+        else:
+            groups.unknown.append(item)
+    return groups
+
+
+def _evidence_provenance(
+    relationships: list[Relationship],
+    object_index: dict[str, ControlObject],
+) -> list[EvidenceProvenanceItem]:
+    out: list[EvidenceProvenanceItem] = []
+    for rel in relationships:
+        item = _evidence_item(rel, object_index, None)
+        location = item.source_location or ""
+        out.append(
+            EvidenceProvenanceItem(
+                relationship_id=rel.id,
+                relationship_type=rel.relationship_type.value,
+                language=_language_for_item(item),
+                source_id=item.source_id,
+                source_name=item.source_name,
+                source_type=item.source_type,
+                target_id=item.target_id,
+                target_name=item.target_name,
+                routine=_extract_location_part(location, "Routine"),
+                rung=_extract_rung(location),
+                block=_extract_location_part(location, "Block"),
+                pin=_extract_location_part(location, "Pin"),
+                statement=_extract_location_part(location, "Statement"),
+                source_location=item.source_location,
+                confidence=item.confidence,
+                deterministic=rel.relationship_type != RelationshipType.REFERENCES
+                or (rel.platform_specific or {}).get("binding_status") != "direction_unknown",
+            )
+        )
+    return out
+
+
+def _resolved_scope(
+    selected: SignalCandidate,
+    candidates: list[SignalCandidate],
+) -> ResolvedScope:
+    selected_scope = _scope_from_location(selected.source_location)
+    same_name = [c for c in candidates if c.name == selected.name]
+    duplicate_status: Literal["unique", "duplicates_found", "unknown"]
+    if not selected.name:
+        duplicate_status = "unknown"
+    elif len(same_name) > 1:
+        duplicate_status = "duplicates_found"
+    else:
+        duplicate_status = "unique"
+    scoped = []
+    for candidate in same_name or candidates:
+        scope = _scope_from_location(candidate.source_location)
+        scoped.append(
+            ScopedTagCandidate(
+                id=candidate.id,
+                name=candidate.name,
+                controller=scope.get("controller"),
+                program=scope.get("program"),
+                source_location=candidate.source_location,
+                match_type=candidate.match_type,
+                score=candidate.score,
+            )
+        )
+    return ResolvedScope(
+        controller=selected_scope.get("controller"),
+        program=selected_scope.get("program"),
+        duplicate_name_status=duplicate_status,
+        candidate_scoped_tags=scoped,
+    )
+
+
+def _knowledge_context(
+    *,
+    target_id: str,
+    upstream_items: list[EvidenceItem],
+    writer_items: list[EvidenceItem],
+) -> KnowledgeContext:
+    target_items = _rank_knowledge(knowledge_service.list_by_target(target_id))
+    upstream_ids = {item.target_id for item in upstream_items}
+    writer_ids = {item.source_id for item in writer_items}
+    upstream_items_knowledge = _rank_knowledge(
+        [item for oid in upstream_ids for item in knowledge_service.list_by_target(oid)]
+    )
+    writer_items_knowledge = _rank_knowledge(
+        [item for oid in writer_ids for item in knowledge_service.list_by_target(oid)]
+    )
+    conflicts = [
+        item
+        for item in [*target_items, *upstream_items_knowledge, *writer_items_knowledge]
+        if item.knowledge_type
+        in {
+            KnowledgeType.KNOWN_FALSE_POSITIVE,
+            KnowledgeType.REJECTED_FIX,
+            KnowledgeType.ASSUMPTION,
+        }
+    ]
+    context = KnowledgeContext(
+        engineer_notes=[
+            item
+            for item in target_items
+            if item.knowledge_type
+            in {
+                KnowledgeType.TROUBLESHOOTING_NOTE,
+                KnowledgeType.ENGINEER_FEEDBACK,
+                KnowledgeType.OPERATOR_GUIDANCE,
+                KnowledgeType.VERIFIED_FIX,
+            }
+        ],
+        control_narrative_facts=[
+            item
+            for item in target_items
+            if item.knowledge_type
+            in {
+                KnowledgeType.CONTROL_NARRATIVE_NOTE,
+                KnowledgeType.CONTROL_NARRATIVE_SECTION,
+                KnowledgeType.SEQUENCE_EXPLANATION,
+            }
+        ],
+        documentation_facts=[
+            item
+            for item in target_items
+            if item.knowledge_type
+            in {
+                KnowledgeType.TAG_DESCRIPTION,
+                KnowledgeType.STATE_DESCRIPTION,
+                KnowledgeType.EQUIPMENT_DESCRIPTION,
+                KnowledgeType.VERSION_SPECIFIC_BEHAVIOR,
+                KnowledgeType.INSTRUMENTATION_CAVEAT,
+            }
+        ],
+        upstream_dependency_facts=upstream_items_knowledge,
+        writer_facts=writer_items_knowledge,
+        conflicts=conflicts,
+    )
+    total = sum(
+        len(getattr(context, field))
+        for field in (
+            "engineer_notes",
+            "control_narrative_facts",
+            "documentation_facts",
+            "upstream_dependency_facts",
+            "writer_facts",
+            "conflicts",
+        )
+    )
+    context.status = "available" if total else "empty"
+    context.confidence_contribution = min(0.2, total * 0.04)
+    return context
+
+
+def _current_state_explanation(
+    *,
+    target: SignalRef,
+    upstream_items: list[EvidenceItem],
+    runtime_snapshot: dict[str, Any] | None,
+    object_index: dict[str, ControlObject],
+) -> CurrentStateExplanation:
+    if not runtime_snapshot:
+        missing = [target] + [
+            _signal_ref(object_index.get(item.target_id), item.target_id)
+            for item in upstream_items
+        ]
+        return CurrentStateExplanation(status="live_data_missing", missing_values=missing)
+
+    target_value = _live_value(target, runtime_snapshot)
+    upstream_values = [
+        _live_value(_signal_ref(object_index.get(item.target_id), item.target_id), runtime_snapshot)
+        for item in upstream_items
+    ]
+    missing = [
+        value
+        for value in [target_value, *upstream_values]
+        if value.value is None
+    ]
+    if missing:
+        return CurrentStateExplanation(
+            status="live_data_missing",
+            target_current_value=target_value if target_value.value is not None else None,
+            upstream_condition_current_values=[
+                value for value in upstream_values if value.value is not None
+            ],
+            missing_values=[
+                SignalRef(id=value.signal_id, name=value.signal_name)
+                for value in missing
+            ],
+        )
+
+    blocking = [value for value in upstream_values if _is_blocking_value(value.value)]
+    satisfied = [
+        value
+        for value in upstream_values
+        if not _is_blocking_value(value.value)
+    ]
+    stale = [value for value in [target_value, *upstream_values] if value.stale]
+    return CurrentStateExplanation(
+        status="live_data_available",
+        target_current_value=target_value,
+        upstream_condition_current_values=upstream_values,
+        blocking_conditions=blocking,
+        satisfied_conditions=satisfied,
+        stale_values=stale,
+        confidence_contribution=0.18 if not stale else 0.1,
+    )
+
+
 def _evidence_item(
     rel: Relationship,
     object_index: dict[str, ControlObject],
@@ -404,6 +833,77 @@ def _evidence_item(
             "logic_expression_resolved": meta.get("logic_expression_resolved"),
         },
     )
+
+
+def _language_for_item(item: EvidenceItem) -> str:
+    source_type = (item.source_type or "").lower()
+    location = (item.source_location or "").lower()
+    instruction = (item.instruction_type or "").lower()
+    if source_type == ControlObjectType.RUNG.value or "rung[" in location:
+        return "ladder"
+    if "structured" in source_type or "statement" in location or instruction == "st":
+        return "structured_text"
+    if "sfc" in source_type or "/sfc" in location:
+        return "sfc"
+    if "aoi" in source_type or "aoi" in location or "parameter_name" in item.metadata:
+        return "aoi"
+    if source_type in {
+        ControlObjectType.FUNCTION_BLOCK.value,
+        ControlObjectType.FBD_BLOCK_INSTANCE.value,
+        ControlObjectType.FBD_INPUT_PIN.value,
+        ControlObjectType.FBD_OUTPUT_PIN.value,
+        ControlObjectType.FUNCTION_BLOCK_PIN.value,
+    } or "block:" in location:
+        return "fbd"
+    return "unknown"
+
+
+def _extract_location_part(source_location: str, key: str) -> str | None:
+    match = re.search(rf"{re.escape(key)}:([^/]+)", source_location)
+    return match.group(1) if match else None
+
+
+def _extract_rung(source_location: str) -> int | None:
+    match = re.search(r"Rung\[(\d+)\]", source_location)
+    return int(match.group(1)) if match else None
+
+
+def _scope_from_location(source_location: str | None) -> dict[str, str | None]:
+    source_location = source_location or ""
+    return {
+        "controller": _extract_location_part(source_location, "Controller"),
+        "program": _extract_location_part(source_location, "Program"),
+    }
+
+
+def _rank_knowledge(items: list[KnowledgeItem]) -> list[KnowledgeItem]:
+    return sorted(items, key=knowledge_rank_score, reverse=True)
+
+
+def _live_value(signal: SignalRef, runtime_snapshot: dict[str, Any]) -> LiveValue:
+    raw = (
+        runtime_snapshot.get(signal.id)
+        or (runtime_snapshot.get(signal.name) if signal.name else None)
+    )
+    if isinstance(raw, dict):
+        return LiveValue(
+            signal_id=signal.id,
+            signal_name=signal.name,
+            value=raw.get("value"),
+            timestamp=raw.get("timestamp") or raw.get("ts"),
+            stale=bool(raw.get("stale", False)),
+        )
+    return LiveValue(signal_id=signal.id, signal_name=signal.name, value=raw)
+
+
+def _is_blocking_value(value: Any) -> bool:
+    if isinstance(value, bool):
+        return not value
+    if isinstance(value, (int, float)):
+        return value == 0
+    if isinstance(value, str):
+        return value.strip().lower() in {"false", "0", "off", "no", "bad"}
+    return value is None
 
 
 def _relationship_score(rel: Relationship) -> float:

@@ -76,6 +76,9 @@ Set `OPCUA_ENDPOINT_URL` in `infra/.env`. When the collector runs inside Docker 
 
 ```bash
 OPCUA_ENDPOINT_URL=opc.tcp://host.docker.internal:53530/OPCUA/SimulationServer
+OPCUA_SECURITY_POLICY=None
+OPCUA_SECURITY_MODE=None
+OPCUA_AUTH_MODE=Anonymous
 INTELLI_BACKEND_URL=http://localhost:8000
 ```
 
@@ -125,14 +128,17 @@ curl -X PATCH http://localhost:8000/api/tags/11111111-1111-1111-1111-11111111120
 
 **Option B — re-seed:** update `infra/postgres/init/02-tag-registry.sql` and `backend/app/db/seed.py`, then recreate volumes (`docker compose down -v && up -d --build`).
 
-### Run the collector
+### Option A: validate with Prosys OPC UA collector
 
 On the host (backend running locally):
 
 ```bash
 cd backend
 pip install -r requirements.txt
-set OPCUA_ENDPOINT_URL=opc.tcp://localhost:53530/OPCUA/SimulationServer
+set OPCUA_ENDPOINT_URL=opc.tcp://NANA:53530/OPCUA/SimulationServer
+set OPCUA_SECURITY_POLICY=None
+set OPCUA_SECURITY_MODE=None
+set OPCUA_AUTH_MODE=Anonymous
 set INTELLI_BACKEND_URL=http://localhost:8000
 python tools/opcua_collector.py
 ```
@@ -144,6 +150,27 @@ cd infra
 docker compose --env-file .env --profile opcua up -d opcua-collector
 docker compose --env-file .env logs -f opcua-collector
 ```
+
+### Option B: validate with demo live data publisher
+
+If Prosys certificate/session settings block browsing or the custom Prosys variables are still `Null`, use the demo publisher. It reads the same six demo tags from `/api/tags`, generates changing values, and posts batches to `/api/ingest/tag-samples/batch`. The backend still validates the registry metadata and writes accepted samples to InfluxDB.
+
+```bash
+cd backend
+pip install -r requirements.txt
+set INTELLI_BACKEND_URL=http://localhost:8000
+set DEMO_PUBLISH_INTERVAL_MS=1000
+python tools/demo_live_data_publisher.py
+```
+
+For a finite smoke test:
+
+```bash
+set DEMO_PUBLISH_COUNT=20
+python tools/demo_live_data_publisher.py
+```
+
+By default the publisher uses each tag's registry `source_system` (the demo seed is `OPC_UA`) so source validation is identical to the OPC UA collector path. To validate tags reconfigured as simulator tags, set `DEMO_SOURCE_OVERRIDE=SIMULATOR`.
 
 ### Ingestion examples
 
@@ -175,6 +202,14 @@ curl -X POST http://localhost:8000/api/ingest/tag-samples/batch \
 ```bash
 curl http://localhost:8000/api/tags/11111111-1111-1111-1111-111111111201/latest
 curl "http://localhost:8000/api/tags/11111111-1111-1111-1111-111111111201/history?limit=50"
+```
+
+After the collector or demo publisher has posted several batches, verify all six demo tags:
+
+```bash
+cd backend
+set INTELLI_BACKEND_URL=http://localhost:8000
+python tools/verify_live_ingestion.py
 ```
 
 ### Tests
@@ -259,14 +294,37 @@ Each evidence item preserves `SourceProvenance` (routine, rung, block, pin,
 statement, source location, originating language/platform) so engineers can
 verify the answer without caring which parser produced the edge internally.
 
-The Signal Troubleshooting Workspace shows three levels:
+The Signal Troubleshooting Workspace now returns a static Signal Intelligence
+view for each resolved signal:
 
-1. Answer-first troubleshooting summary
-2. Engineer verification grouped by ladder / FBD / AOI / ST
-3. Advanced relationship IDs (collapsed by default)
+1. `resolved_scope`: controller, program, duplicate-name status, and scoped tag
+   candidates when the same tag name exists in multiple scopes.
+2. `what_controls_this_signal`: upstream required conditions, dependency edges,
+   writer conditions, and direction-unknown references kept separate from
+   deterministic causes.
+3. `what_this_signal_controls`: downstream readers, downstream writes
+   influenced by this signal, and downstream routine/block/statement evidence.
+4. `who_writes_this_signal` and `where_evidence_comes_from`: writer evidence
+   grouped by Ladder, FBD, AOI, ST, SFC, or unknown, with provenance such as
+   routine, rung, block, pin, statement, source location, and relationship ID.
+5. `knowledge_context`, `current_state_explanation`, and `historical_context`:
+   linked engineer/documentation facts supplement deterministic logic; live
+   values explain blocking/satisfied conditions only when supplied; history is
+   an explicit `not_available` stub until event reasoning is implemented.
+
+The frontend presents this as five controls-engineering sections:
+
+1. What controls this?
+2. What does this control?
+3. Current state explanation
+4. Evidence sources
+5. Engineer/documentation knowledge
+
+Advanced relationship IDs remain collapsed by default.
 
 Confidence is deterministic and evidence-based. No LLM scoring is used in this
-layer.
+layer. Missing live state, missing history, and missing engineer knowledge are
+reported explicitly instead of inferred.
 
 ### Troubleshooting eval harness
 

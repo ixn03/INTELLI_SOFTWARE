@@ -3,6 +3,9 @@
 
 Environment:
   OPCUA_ENDPOINT_URL  required, e.g. opc.tcp://localhost:53530/OPCUA/SimulationServer
+  OPCUA_SECURITY_POLICY  default None
+  OPCUA_SECURITY_MODE    default None
+  OPCUA_AUTH_MODE        default Anonymous
 
 Prints DisplayName, BrowseName, NodeId, DataType, and AccessLevel for each variable found.
 """
@@ -10,18 +13,17 @@ Prints DisplayName, BrowseName, NodeId, DataType, and AccessLevel for each varia
 from __future__ import annotations
 
 import asyncio
-import os
 import sys
 from typing import Any
 
 from asyncua import Client, ua
 
-
-def _endpoint() -> str:
-    url = os.getenv("OPCUA_ENDPOINT_URL", "").strip()
-    if not url:
-        raise SystemExit("OPCUA_ENDPOINT_URL is required.")
-    return url
+from opcua_client_config import (
+    configure_opcua_client,
+    format_endpoint_report,
+    load_opcua_client_config,
+    log_opcua_client_config,
+)
 
 
 async def _browse_name(client: Client, node: Any) -> str:
@@ -164,10 +166,19 @@ async def _print_top_level(client: Client) -> None:
 
 
 async def browse() -> int:
-    endpoint = _endpoint()
-    print(f"Connecting to {endpoint}")
+    config = load_opcua_client_config()
+    log_opcua_client_config(config)
 
-    async with Client(url=endpoint) as client:
+    endpoint_client = Client(url=config.endpoint_url)
+    endpoints = await endpoint_client.connect_and_get_server_endpoints()
+    print("\n--- Server endpoints ---")
+    for line in format_endpoint_report(endpoints):
+        print(line)
+
+    print(f"\nConnecting to {config.endpoint_url}")
+    client = Client(url=config.endpoint_url)
+    configure_opcua_client(client, config)
+    async with client:
         folder, path = await _find_pump_system(client)
 
         if folder is None:

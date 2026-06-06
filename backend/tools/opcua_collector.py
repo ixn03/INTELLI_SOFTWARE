@@ -4,6 +4,9 @@
 Environment:
   INTELLI_BACKEND_URL   e.g. http://localhost:8000
   OPCUA_ENDPOINT_URL    e.g. opc.tcp://host.docker.internal:53530/OPCUA/SimulationServer
+  OPCUA_SECURITY_POLICY  default None
+  OPCUA_SECURITY_MODE    default None
+  OPCUA_AUTH_MODE        default Anonymous
   COLLECTOR_POLL_MS     default 1000
   COLLECTOR_SOURCE_SYSTEMS  default OPC_UA (comma-separated)
 """
@@ -20,6 +23,14 @@ from typing import Any
 
 import httpx
 
+from opcua_client_config import (
+    OpcUaClientConfig,
+    configure_opcua_client,
+    format_endpoint_report,
+    load_opcua_client_config,
+    log_opcua_client_config,
+)
+
 _BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(_BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(_BACKEND_ROOT))
@@ -33,13 +44,6 @@ log = logging.getLogger("intelli.opcua_collector")
 
 def _backend_url() -> str:
     return os.getenv("INTELLI_BACKEND_URL", "http://localhost:8000").rstrip("/")
-
-
-def _opcua_endpoint() -> str:
-    url = os.getenv("OPCUA_ENDPOINT_URL", "").strip()
-    if not url:
-        raise SystemExit("OPCUA_ENDPOINT_URL is required.")
-    return url
 
 
 def _source_systems() -> list[str]:
@@ -85,12 +89,14 @@ def _quality_from_status(status: Any) -> str:
 
 
 async def _read_nodes(
-    endpoint: str, tag_specs: list[tuple[dict[str, Any], str]]
+    config: OpcUaClientConfig, tag_specs: list[tuple[dict[str, Any], str]]
 ) -> list[dict[str, Any]]:
     from asyncua import Client, ua
 
     samples: list[dict[str, Any]] = []
-    async with Client(url=endpoint) as client:
+    client = Client(url=config.endpoint_url)
+    configure_opcua_client(client, config)
+    async with client:
         for tag, node_id_str in tag_specs:
             try:
                 node = client.get_node(ua.NodeId.from_string(node_id_str))
@@ -136,12 +142,12 @@ def post_batch(backend: str, samples: list[dict[str, Any]]) -> dict[str, Any]:
 
 async def run_collector() -> None:
     backend = _backend_url()
-    endpoint = _opcua_endpoint()
+    opcua_config = load_opcua_client_config()
     source_systems = _source_systems()
     poll_s = _poll_interval_s()
 
     log.info("INTELLI backend: %s", backend)
-    log.info("OPC UA endpoint: %s", endpoint)
+    log_opcua_client_config(opcua_config, log)
     log.info("Source systems: %s", ", ".join(source_systems))
 
     tags = load_registry_tags(backend, source_systems)
@@ -171,10 +177,15 @@ async def run_collector() -> None:
     try:
         from asyncua import Client
 
-        async with Client(url=endpoint) as client:
-            await client.connect()
+        endpoint_client = Client(url=opcua_config.endpoint_url)
+        endpoints = await endpoint_client.connect_and_get_server_endpoints()
+        for line in format_endpoint_report(endpoints):
+            log.info("OPC UA server endpoint: %s", line)
+
+        client = Client(url=opcua_config.endpoint_url)
+        configure_opcua_client(client, opcua_config)
+        async with client:
             log.info("OPC UA connection success.")
-            await client.disconnect()
     except Exception as exc:
         log.error("OPC UA connection failed: %s", exc)
         raise SystemExit(1) from exc
@@ -182,7 +193,7 @@ async def run_collector() -> None:
     log.info("Starting poll loop (interval=%.2fs)", poll_s)
     while True:
         try:
-            samples = await _read_nodes(endpoint, tag_specs)
+            samples = await _read_nodes(opcua_config, tag_specs)
             result = post_batch(backend, samples)
             log.info(
                 "Batch result: accepted=%s rejected=%s",

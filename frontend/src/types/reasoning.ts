@@ -782,7 +782,88 @@ export interface SignalTroubleshootingWorkspace {
   question: string;
   interpretation: QuestionInterpretation;
   target_signal: SignalRef | null;
+  resolved_scope?: {
+    controller?: string | null;
+    program?: string | null;
+    duplicate_name_status: "unique" | "duplicates_found" | "unknown";
+    candidate_scoped_tags: Array<{
+      id: string;
+      name?: string | null;
+      controller?: string | null;
+      program?: string | null;
+      source_location?: string | null;
+      match_type: string;
+      score: number;
+    }>;
+  };
   unified_evidence?: UnifiedSignalEvidence | null;
+  what_controls_this_signal?: {
+    upstream_required_conditions: SignalEvidenceItem[];
+    upstream_dependencies: SignalEvidenceItem[];
+    writer_conditions: SignalEvidenceItem[];
+    unknown_direction_references: SignalEvidenceItem[];
+  };
+  what_this_signal_controls?: {
+    downstream_readers: SignalEvidenceItem[];
+    downstream_writes_influenced: SignalEvidenceItem[];
+    downstream_routines: SignalEvidenceItem[];
+    downstream_aoi_blocks: SignalEvidenceItem[];
+    downstream_fbd_blocks: SignalEvidenceItem[];
+    downstream_st_statements: SignalEvidenceItem[];
+  };
+  who_writes_this_signal?: {
+    ladder: SignalEvidenceItem[];
+    fbd: SignalEvidenceItem[];
+    aoi: SignalEvidenceItem[];
+    structured_text: SignalEvidenceItem[];
+    sfc: SignalEvidenceItem[];
+    unknown: SignalEvidenceItem[];
+  };
+  where_evidence_comes_from?: Array<{
+    relationship_id: string;
+    relationship_type: string;
+    language: string;
+    source_id: string;
+    source_name?: string | null;
+    source_type?: string | null;
+    target_id: string;
+    target_name?: string | null;
+    routine?: string | null;
+    rung?: number | null;
+    block?: string | null;
+    pin?: string | null;
+    statement?: string | null;
+    source_location?: string | null;
+    confidence: number;
+    deterministic: boolean;
+  }>;
+  knowledge_context?: {
+    engineer_notes: unknown[];
+    control_narrative_facts: unknown[];
+    documentation_facts: unknown[];
+    upstream_dependency_facts: unknown[];
+    writer_facts: unknown[];
+    conflicts: unknown[];
+    confidence_contribution: number;
+    status: "available" | "empty";
+  };
+  current_state_explanation?: {
+    status: "live_data_available" | "live_data_missing";
+    target_current_value?: unknown | null;
+    upstream_condition_current_values: unknown[];
+    blocking_conditions: unknown[];
+    satisfied_conditions: unknown[];
+    stale_values: unknown[];
+    missing_values: SignalRef[];
+    confidence_contribution: number;
+  };
+  historical_context?: {
+    recent_changes: unknown[];
+    repeated_patterns: unknown[];
+    related_alarms: unknown[];
+    last_transition?: unknown | null;
+    status: "not_available";
+  };
   writer_rungs: SignalEvidenceItem[];
   upstream_required_conditions: SignalEvidenceItem[];
   downstream_readers: SignalEvidenceItem[];

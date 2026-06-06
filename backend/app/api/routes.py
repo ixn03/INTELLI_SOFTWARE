@@ -483,6 +483,7 @@ class AskV2Request(BaseModel):
 class TroubleshootQuestionRequest(BaseModel):
     project_id: str
     question: str
+    runtime_snapshot: Optional[dict[str, Any]] = None
 
 
 class SequenceTraceRequest(BaseModel):
@@ -529,6 +530,7 @@ def troubleshoot_question(
         question=request.question,
         control_objects=normalized["control_objects"],
         relationships=normalized["relationships"],
+        runtime_snapshot=request.runtime_snapshot,
     )
 
 

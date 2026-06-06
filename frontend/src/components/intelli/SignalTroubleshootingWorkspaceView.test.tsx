@@ -248,17 +248,15 @@ const unifiedWorkspace: SignalTroubleshootingWorkspace = {
 };
 
 describe("SignalTroubleshootingWorkspaceView", () => {
-  it("renders answer-first troubleshooting sections", () => {
+  it("renders the five signal intelligence sections", () => {
     render(<SignalTroubleshootingWorkspaceView workspace={unifiedWorkspace} />);
-    expect(
-      screen.getByRole("heading", { name: "What controls this signal?" }),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Written by" })).toBeInTheDocument();
-    expect(
-      screen.getByRole("heading", { name: "Where is it used?" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "What controls this?" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "What does this control?" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Current state explanation" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Evidence sources" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Engineer/documentation knowledge" })).toBeInTheDocument();
     expect(screen.getAllByText("Output_B").length).toBeGreaterThan(0);
-    expect(screen.getByText("Permissive_A")).toBeInTheDocument();
+    expect(screen.getAllByText("Permissive_A").length).toBeGreaterThan(0);
   });
 
   it("renders ladder and FBD verification groups", () => {
@@ -277,9 +275,9 @@ describe("SignalTroubleshootingWorkspaceView", () => {
       0,
     );
     expect(screen.getAllByText("Generic_Block").length).toBeGreaterThan(0);
-    const controlsColumn = screen
-      .getByRole("heading", { name: "What controls this signal?" })
-      .parentElement?.parentElement;
+    const controlsColumn = screen.getByRole("heading", {
+      name: "Upstream required conditions",
+    }).parentElement?.parentElement;
     expect(controlsColumn).not.toBeNull();
     expect(
       within(controlsColumn as HTMLElement).queryByText("Generic_Block"),

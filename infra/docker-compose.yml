@@ -36,19 +36,20 @@ services:
     image: quay.io/influxdb/influxdb3-core:latest
     container_name: intelli-influxdb
     restart: unless-stopped
+    user: "0:0"
     command:
-      - influxdb3
       - serve
       - --node-id=${INFLUXDB_NODE_ID:-node0}
       - --object-store=file
       - --data-dir=/var/lib/influxdb3/data
       - --http-bind=0.0.0.0:8181
+      - --without-auth
     ports:
       - "${INFLUXDB_PORT:-8181}:8181"
     volumes:
       - influxdb_data:/var/lib/influxdb3/data
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:8181/health || exit 1"]
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:8181/ping >/dev/null || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -135,6 +136,9 @@ services:
     environment:
       INTELLI_BACKEND_URL: http://backend:8000
       OPCUA_ENDPOINT_URL: ${OPCUA_ENDPOINT_URL:-opc.tcp://host.docker.internal:53530/OPCUA/SimulationServer}
+      OPCUA_SECURITY_POLICY: ${OPCUA_SECURITY_POLICY:-None}
+      OPCUA_SECURITY_MODE: ${OPCUA_SECURITY_MODE:-None}
+      OPCUA_AUTH_MODE: ${OPCUA_AUTH_MODE:-Anonymous}
       COLLECTOR_POLL_MS: ${COLLECTOR_POLL_MS:-1000}
       COLLECTOR_SOURCE_SYSTEMS: ${COLLECTOR_SOURCE_SYSTEMS:-OPC_UA}
     depends_on:
