@@ -34,3 +34,8 @@ Thumbs.db
 /tmp_l5x_analysis/
 *.L5X
 *.l5x
+
+# Local parser audit/diagnostic outputs
+grade_*.json
+tdr_grade_fixtures.json
+backend/tools/_diag_*.py
