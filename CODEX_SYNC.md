@@ -18,6 +18,6 @@ Codex: **read this file first** when you open this workspace. If your local copy
 | Field | Value |
 |-------|--------|
 | Branch | `cursor/evidence-trust-ui` |
-| Commit (short) | `COMMIT_SHORT_HASH` |
+| Commit (short) | `9b76e73` |
 
 Verify you are current: `git log -1 --format=%h -- CODEX_SYNC.md` should match the commit hash above.
