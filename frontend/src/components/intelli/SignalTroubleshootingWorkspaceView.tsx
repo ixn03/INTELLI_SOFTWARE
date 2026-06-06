@@ -131,7 +131,7 @@ function WhatControlsSection({
       <div className="grid gap-4 p-5 lg:grid-cols-2 xl:grid-cols-4">
         <AnswerColumn title="Upstream required conditions" empty="No deterministic upstream conditions were found." count={controlCount}>
           {controls.length
-            ? controls.map((item) => <EvidenceMini key={item.metadata.relationship_id ?? `${item.source_id}-${item.target_id}`} item={item} />)
+            ? controls.map((item) => <EvidenceMini key={evidenceKey(item)} item={item} />)
             : unifiedControls.map((item, idx) => (
                 <MiniCard
                   key={`unified-control-${idx}`}
@@ -142,11 +142,11 @@ function WhatControlsSection({
               ))}
         </AnswerColumn>
         <AnswerColumn title="Upstream dependencies" empty="No additional upstream dependency edges were found." count={dependencies.length}>
-          {dependencies.map((item) => <EvidenceMini key={item.metadata.relationship_id ?? `${item.source_id}-${item.target_id}`} item={item} />)}
+          {dependencies.map((item) => <EvidenceMini key={evidenceKey(item)} item={item} />)}
         </AnswerColumn>
         <AnswerColumn title="Writer conditions" empty="No writer conditions were found." count={controlCount}>
           {controls.length
-            ? controls.map((item) => <EvidenceMini key={`writer-condition-${item.metadata.relationship_id ?? item.target_id}`} item={item} />)
+            ? controls.map((item) => <EvidenceMini key={`writer-condition-${evidenceKey(item)}`} item={item} />)
             : unifiedControls.map((item, idx) => (
                 <MiniCard
                   key={`unified-writer-condition-${idx}`}
@@ -157,7 +157,7 @@ function WhatControlsSection({
               ))}
         </AnswerColumn>
         <AnswerColumn title="Unknown-direction references" empty="No unknown-direction references were found." count={unknowns.length} warning>
-          {unknowns.map((item) => <EvidenceMini key={item.metadata.relationship_id ?? item.source_id} item={item} warning />)}
+          {unknowns.map((item) => <EvidenceMini key={evidenceKey(item)} item={item} warning />)}
         </AnswerColumn>
       </div>
       <div className="border-t border-zinc-800/70 px-5 py-3">
@@ -184,16 +184,16 @@ function WhatThisControlsSection({
       <SectionTitle title="What does this control?" detail="Downstream readers and writes influenced by this signal through shared routines or blocks." />
       <div className="grid gap-4 p-5 lg:grid-cols-2 xl:grid-cols-4">
         <AnswerColumn title="Downstream readers" empty="No downstream readers were found." count={readers.length}>
-          {readers.map((item) => <EvidenceMini key={item.metadata.relationship_id ?? item.source_id} item={item} />)}
+          {readers.map((item) => <EvidenceMini key={evidenceKey(item)} item={item} />)}
         </AnswerColumn>
         <AnswerColumn title="Writes influenced" empty="No downstream writes were influenced by this signal in the normalized graph." count={influenced.length}>
-          {influenced.map((item) => <EvidenceMini key={item.metadata.relationship_id ?? item.target_id} item={item} />)}
+          {influenced.map((item) => <EvidenceMini key={evidenceKey(item)} item={item} />)}
         </AnswerColumn>
         <AnswerColumn title="FBD/AOI blocks" empty="No downstream FBD or AOI blocks were found." count={fbd.length + (impact?.downstream_aoi_blocks.length ?? 0)}>
-          {[...fbd, ...(impact?.downstream_aoi_blocks ?? [])].map((item) => <EvidenceMini key={item.metadata.relationship_id ?? item.source_id} item={item} />)}
+          {[...fbd, ...(impact?.downstream_aoi_blocks ?? [])].map((item) => <EvidenceMini key={evidenceKey(item)} item={item} />)}
         </AnswerColumn>
         <AnswerColumn title="ST statements" empty="No downstream ST statements were found." count={st.length}>
-          {st.map((item) => <EvidenceMini key={item.metadata.relationship_id ?? item.source_id} item={item} />)}
+          {st.map((item) => <EvidenceMini key={evidenceKey(item)} item={item} />)}
         </AnswerColumn>
       </div>
     </section>
@@ -739,6 +739,15 @@ function formatEvidenceItem(
     item.instruction_type,
   ].filter(Boolean);
   return parts.join(" · ");
+}
+
+function evidenceKey(
+  item: SignalTroubleshootingWorkspace["writer_rungs"][number],
+): string {
+  const relId = item.metadata.relationship_id;
+  return typeof relId === "string"
+    ? relId
+    : `${item.source_id}-${item.target_id}-${item.relationship_type}`;
 }
 
 function formatWriterSubtitle(item: {
