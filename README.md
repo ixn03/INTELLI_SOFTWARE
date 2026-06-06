@@ -71,3 +71,32 @@ semantics.
 Phase 1 does not infer vendor block behavior from block type names. If an FBD
 routine is present but the export contains no block/pin/wire body, INTELLI
 preserves the routine as unsupported structure rather than inventing a diagram.
+
+## Unified Evidence Layer
+
+The troubleshooting layer consumes a unified signal evidence model, not
+parser-specific objects. `unified_evidence_service.py` merges normalized
+ladder, FBD, ST, AOI, and unknown references into one answer shape:
+
+- what controls this signal
+- who writes this signal
+- where it is used
+- unknown-direction references (not treated as deterministic causes)
+
+Each evidence item preserves `SourceProvenance` (routine, rung, block, pin,
+statement, source location, originating language/platform) so engineers can
+verify the answer without caring which parser produced the edge internally.
+
+The Signal Troubleshooting Workspace shows three levels:
+
+1. Answer-first troubleshooting summary
+2. Engineer verification grouped by ladder / FBD / AOI / ST
+3. Advanced relationship IDs (collapsed by default)
+
+Confidence is deterministic and evidence-based. No LLM scoring is used in this
+layer.
+
+Vendor AMP blocks (`AMP_*_INTRALOX`) register as AOI-style parameter bindings
+with deterministic `Out` writes and `In_*` reads. Structured-text and AOI
+fixture tests live under `backend/tests/test_unified_evidence_*.py`. Frontend
+workspace rendering is covered by Vitest component tests.

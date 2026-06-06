@@ -603,15 +603,186 @@ export interface SignalEvidenceItem {
 
 export interface SignalConfidenceSummary {
   confidence: number;
+  confidence_label?: string;
   evidence: string[];
   missing_evidence: string[];
   warnings: string[];
+}
+
+export type OriginatingLanguage =
+  | "ladder"
+  | "fbd"
+  | "structured_text"
+  | "sfc"
+  | "aoi"
+  | "unknown";
+
+export interface SourceProvenance {
+  originating_language: OriginatingLanguage;
+  originating_platform: string;
+  source_location: string | null;
+  routine: string | null;
+  rung_number: number | null;
+  block_id: string | null;
+  block_name: string | null;
+  block_type: string | null;
+  pin_name: string | null;
+  pin_direction: string | null;
+  statement_index: number | null;
+  instruction_type: string | null;
+  relationship_ids: string[];
+  source_object_id: string | null;
+  causality: "deterministic" | "direction_unknown" | "structural_only";
+  metadata: Record<string, unknown>;
+}
+
+export interface SignalWriter {
+  writer_type: string;
+  signal_id: string;
+  signal_name: string | null;
+  source_provenance: SourceProvenance;
+  confidence: number;
+  causality: string;
+  condition_signal_ids: string[];
+  condition_signal_names: string[];
+  write_behavior: string | null;
+}
+
+export interface SignalReader {
+  reader_type: string;
+  signal_id: string;
+  signal_name: string | null;
+  source_provenance: SourceProvenance;
+  confidence: number;
+  reader_context: string | null;
+}
+
+export interface RequiredCondition {
+  signal_id: string;
+  signal_name: string | null;
+  required_for_writer_ids: string[];
+  source_provenance: SourceProvenance;
+  confidence: number;
+  causality: string;
+}
+
+export interface UnknownDependency {
+  signal_id: string;
+  signal_name: string | null;
+  reference_source_id: string;
+  reference_source_name: string | null;
+  source_provenance: SourceProvenance;
+  message: string;
+  confidence: number;
+}
+
+export interface EvidenceSourceCounts {
+  ladder: number;
+  fbd: number;
+  structured_text: number;
+  sfc: number;
+  aoi: number;
+  unknown: number;
+}
+
+export interface LadderEvidenceGroup {
+  routine: string | null;
+  rung_number: number | null;
+  instruction_type: string | null;
+  source_location: string | null;
+  role: "writer" | "reader" | "condition";
+  signal_name: string | null;
+  condition_signal_names: string[];
+  relationship_ids: string[];
+  confidence: number;
+}
+
+export interface FBDEvidenceGroup {
+  routine: string | null;
+  block_name: string | null;
+  block_type: string | null;
+  pin_name: string | null;
+  pin_direction: string | null;
+  role: "input" | "output" | "wire" | "unknown";
+  signal_name: string | null;
+  connected_signal_name: string | null;
+  source_location: string | null;
+  relationship_ids: string[];
+  confidence: number;
+  structural_only: boolean;
+}
+
+export interface AOIEvidenceGroup {
+  aoi_instance: string | null;
+  parameter_name: string | null;
+  parameter_direction: string | null;
+  signal_name: string | null;
+  source_location: string | null;
+  relationship_ids: string[];
+  confidence: number;
+}
+
+export interface STEvidenceGroup {
+  routine: string | null;
+  statement_index: number | null;
+  role: "assignment" | "read" | "condition";
+  signal_name: string | null;
+  source_location: string | null;
+  relationship_ids: string[];
+  confidence: number;
+}
+
+export interface UnknownEvidenceGroup {
+  reference_source: string | null;
+  signal_name: string | null;
+  source_location: string | null;
+  message: string;
+  relationship_ids: string[];
+  confidence: number;
+}
+
+export interface SFCEvidenceGroup {
+  routine: string | null;
+  step_name: string | null;
+  transition_name: string | null;
+  role: "step" | "transition" | "action" | "condition";
+  signal_name: string | null;
+  source_location: string | null;
+  relationship_ids: string[];
+  confidence: number;
+  structural_only: boolean;
+}
+
+export interface VerificationByLanguage {
+  ladder: LadderEvidenceGroup[];
+  fbd: FBDEvidenceGroup[];
+  aoi: AOIEvidenceGroup[];
+  structured_text: STEvidenceGroup[];
+  sfc?: SFCEvidenceGroup[];
+  unknown: UnknownEvidenceGroup[];
+}
+
+export interface UnifiedSignalEvidence {
+  target_signal_id: string;
+  target_signal_name: string | null;
+  summary: { answer: string; confidence: string };
+  what_controls_this_signal: RequiredCondition[];
+  who_writes_this_signal: SignalWriter[];
+  where_is_it_used: SignalReader[];
+  upstream_dependencies: unknown[];
+  downstream_impact: SignalReader[];
+  unknowns: UnknownDependency[];
+  evidence_sources: EvidenceSourceCounts;
+  confidence_summary: SignalConfidenceSummary;
+  verification: VerificationByLanguage;
+  advanced_details: Record<string, unknown>;
 }
 
 export interface SignalTroubleshootingWorkspace {
   question: string;
   interpretation: QuestionInterpretation;
   target_signal: SignalRef | null;
+  unified_evidence?: UnifiedSignalEvidence | null;
   writer_rungs: SignalEvidenceItem[];
   upstream_required_conditions: SignalEvidenceItem[];
   downstream_readers: SignalEvidenceItem[];

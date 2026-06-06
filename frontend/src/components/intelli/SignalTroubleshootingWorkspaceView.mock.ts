@@ -29,6 +29,7 @@ export const mockSignalTroubleshootingWorkspace: SignalTroubleshootingWorkspace 
     object_type: "tag",
     source_location: "Controller:PLC/Program:Program_A/Tag:Motor_C",
   },
+  unified_evidence: null,
   writer_rungs: [
     {
       source_id: "rung::PLC/Program_A/Routine_1/1",

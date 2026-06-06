@@ -24,7 +24,9 @@ from app.models.reasoning import (
     RelationshipType,
     WriteBehaviorType,
 )
+from app.models.unified_evidence import UnifiedSignalEvidence
 from app.services.dependency_graph_service import build_control_dependency_graph
+from app.services.unified_evidence_service import get_signal_evidence
 
 
 TroubleshootingIntent = Literal[
@@ -99,6 +101,7 @@ class SignalTroubleshootingWorkspace(BaseModel):
     question: str
     interpretation: QuestionInterpretation
     target_signal: SignalRef | None = None
+    unified_evidence: UnifiedSignalEvidence | None = None
     writer_rungs: list[EvidenceItem] = Field(default_factory=list)
     upstream_required_conditions: list[EvidenceItem] = Field(default_factory=list)
     downstream_readers: list[EvidenceItem] = Field(default_factory=list)
@@ -185,25 +188,20 @@ def build_signal_workspace(
         relationships,
         object_index,
     )
-    confidence_summary = _confidence_summary(
-        interpretation=interpretation,
-        writer_items=writer_items,
-        downstream_items=downstream_items,
-        unknown_items=unknown_items,
-        target=target,
-    )
-    explanation = _explanation(
-        target_name=(target.name if target else None) or selected.name or target_id,
-        writer_count=len(writer_items),
-        upstream_count=len(upstream_items),
-        downstream_count=len(downstream_items),
-        unknown_count=len(unknown_items),
+    unified = get_signal_evidence(target_id, control_objects, relationships)
+    explanation = unified.summary.answer
+    confidence_summary = ConfidenceSummary(
+        confidence=unified.confidence_summary.confidence,
+        evidence=unified.confidence_summary.evidence,
+        missing_evidence=unified.confidence_summary.missing_evidence,
+        warnings=unified.confidence_summary.warnings,
     )
 
     return SignalTroubleshootingWorkspace(
         question=question,
         interpretation=interpretation,
         target_signal=_signal_ref(target, target_id),
+        unified_evidence=unified,
         writer_rungs=writer_items,
         upstream_required_conditions=upstream_items,
         downstream_readers=downstream_items,
@@ -211,8 +209,7 @@ def build_signal_workspace(
         confidence_summary=confidence_summary,
         deterministic_explanation=explanation,
         advanced_details={
-            "relationship_ids": [rel.id for rel in writer_rels + reader_rels + unknown_rels],
-            "dependency_edge_count": graph.metadata.get("dependency_edge_count", 0),
+            **unified.advanced_details,
             "parser_metadata": {
                 "target_resolution": interpretation.metadata,
                 "target_match_type": selected.match_type,

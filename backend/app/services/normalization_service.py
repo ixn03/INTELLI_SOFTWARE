@@ -1954,6 +1954,13 @@ def _normalize_ladder_routine(
                     aoi_def=aoi_def,
                     ctx=rung_ctx,
                 )
+            elif _handle_vendor_amp_block(
+                instruction=instruction,
+                instr_id=instr_id,
+                instr_obj=control_objects[-1],
+                ctx=rung_ctx,
+            ):
+                continue
             elif _handle_generic_logic_block(
                 instruction=instruction,
                 instr_id=instr_id,
@@ -4071,6 +4078,10 @@ def _emit_bound_parameter_edges(
         }
         if block_name:
             extras_base["aoi_name"] = block_name
+        if platform_base.get("aoi_instance"):
+            extras_base["aoi_instance"] = platform_base["aoi_instance"]
+        if platform_base.get("language"):
+            extras_base["language"] = platform_base["language"]
 
         if _looks_like_tag_operand(operand):
             target_id = _resolve_tag_id_or_stub(
@@ -4411,6 +4422,10 @@ def _handle_aoi_instance(
     # --- Backing / instance tag (operand 0) -------------------------------
     backing_operand = operands[0]
     if backing_operand and _looks_like_tag_operand(backing_operand):
+        ps = dict(instr_obj.platform_specific or {})
+        ps["aoi_instance"] = backing_operand
+        instr_obj.platform_specific = ps
+    if backing_operand and _looks_like_tag_operand(backing_operand):
         backing_id = _resolve_tag_id_or_stub(
             operand=backing_operand,
             controller_name=ctx.controller_name,
@@ -4477,7 +4492,10 @@ def _handle_aoi_instance(
         relationships=ctx.relationships,
         mapped_params=mapped_params,
         bound_operands=bound_operands,
-        platform_base={},
+        platform_base={
+            "language": "ladder",
+            "aoi_instance": backing_operand if _looks_like_tag_operand(backing_operand) else None,
+        },
         binding_kind="aoi_parameter",
         block_name=aoi_def.name,
         expression_reads=False,
@@ -4509,6 +4527,136 @@ def _handle_aoi_instance(
                 },
             )
         )
+
+
+def _is_vendor_amp_block(instruction_type: str) -> bool:
+    """Rockwell Intralox AMP AOI-like blocks (deterministic structural registry)."""
+
+    upper = instruction_type.upper()
+    return upper.startswith("AMP_") and upper.endswith("_INTRALOX")
+
+
+def _handle_vendor_amp_block(
+    instruction: ControlInstruction,
+    instr_id: str,
+    instr_obj: ControlObject,
+    ctx: _RungContext,
+) -> bool:
+    """Register vendor AMP blocks with positional READS/WRITES (no behavior inference)."""
+
+    if not _is_vendor_amp_block(instruction.instruction_type):
+        return False
+
+    operands = list(instruction.operands)
+    if not operands:
+        return False
+
+    block_type = instruction.instruction_type.upper()
+    instance_name = operands[0] if _looks_like_tag_operand(operands[0]) else None
+
+    instr_obj.object_type = ControlObjectType.FUNCTION_BLOCK
+    attrs = dict(instr_obj.attributes or {})
+    attrs["is_vendor_amp_block"] = True
+    attrs["block_kind"] = "vendor_amp_block"
+    attrs["vendor_block_type"] = block_type
+    attrs["aoi_name"] = block_type
+    if instance_name:
+        attrs["aoi_instance"] = instance_name
+    attrs["semantic_family"] = _InstructionFamily.LOGIC_BLOCK.value
+    attrs["semantic_implemented"] = True
+    instr_obj.attributes = attrs
+    ps = dict(instr_obj.platform_specific or {})
+    ps["vendor_amp_block"] = True
+    ps["aoi_name"] = block_type
+    if instance_name:
+        ps["aoi_instance"] = instance_name
+    instr_obj.platform_specific = ps
+
+    tag_operands = [
+        (idx, operand)
+        for idx, operand in enumerate(operands)
+        if operand and _looks_like_tag_operand(operand)
+    ]
+    if not tag_operands:
+        return True
+
+    write_operand = tag_operands[-1] if len(tag_operands) >= 2 else None
+    read_operands = tag_operands[:-1] if len(tag_operands) >= 2 else tag_operands
+
+    for idx, operand in read_operands:
+        target_id = _resolve_tag_id_or_stub(
+            operand=operand,
+            controller_name=ctx.controller_name,
+            program_name=ctx.program_name,
+            tag_index=ctx.tag_index,
+            control_objects=ctx.control_objects,
+        )
+        ctx.relationships.append(
+            Relationship(
+                source_id=instr_id,
+                target_id=target_id,
+                relationship_type=RelationshipType.READS,
+                execution_context_id=ctx.exec_ctx_id,
+                logic_condition=ctx.rung_raw_text,
+                source_platform="rockwell",
+                source_location=ctx.rung_loc,
+                confidence=ConfidenceLevel.HIGH,
+                platform_specific=_rel_meta(
+                    ctx,
+                    instruction,
+                    operand=operand,
+                    extras={
+                        "language": "ladder",
+                        "aoi_name": block_type,
+                        "aoi_instance": instance_name,
+                        "parameter_name": f"In_{idx}",
+                        "parameter_usage": "Input",
+                        "operand_index": idx,
+                        "binding_kind": "vendor_amp_block",
+                        "gating_kind": "vendor_amp_parameter",
+                    },
+                ),
+            )
+        )
+
+    if write_operand is not None:
+        widx, woperand = write_operand
+        target_id = _resolve_tag_id_or_stub(
+            operand=woperand,
+            controller_name=ctx.controller_name,
+            program_name=ctx.program_name,
+            tag_index=ctx.tag_index,
+            control_objects=ctx.control_objects,
+        )
+        ctx.relationships.append(
+            Relationship(
+                source_id=instr_id,
+                target_id=target_id,
+                relationship_type=RelationshipType.WRITES,
+                write_behavior=WriteBehaviorType.MOVES_VALUE,
+                execution_context_id=ctx.exec_ctx_id,
+                logic_condition=ctx.rung_raw_text,
+                source_platform="rockwell",
+                source_location=ctx.rung_loc,
+                confidence=ConfidenceLevel.HIGH,
+                platform_specific=_rel_meta(
+                    ctx,
+                    instruction,
+                    operand=woperand,
+                    extras={
+                        "language": "ladder",
+                        "aoi_name": block_type,
+                        "aoi_instance": instance_name,
+                        "parameter_name": "Out",
+                        "parameter_usage": "Output",
+                        "operand_index": widx,
+                        "binding_kind": "vendor_amp_block",
+                        "gating_kind": "vendor_amp_parameter",
+                    },
+                ),
+            )
+        )
+    return True
 
 
 def _handle_generic_logic_block(
@@ -5388,6 +5536,8 @@ def _rel_meta(
         "instruction_type": instruction.instruction_type,
         "instruction_id": instruction.id,
     }
+    if instruction.language:
+        meta["language"] = instruction.language
     member_info = _member_suffix(operand)
     if member_info:
         meta["member"] = member_info["member"]
