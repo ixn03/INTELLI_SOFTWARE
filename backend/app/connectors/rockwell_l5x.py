@@ -39,6 +39,53 @@ def _attr(element: etree._Element | None, name: str, default: str = "") -> str:
     return str(element.get(name) or default)
 
 
+def _controller_name_from_export(
+    root: etree._Element,
+    controller_element: etree._Element | None,
+) -> tuple[str, dict[str, object]]:
+    """Return a deterministic controller name without inventing plant data."""
+
+    explicit = _attr(controller_element, "Name")
+    if explicit:
+        return explicit, {
+            "name_source": "controller_name_attribute",
+            "source_name_missing": False,
+        }
+    target_name = _attr(root, "TargetName")
+    target_type = _attr(root, "TargetType")
+    if target_name:
+        return target_name, {
+            "name_source": "root_target_name",
+            "source_name_missing": True,
+            "root_target_type": target_type,
+        }
+    return "Controller_001", {
+        "name_source": "deterministic_fallback",
+        "source_name_missing": True,
+        "root_target_type": target_type,
+    }
+
+
+def _program_name_from_export(
+    program_element: etree._Element,
+    index: int,
+) -> tuple[str, dict[str, object]]:
+    """Return explicit program name or a stable structural fallback."""
+
+    explicit = _attr(program_element, "Name")
+    if explicit:
+        return explicit, {
+            "name_source": "program_name_attribute",
+            "source_name_missing": False,
+            "program_index": index,
+        }
+    return f"Program_{index:03d}", {
+        "name_source": "deterministic_fallback",
+        "source_name_missing": True,
+        "program_index": index,
+    }
+
+
 def _tag_from_element(element: etree._Element, scope: str) -> ControlTag:
     description = element.findtext(".//Description")
 
@@ -275,10 +322,9 @@ class RockwellL5XConnector(PlatformConnector):
 
         controller_element = root.find(".//Controller")
 
-        controller_name = _attr(
+        controller_name, controller_name_metadata = _controller_name_from_export(
+            root,
             controller_element,
-            "Name",
-            "Unknown Controller",
         )
 
         controller_tags = [
@@ -292,13 +338,19 @@ class RockwellL5XConnector(PlatformConnector):
 
         programs: list[ControlProgram] = []
 
-        for program_element in root.findall(".//Programs/Program"):
+        missing_program_names = 0
 
-            program_name = _attr(
+        for program_index, program_element in enumerate(
+            root.findall(".//Programs/Program"),
+            start=1,
+        ):
+
+            program_name, program_name_metadata = _program_name_from_export(
                 program_element,
-                "Name",
-                "Unknown Program",
+                program_index,
             )
+            if program_name_metadata.get("source_name_missing"):
+                missing_program_names += 1
 
             program_tags = [
                 _tag_from_element(tag, program_name)
@@ -316,6 +368,7 @@ class RockwellL5XConnector(PlatformConnector):
                     name=program_name,
                     tags=program_tags,
                     routines=routines,
+                    metadata=program_name_metadata,
                 )
             )
 
@@ -342,6 +395,10 @@ class RockwellL5XConnector(PlatformConnector):
                         name=f"__AOI__/{aoi_name}",
                         tags=[],
                         routines=aoi_routines,
+                        metadata={
+                            "name_source": "aoi_definition_name",
+                            "source_name_missing": False,
+                        },
                     )
                 )
 
@@ -357,10 +414,14 @@ class RockwellL5XConnector(PlatformConnector):
                     programs=programs,
                     add_on_instruction_defs=aoi_defs,
                     data_type_defs=data_type_defs,
+                    metadata=controller_name_metadata,
                 )
             ],
             metadata={
                 "connector": self.display_name,
+                "controller_name_metadata": controller_name_metadata,
+                "missing_program_name_count": missing_program_names,
+                "program_count": len(programs),
             },
         )
 

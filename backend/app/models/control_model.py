@@ -263,6 +263,7 @@ class ControlProgram(BaseModel):
     name: str
     tags: List[ControlTag] = Field(default_factory=list)
     routines: List[ControlRoutine] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class ControlController(BaseModel):
@@ -275,6 +276,7 @@ class ControlController(BaseModel):
     # reasoning.py.
     add_on_instruction_defs: List[AddOnInstructionDef] = Field(default_factory=list)
     data_type_defs: List[DataTypeDef] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class ControlProject(BaseModel):

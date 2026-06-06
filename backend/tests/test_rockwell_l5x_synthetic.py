@@ -62,6 +62,39 @@ _SYNTH_L5X = b"""<?xml version="1.0" encoding="UTF-8"?>
 </RSLogix5000Content>"""
 
 
+_SYNTH_MISSING_NAMES_L5X = b"""<?xml version="1.0" encoding="UTF-8"?>
+<RSLogix5000Content SchemaRevision="1.0" TargetName="SynthTarget" TargetType="Controller">
+  <Controller>
+    <Programs>
+      <Program>
+        <Tags>
+          <Tag Name="Pump_A" DataType="BOOL" TagType="Base"/>
+        </Tags>
+        <Routines>
+          <Routine Name="Routine_A" Type="RLL">
+            <RLLContent>
+              <Rung Number="0"><Text><![CDATA[XIC(Pump_A) OTE(Motor_C);]]></Text></Rung>
+            </RLLContent>
+          </Routine>
+        </Routines>
+      </Program>
+      <Program>
+        <Tags>
+          <Tag Name="Valve_B" DataType="BOOL" TagType="Base"/>
+        </Tags>
+        <Routines>
+          <Routine Name="Routine_B" Type="RLL">
+            <RLLContent>
+              <Rung Number="0"><Text><![CDATA[XIC(Valve_B) OTE(Output_D);]]></Text></Rung>
+            </RLLContent>
+          </Routine>
+        </Routines>
+      </Program>
+    </Programs>
+  </Controller>
+</RSLogix5000Content>"""
+
+
 class TestRockwellL5XSynthetic(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -129,6 +162,29 @@ class TestRockwellL5XSynthetic(unittest.TestCase):
         self.assertIn("OperandRungOnly", tag_names)
         self.assertIn("OperandStOnly", tag_names)
         self.assertIn("InA", tag_names)
+
+    def test_missing_controller_and_program_names_use_stable_fallbacks(self) -> None:
+        project = RockwellL5XConnector().parse(
+            "missing_names.L5X",
+            _SYNTH_MISSING_NAMES_L5X,
+        )
+        self.assertEqual(project.project_name, "SynthTarget")
+        controller = project.controllers[0]
+        self.assertEqual(controller.name, "SynthTarget")
+        self.assertEqual(
+            controller.metadata.get("name_source"),
+            "root_target_name",
+        )
+        self.assertTrue(controller.metadata.get("source_name_missing"))
+        self.assertEqual([p.name for p in controller.programs], ["Program_001", "Program_002"])
+        self.assertTrue(
+            all(p.metadata.get("source_name_missing") for p in controller.programs)
+        )
+        self.assertEqual(
+            {tag.scope for program in controller.programs for tag in program.tags},
+            {"Program_001", "Program_002"},
+        )
+        self.assertEqual(project.metadata.get("missing_program_name_count"), 2)
 
 
 if __name__ == "__main__":
