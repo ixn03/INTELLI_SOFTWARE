@@ -5,23 +5,11 @@ import { usePathname } from "next/navigation";
 
 import { IntelliProjectProvider } from "@/context/IntelliProjectContext";
 
-const NAV: { href: string; label: string; kicker: string }[] = [
-  {
-    href: "/workspace",
-    label: "Reasoning",
-    kicker: "Trace, ask, diagnose",
-  },
-  {
-    href: "/workspace/sequence",
-    label: "Sequence",
-    kicker: "State and transitions",
-  },
-  {
-    href: "/workspace/project",
-    label: "Project graph",
-    kicker: "Objects and structure",
-  },
-];
+const MAIN_NAV = {
+  href: "/workspace",
+  label: "Diagnose",
+  kicker: "Import, search, trace",
+};
 
 export default function WorkspaceLayout({
   children,
@@ -29,6 +17,9 @@ export default function WorkspaceLayout({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const onMainWorkspace =
+    pathname === "/workspace" || pathname === "/workspace/";
+  const onAdvanced = pathname.startsWith("/workspace/advanced");
 
   return (
     <IntelliProjectProvider>
@@ -46,19 +37,29 @@ export default function WorkspaceLayout({
                 INTELLI
               </span>
               <span className="block text-[10px] uppercase tracking-[0.2em] text-cyan-200/70">
-                Command layer
+                Diagnosis
               </span>
             </span>
           </Link>
 
           <div className="mt-6 rounded-2xl border border-zinc-800/80 bg-zinc-900/45 p-3">
             <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500">
-              Product posture
+              How it works
             </p>
-            <p className="mt-2 text-sm leading-5 text-zinc-300">
-              Deterministic graph first. Runtime evidence second. AI wording
-              only after INTELLI can show its work.
-            </p>
+            <ol className="mt-3 space-y-2 text-xs leading-5 text-zinc-400">
+              <li>
+                <span className="font-medium text-zinc-300">1. Import</span> —
+                upload your L5X
+              </li>
+              <li>
+                <span className="font-medium text-zinc-300">2. Search</span> —
+                pick a tag or output
+              </li>
+              <li>
+                <span className="font-medium text-zinc-300">3. Diagnose</span> —
+                trace with evidence
+              </li>
+            </ol>
           </div>
 
           <div className="mt-6">
@@ -66,46 +67,40 @@ export default function WorkspaceLayout({
               Workspace
             </p>
             <ul className="mt-2 flex flex-col gap-2">
-              {NAV.map((item) => {
-                const active =
-                  item.href === "/workspace"
-                    ? pathname === "/workspace"
-                    : pathname.startsWith(item.href);
-                return (
-                  <li key={item.href}>
-                    <Link
-                      href={item.href}
-                      className={`block rounded-2xl border px-3 py-3 transition ${
-                        active
-                          ? "border-cyan-400/30 bg-cyan-400/10 text-white"
-                          : "border-transparent text-zinc-400 hover:border-zinc-800 hover:bg-zinc-900/70 hover:text-zinc-100"
-                      }`}
-                    >
-                      <span className="block text-sm font-semibold">
-                        {item.label}
-                      </span>
-                      <span className="mt-0.5 block text-xs text-zinc-500">
-                        {item.kicker}
-                      </span>
-                    </Link>
-                  </li>
-                );
-              })}
+              <li>
+                <Link
+                  href={MAIN_NAV.href}
+                  className={`block rounded-2xl border px-3 py-3 transition ${
+                    onMainWorkspace
+                      ? "border-cyan-400/30 bg-cyan-400/10 text-white"
+                      : "border-transparent text-zinc-400 hover:border-zinc-800 hover:bg-zinc-900/70 hover:text-zinc-100"
+                  }`}
+                >
+                  <span className="block text-sm font-semibold">
+                    {MAIN_NAV.label}
+                  </span>
+                  <span className="mt-0.5 block text-xs text-zinc-500">
+                    {MAIN_NAV.kicker}
+                  </span>
+                </Link>
+              </li>
             </ul>
           </div>
 
-          <div className="mt-auto rounded-2xl border border-zinc-800/80 bg-zinc-900/40 p-3">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500">
-              Build focus
-            </p>
-            <div className="mt-3 space-y-2 text-xs text-zinc-400">
-              <p>Multi-vendor model</p>
-              <p>Evidence-backed trace</p>
-              <p>Runtime diagnosis</p>
-            </div>
+          <div className="mt-auto space-y-3">
+            <Link
+              href="/workspace/advanced"
+              className={`block rounded-2xl border px-3 py-3 text-sm transition ${
+                onAdvanced
+                  ? "border-zinc-600 bg-zinc-900/70 text-zinc-200"
+                  : "border-zinc-800/80 text-zinc-500 hover:border-zinc-700 hover:text-zinc-300"
+              }`}
+            >
+              Advanced tools
+            </Link>
             <Link
               href="/"
-              className="mt-4 inline-flex w-full items-center justify-center rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm font-medium text-zinc-300 transition hover:bg-zinc-900 hover:text-white"
+              className="inline-flex w-full items-center justify-center rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm font-medium text-zinc-300 transition hover:bg-zinc-900 hover:text-white"
             >
               Home
             </Link>

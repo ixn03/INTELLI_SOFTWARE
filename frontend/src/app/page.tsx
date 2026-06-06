@@ -106,7 +106,7 @@ export default function HomePage() {
   async function upload() {
     setError(null);
     if (!file) {
-      setError("Choose a supported control export first.");
+      setError("Choose an L5X file first.");
       return;
     }
     const formData = new FormData();
@@ -221,18 +221,18 @@ export default function HomePage() {
                 </Badge>
               </div>
 
-              <label className="mt-6 block cursor-pointer rounded-2xl border border-dashed border-cyan-400/30 bg-cyan-400/[0.04] px-5 py-8 text-center transition hover:border-cyan-300/60 hover:bg-cyan-400/[0.07]">
+              <label className="mt-6 block cursor-pointer rounded-2xl border-2 border-dashed border-cyan-400/35 bg-cyan-400/[0.06] px-5 py-8 text-center transition hover:border-cyan-300/60 hover:bg-cyan-400/[0.09]">
                 <input
                   type="file"
-                  accept=".l5x,.L5X,.xml,.XML,.fhx,.FHX,.scl,.SCL,.txt,.csv,.cl,.hwl,.hwh,.hsc,.epr,application/xml,text/xml,text/plain"
+                  accept=".l5x,.L5X,application/xml,text/xml"
                   onChange={(e) => setFile(e.target.files?.[0] ?? null)}
                   className="sr-only"
                 />
                 <p className="text-sm font-medium text-zinc-100">
-                  {file ? file.name : "Click to select a PLC or DCS export"}
+                  {file ? file.name : "Drop L5X here or click to browse"}
                 </p>
                 <p className="mt-2 text-xs leading-relaxed text-zinc-500">
-                  L5X, Siemens XML, DeltaV FHX, Honeywell text/XML foundations.
+                  Studio 5000 export (.l5x)
                 </p>
               </label>
 

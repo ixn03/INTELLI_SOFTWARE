@@ -3,7 +3,6 @@
 import type { KeyboardEvent } from "react";
 import type { ControlProject } from "@/types/intelli";
 import type {
-  AskAnswerStyle,
   NormalizedControlObjectSummary,
   NormalizedSummaryResponse,
 } from "@/types/reasoning";
@@ -14,32 +13,15 @@ import {
   Eyebrow,
   InlineError,
   LoadingLine,
-  Stat,
   TextArea,
   TextInput,
 } from "./ui";
 
 /**
- * Left sidebar -- the operator's control surface.
- *
- * Sections, top to bottom:
- *
- *   1. Upload status (file name + "swap" button when a project is
- *      loaded; full upload card when not).
- *   2. Project summary (counts + minimal program/routine list).
- *   3. Object finder (server-backed search via ``GET /api/normalized-summary``
- *      paging; same query semantics as ``/api/control-objects``).
- *      Selecting an object fills the trace target in
- *      :file:`IntelliWorkspace.tsx`.
- *   4. Ask INTELLI (``/api/ask-v3`` with fallback to ``/api/ask-v2`` /
- *      ``/api/ask-v1``; optional runtime snapshot from the main panel).
- *
- * The sidebar is pure presentation -- all loading, error handling,
- * and state lives in IntelliWorkspace. We only render what we're given.
+ * Left sidebar — MVP operator surface: upload, tag search, ask.
  */
 
 interface SidebarProps {
-  // Upload status
   project: ControlProject | null;
   uploadFile: File | null;
   onFileChange: (file: File | null) => void;
@@ -48,13 +30,11 @@ interface SidebarProps {
   uploadLoading: boolean;
   uploadError: string | null;
 
-  // Normalized summary (counts / light refresh)
   summary: NormalizedSummaryResponse | null;
   summaryLoading: boolean;
   summaryError: string | null;
   onLoadSummary: () => void;
 
-  // Object finder (server-side search via /api/normalized-summary paging)
   objectList: NormalizedControlObjectSummary[];
   objectListTotal: number;
   objectListProjectTotal: number;
@@ -62,11 +42,10 @@ interface SidebarProps {
   objectListLoading: boolean;
   objectListError: string | null;
   hasActiveObjectFilter: boolean;
-  objectTypeFilter: string;
-  onObjectTypeFilter: (v: string) => void;
   objectListOffset: number;
   objectListHasPrev: boolean;
   objectListHasNext: boolean;
+  showObjectPaging: boolean;
   onObjectListPrev: () => void;
   onObjectListNext: () => void;
   search: string;
@@ -74,28 +53,25 @@ interface SidebarProps {
   selectedObjectId: string;
   onSelectObject: (id: string) => void;
 
-  // Ask box
   question: string;
   onQuestionChange: (s: string) => void;
-  answerStyle: AskAnswerStyle;
-  onAnswerStyleChange: (s: AskAnswerStyle) => void;
   askLoading: boolean;
   onAsk: () => void;
+  selectedTagLabel: string | null;
 }
 
 export default function Sidebar(props: SidebarProps) {
   return (
     <aside className="flex h-full w-full max-w-[410px] flex-col gap-4 border-r border-white/10 bg-[linear-gradient(180deg,rgba(9,9,11,0.92),rgba(3,7,18,0.98))] px-4 py-5 shadow-2xl shadow-black/20">
       <UploadSection {...props} />
-      <ProjectSummarySection {...props} />
-      <ObjectFinderSection {...props} />
+      <TagFinderSection {...props} />
       <AskSection {...props} />
     </aside>
   );
 }
 
 // ---------------------------------------------------------------------------
-// 1. Upload
+// 1. Upload — prominent L5X drop zone
 // ---------------------------------------------------------------------------
 
 function UploadSection({
@@ -135,21 +111,26 @@ function UploadSection({
   }
 
   return (
-    <section className="flex flex-col gap-2 rounded-2xl border border-zinc-800/80 bg-zinc-900/45 p-3">
-      <Eyebrow>Upload control export</Eyebrow>
-      <label className="block cursor-pointer rounded-xl border border-dashed border-cyan-400/25 bg-cyan-400/[0.035] px-4 py-5 text-center transition hover:border-cyan-300/50">
+    <section className="flex flex-col gap-3 rounded-2xl border border-cyan-400/25 bg-cyan-400/[0.05] p-4">
+      <div>
+        <Eyebrow>Step 1 — Import</Eyebrow>
+        <p className="mt-1 text-xs text-zinc-400">
+          Upload a Rockwell Studio 5000 L5X export to begin.
+        </p>
+      </div>
+      <label className="block cursor-pointer rounded-xl border-2 border-dashed border-cyan-400/35 bg-cyan-400/[0.06] px-4 py-8 text-center transition hover:border-cyan-300/55 hover:bg-cyan-400/[0.09]">
         <span className="sr-only">L5X file</span>
         <input
           type="file"
-          accept=".l5x,.L5X,.xml,.XML,.fhx,.FHX,.scl,.SCL,.txt,.csv,.cl,.hwl,.hwh,.hsc,.epr,application/xml,text/xml,text/plain"
+          accept=".l5x,.L5X,application/xml,text/xml"
           onChange={(e) => onFileChange(e.target.files?.[0] ?? null)}
           className="sr-only"
         />
-        <p className="text-sm text-zinc-200">
-          {uploadFile ? uploadFile.name : "Choose a control export"}
+        <p className="text-sm font-medium text-zinc-100">
+          {uploadFile ? uploadFile.name : "Drop L5X here or click to browse"}
         </p>
-        <p className="mt-1 text-[11px] text-zinc-500">
-          L5X, Siemens XML, DeltaV FHX, Honeywell text/XML
+        <p className="mt-1.5 text-[11px] text-zinc-500">
+          Studio 5000 export (.l5x)
         </p>
       </label>
       <Button
@@ -157,7 +138,7 @@ function UploadSection({
         onClick={onUploadSubmit}
         disabled={uploadLoading || !uploadFile}
       >
-        {uploadLoading ? "Uploading..." : "Upload"}
+        {uploadLoading ? "Uploading..." : "Upload & analyze"}
       </Button>
       {uploadError ? <InlineError>{uploadError}</InlineError> : null}
     </section>
@@ -165,67 +146,25 @@ function UploadSection({
 }
 
 // ---------------------------------------------------------------------------
-// 2. Project summary
+// 2. Tag finder — tags only, friendly names
 // ---------------------------------------------------------------------------
 
-function ProjectSummarySection({
-  project,
-  summary,
-}: SidebarProps) {
-  if (!project) return null;
-
-  const programs = project.controllers.flatMap((c) =>
-    c.programs.map((p) => ({ controller: c.name, name: p.name })),
-  );
-  const routineCount = project.controllers.reduce(
-    (acc, c) =>
-      acc + c.programs.reduce((a, p) => a + p.routines.length, 0),
-    0,
-  );
-
-  return (
-    <section className="rounded-2xl border border-zinc-800/80 bg-zinc-900/35 p-3">
-      <div className="flex items-center justify-between gap-3">
-        <Eyebrow>Graph summary</Eyebrow>
-        <Badge tone={summary ? "success" : "outline"} uppercase>
-          {summary ? "normalized" : "pending"}
-        </Badge>
-      </div>
-      <div className="mt-2 flex flex-wrap gap-1.5">
-        <Stat
-          value={project.controllers.length}
-          label={`controller${project.controllers.length === 1 ? "" : "s"}`}
-        />
-        <Stat
-          value={programs.length}
-          label={`program${programs.length === 1 ? "" : "s"}`}
-        />
-        <Stat
-          value={routineCount}
-          label={`routine${routineCount === 1 ? "" : "s"}`}
-        />
-        {summary ? (
-          <>
-            <Stat
-              value={summary.control_object_count}
-              label="objects"
-            />
-            <Stat
-              value={summary.relationship_count}
-              label="relationships"
-            />
-          </>
-        ) : null}
-      </div>
-    </section>
-  );
+function tagDisplayName(o: NormalizedControlObjectSummary): string {
+  if (o.name && o.name.trim()) return o.name.trim();
+  const tail = o.id.split("/").pop();
+  return tail ?? o.id;
 }
 
-// ---------------------------------------------------------------------------
-// 3. Object finder
-// ---------------------------------------------------------------------------
+function tagLocationHint(o: NormalizedControlObjectSummary): string | null {
+  if (o.source_location?.trim()) return o.source_location.trim();
+  const parts = o.id.split("/");
+  if (parts.length >= 3) {
+    return parts.slice(0, -1).join(" / ");
+  }
+  return null;
+}
 
-function ObjectFinderSection({
+function TagFinderSection({
   project,
   summary,
   summaryLoading,
@@ -238,11 +177,10 @@ function ObjectFinderSection({
   objectListLoading,
   objectListError,
   hasActiveObjectFilter,
-  objectTypeFilter,
-  onObjectTypeFilter,
   objectListOffset,
   objectListHasPrev,
   objectListHasNext,
+  showObjectPaging,
   onObjectListPrev,
   onObjectListNext,
   search,
@@ -263,61 +201,43 @@ function ObjectFinderSection({
     const pt = Math.max(projectWide, objectListProjectTotal, objectListTotal);
 
     if (hasActiveObjectFilter && objectListTotal === 0 && pt > 0) {
-      return "No objects match the current filter.";
+      return "No tags match your search.";
     }
     if (!hasActiveObjectFilter && pt > 0) {
-      return "Objects failed to load. Try refreshing.";
+      return "Tags failed to load. Try refreshing.";
     }
-    return "No control objects in the normalized graph.";
+    return "No tags found in this project.";
   })();
 
   return (
     <section className="flex min-h-0 flex-1 flex-col gap-2 rounded-2xl border border-zinc-800/80 bg-zinc-900/35 p-3">
       <div className="flex items-baseline justify-between gap-2">
-        <Eyebrow>Find an object</Eyebrow>
+        <Eyebrow>Step 2 — Find a tag</Eyebrow>
         <span className="text-[10px] text-zinc-500">
           {objectListLoading
             ? "…"
-            : `${objectList.length} shown · ${objectListTotal} match`}
-          {projectWide > 0 && projectWide !== objectListTotal ? (
-            <span className="text-zinc-600"> · {projectWide} total</span>
-          ) : null}
+            : objectListTotal > 0
+              ? `${objectListTotal} tag${objectListTotal === 1 ? "" : "s"}`
+              : ""}
         </span>
       </div>
-
-      <label className="sr-only" htmlFor="intelli-object-type">
-        Object type filter
-      </label>
-      <select
-        id="intelli-object-type"
-        value={objectTypeFilter}
-        onChange={(e) => onObjectTypeFilter(e.target.value)}
-        className="rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1.5 text-xs text-zinc-200"
-      >
-        <option value="">All types</option>
-        <option value="tag">Tags</option>
-        <option value="routine">Routines</option>
-        <option value="rung">Rungs</option>
-        <option value="instruction">Instructions</option>
-        <option value="controller">Controllers</option>
-        <option value="program">Programs</option>
-      </select>
 
       <TextInput
         value={search}
         onChange={onSearch}
-        placeholder="Search id, name, type, location"
-        ariaLabel="Search control objects"
+        placeholder="Search tag name or location"
+        ariaLabel="Search tags"
       />
 
-      {objectListFetchSucceeded &&
+      {showObjectPaging &&
+      objectListFetchSucceeded &&
       objectListTotal > 0 &&
       (objectListHasPrev || objectListHasNext) ? (
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-[10px] text-zinc-500">
             {objectList.length > 0
-              ? `Rows ${objectListOffset + 1}–${objectListOffset + objectList.length} of ${objectListTotal} match`
-              : `Page · ${objectListTotal} match`}
+              ? `${objectListOffset + 1}–${objectListOffset + objectList.length} of ${objectListTotal}`
+              : `${objectListTotal} matches`}
           </p>
           <div className="flex gap-1.5">
             <Button
@@ -348,11 +268,11 @@ function ObjectFinderSection({
 
       {!summary && !summaryLoading && !summaryError ? (
         <Button tone="secondary" onClick={onLoadSummary}>
-          Load graph counts
+          Refresh tag list
         </Button>
       ) : null}
       {(summaryLoading && !summary) || objectListLoading ? (
-        <LoadingLine>Loading objects…</LoadingLine>
+        <LoadingLine>Loading tags…</LoadingLine>
       ) : null}
 
       <div className="min-h-[8rem] max-h-[min(22rem,50vh)] flex-1 overflow-y-auto overflow-x-hidden rounded-xl border border-zinc-800/80 bg-zinc-950/40">
@@ -362,28 +282,26 @@ function ObjectFinderSection({
           <ul className="divide-y divide-zinc-800/70">
             {objectList.map((o) => {
               const active = o.id === selectedObjectId;
+              const location = tagLocationHint(o);
               return (
                 <li key={o.id}>
                   <button
                     type="button"
                     onClick={() => onSelectObject(o.id)}
-                    className={`block w-full px-3 py-2 text-left transition ${
+                    className={`block w-full px-3 py-2.5 text-left transition ${
                       active
-                        ? "bg-zinc-800/80"
+                        ? "bg-cyan-400/10 ring-1 ring-inset ring-cyan-400/25"
                         : "hover:bg-zinc-900/60"
                     }`}
                   >
-                    <div className="flex items-baseline justify-between gap-2">
-                      <span className="truncate text-sm text-zinc-100">
-                        {o.name ?? o.id.split("/").pop()}
+                    <span className="block truncate text-sm font-medium text-zinc-100">
+                      {tagDisplayName(o)}
+                    </span>
+                    {location ? (
+                      <span className="mt-0.5 block truncate text-[11px] text-zinc-500">
+                        {location}
                       </span>
-                      <Badge tone="outline" uppercase>
-                        {o.object_type}
-                      </Badge>
-                    </div>
-                    <p className="mt-0.5 truncate font-mono text-[10px] text-zinc-500">
-                      {o.id}
-                    </p>
+                    ) : null}
                   </button>
                 </li>
               );
@@ -396,17 +314,16 @@ function ObjectFinderSection({
 }
 
 // ---------------------------------------------------------------------------
-// 4. Ask INTELLI
+// 3. Ask INTELLI — optional natural-language path
 // ---------------------------------------------------------------------------
 
 function AskSection({
   project,
   question,
   onQuestionChange,
-  answerStyle,
-  onAnswerStyleChange,
   askLoading,
   onAsk,
+  selectedTagLabel,
 }: SidebarProps) {
   if (!project) return null;
 
@@ -420,22 +337,27 @@ function AskSection({
   }
 
   return (
-    <section className="flex flex-col gap-2.5 rounded-2xl border border-cyan-400/20 bg-cyan-400/[0.04] p-3">
-      <div className="flex items-center justify-between gap-3">
-        <Eyebrow>Ask INTELLI</Eyebrow>
-        <Badge tone="info" uppercase>
-          evidence first
-        </Badge>
-      </div>
+    <section className="flex flex-col gap-2.5 rounded-2xl border border-zinc-800/80 bg-zinc-900/35 p-3">
+      <Eyebrow>Or ask a question</Eyebrow>
+      {selectedTagLabel ? (
+        <p className="text-[11px] text-zinc-500">
+          Context:{" "}
+          <span className="text-zinc-300">{selectedTagLabel}</span>
+        </p>
+      ) : (
+        <p className="text-[11px] text-zinc-500">
+          Select a tag above for automatic diagnosis, or ask in plain language.
+        </p>
+      )}
       <TextArea
         value={question}
         onChange={onQuestionChange}
         onKeyDown={onKeyDown}
-        rows={5}
+        rows={3}
         placeholder={
-          'Try: "Why is Pump B not running?"\n' +
-          '"What state is this sequence waiting on?"\n' +
-          '"Where is Faults.Any used?"'
+          selectedTagLabel
+            ? `Why is ${selectedTagLabel} not energizing?`
+            : '"Why is Pump B not running?"'
         }
         ariaLabel="Ask INTELLI a question"
       />
@@ -446,24 +368,6 @@ function AskSection({
       >
         {askLoading ? "Thinking..." : "Ask"}
       </Button>
-      <label className="flex flex-col gap-1 text-[11px] text-zinc-500">
-        Answer style
-        <select
-          value={answerStyle}
-          onChange={(e) => onAnswerStyleChange(e.target.value as AskAnswerStyle)}
-          className="rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1.5 text-xs text-zinc-200"
-        >
-          <option value="concise_operator">Concise operator</option>
-          <option value="controls_engineer">Controls engineer</option>
-          <option value="detailed_reasoning">Detailed reasoning</option>
-        </select>
-      </label>
-      <p className="text-[11px] leading-snug text-zinc-500">
-        Uses ask-v3 (deterministic evidence, optional LLM wording). Enter
-        sends; Shift+Enter newline. Falls back to ask-v2 then ask-v1 if
-        needed. Add a JSON runtime snapshot in the panel for live-style
-        diagnosis.
-      </p>
     </section>
   );
 }
@@ -475,8 +379,6 @@ interface SimpleProjectSummaryRowProps {
 export function SimpleProjectSummaryRow({
   project,
 }: SimpleProjectSummaryRowProps) {
-  // (Kept exported so a future header can show a compact project
-  // chip; not used by the default sidebar layout.)
   return (
     <span className="text-xs text-zinc-400">
       {project.project_name}

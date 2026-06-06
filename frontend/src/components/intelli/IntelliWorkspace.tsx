@@ -19,7 +19,7 @@ import type {
 
 import AnswerView from "./AnswerView";
 import Sidebar from "./Sidebar";
-import { Badge, Stat } from "./ui";
+import { Badge } from "./ui";
 
 const IS_DEV = process.env.NODE_ENV === "development";
 
@@ -65,8 +65,6 @@ interface UploadResponse {
   graph: Record<string, number>;
 }
 
-type TraceVersion = "v1" | "v2";
-
 /**
  * Main engineering workspace: upload, object search, trace, ask,
  * runtime evaluation. Expects ``IntelliProjectProvider`` above in the tree.
@@ -94,7 +92,7 @@ export default function IntelliWorkspace() {
     useState(false);
   const [objectListLoading, setObjectListLoading] = useState(false);
   const [objectListError, setObjectListError] = useState<string | null>(null);
-  const [objectTypeFilter, setObjectTypeFilter] = useState("");
+  const objectTypeFilter = "tag";
   const [objectListOffset, setObjectListOffset] = useState(0);
 
   const [search, setSearch] = useState("");
@@ -103,13 +101,11 @@ export default function IntelliWorkspace() {
   const [selectedObjectId, setSelectedObjectId] = useState("");
 
   const [trace, setTrace] = useState<TraceResponse | null>(null);
-  const [traceVersion, setTraceVersion] = useState<TraceVersion | null>(null);
-  const [traceLoading, setTraceLoading] = useState<TraceVersion | null>(null);
+  const [traceLoading, setTraceLoading] = useState(false);
   const [traceError, setTraceError] = useState<string | null>(null);
 
   const [question, setQuestion] = useState("");
-  const [answerStyle, setAnswerStyle] =
-    useState<AskAnswerStyle>("controls_engineer");
+  const answerStyle: AskAnswerStyle = "controls_engineer";
   const [askLoading, setAskLoading] = useState(false);
   const [askedQuestion, setAskedQuestion] = useState<string | null>(null);
   const [llmAssist, setLlmAssist] = useState<LLMAssistResponse | null>(null);
@@ -258,38 +254,6 @@ export default function IntelliWorkspace() {
     objectListFetchSucceeded &&
     objectListOffset + objectList.length < objectListTotal;
 
-  const projectStats = useMemo(() => {
-    if (!project) {
-      return {
-        controllers: 0,
-        programs: 0,
-        routines: 0,
-        objects: 0,
-        relationships: 0,
-      };
-    }
-    const programs = project.controllers.reduce(
-      (acc, controller) => acc + controller.programs.length,
-      0,
-    );
-    const routines = project.controllers.reduce(
-      (acc, controller) =>
-        acc +
-        controller.programs.reduce(
-          (programAcc, program) => programAcc + program.routines.length,
-          0,
-        ),
-      0,
-    );
-    return {
-      controllers: project.controllers.length,
-      programs,
-      routines,
-      objects: summary?.control_object_count ?? objectListProjectTotal,
-      relationships: summary?.relationship_count ?? 0,
-    };
-  }, [project, summary, objectListProjectTotal]);
-
   async function uploadFile() {
     setUploadError(null);
     if (!file) {
@@ -306,7 +270,6 @@ export default function IntelliWorkspace() {
       setObjectListOffset(0);
       setSelectedObjectId("");
       setTrace(null);
-      setTraceVersion(null);
       setTraceError(null);
       setAskedQuestion(null);
       setLlmAssist(null);
@@ -339,39 +302,35 @@ export default function IntelliWorkspace() {
     await fetchObjectPage();
   }, [projectApiKey, loadLightSummary, fetchObjectPage]);
 
-  async function runTrace(version: TraceVersion) {
-    if (!project) {
-      setTraceError("Upload a project first.");
-      return;
-    }
-    const id = selectedObjectId.trim();
-    if (!id) {
-      setTraceError("Pick or enter a target object id first.");
-      return;
-    }
-    setTraceError(null);
-    setRuntimeEvalError(null);
-    setTraceLoading(version);
-    setAskedQuestion(null);
-    setLlmAssist(null);
-    try {
-      const endpoint = version === "v2" ? "/api/trace-v2" : "/api/trace-v1";
-      const res = await axios.post<TraceResponse>(
-        `${apiBase.replace(/\/$/, "")}${endpoint}`,
-        {
-          target_object_id: id,
-        },
-      );
-      setTrace(res.data);
-      setTraceVersion(version);
-    } catch (err) {
-      setTrace(null);
-      setTraceVersion(null);
-      setTraceError(extractIntelliError(err, "Could not run trace"));
-    } finally {
-      setTraceLoading(null);
-    }
-  }
+  const runTraceV2 = useCallback(
+    async (targetId: string) => {
+      if (!project) {
+        setTraceError("Upload a project first.");
+        return;
+      }
+      const id = targetId.trim();
+      if (!id) return;
+
+      setTraceError(null);
+      setRuntimeEvalError(null);
+      setTraceLoading(true);
+      setAskedQuestion(null);
+      setLlmAssist(null);
+      try {
+        const res = await axios.post<TraceResponse>(
+          `${apiBase.replace(/\/$/, "")}/api/trace-v2`,
+          { target_object_id: id },
+        );
+        setTrace(res.data);
+      } catch (err) {
+        setTrace(null);
+        setTraceError(extractIntelliError(err, "Could not run trace"));
+      } finally {
+        setTraceLoading(false);
+      }
+    },
+    [apiBase, project],
+  );
 
   function parseRuntimeSnapshotJson(): Record<string, unknown> | null {
     const trimmed = runtimeSnapshotText.trim();
@@ -415,49 +374,14 @@ export default function IntelliWorkspace() {
       );
       setLlmAssist(res.data);
       setTrace(res.data.deterministic_result);
-      setTraceVersion("v2");
       const tid = res.data.target_object_id;
       if (typeof tid === "string" && tid.length > 0) {
         setSelectedObjectId(tid);
       }
-    } catch {
-      try {
-        const res = await axios.post<TraceResponse>(
-          `${apiBase.replace(/\/$/, "")}/api/ask-v2`,
-          {
-            question: q,
-            runtime_snapshot: runtimeSnapshot ?? undefined,
-          },
-        );
-        setLlmAssist(null);
-        setTrace(res.data);
-        setTraceVersion("v2");
-        const detected = res.data.platform_specific?.["detected_target_object_id"];
-        if (typeof detected === "string" && detected.length > 0) {
-          setSelectedObjectId(detected);
-        }
-      } catch {
-        try {
-          const res = await axios.post<TraceResponse>(
-            `${apiBase.replace(/\/$/, "")}/api/ask-v1`,
-            {
-              question: q,
-            },
-          );
-          setLlmAssist(null);
-          setTrace(res.data);
-          setTraceVersion("v2");
-          const detected = res.data.platform_specific?.["detected_target_object_id"];
-          if (typeof detected === "string" && detected.length > 0) {
-            setSelectedObjectId(detected);
-          }
-        } catch (err) {
-          setTrace(null);
-          setTraceVersion(null);
-          setLlmAssist(null);
-          setTraceError(extractIntelliError(err, "Could not route question"));
-        }
-      }
+    } catch (err) {
+      setTrace(null);
+      setLlmAssist(null);
+      setTraceError(extractIntelliError(err, "Could not route question"));
     } finally {
       setAskLoading(false);
     }
@@ -485,7 +409,6 @@ export default function IntelliWorkspace() {
           },
         );
         setTrace(res.data);
-        setTraceVersion("v2");
       } catch (err) {
         setRuntimeEvalError(
           extractIntelliError(err, "Runtime evaluation failed."),
@@ -511,15 +434,12 @@ export default function IntelliWorkspace() {
     setObjectListError(null);
     setSelectedObjectId("");
     setSearch("");
-    setObjectTypeFilter("");
     setObjectListOffset(0);
     setTrace(null);
-    setTraceVersion(null);
     setTraceError(null);
     setAskedQuestion(null);
     setLlmAssist(null);
     setQuestion("");
-    setAnswerStyle("controls_engineer");
     setRuntimeSnapshotText("{}");
     setRuntimeEvaluating(false);
     setRuntimeEvalError(null);
@@ -542,42 +462,31 @@ export default function IntelliWorkspace() {
       <header className="shrink-0 border-b border-white/10 bg-zinc-950/80 px-5 py-4 backdrop-blur">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge tone="info" uppercase>
-                reasoning workspace
-              </Badge>
-              <Badge tone={summaryError || objectListError ? "warning" : "success"} uppercase>
-                {summaryError || objectListError ? "review graph" : "graph online"}
-              </Badge>
-              {traceVersion ? (
-                <Badge tone="neutral" uppercase>
-                  trace {traceVersion}
-                </Badge>
-              ) : null}
-            </div>
+            <Badge tone="info" uppercase>
+              Step 3 — Diagnose
+            </Badge>
             <h1 className="mt-2 truncate text-2xl font-semibold tracking-[-0.03em] text-white">
               {project.project_name || "Imported control project"}
             </h1>
             <p className="mt-1 max-w-3xl truncate text-sm text-zinc-500">
-              Evidence-backed object tracing, runtime diagnosis, and controls
-              question routing.
+              {selectedObject
+                ? `Tracing ${selectedObject.name ?? selectedObjectId.split("/").pop()}`
+                : "Select a tag to see what controls it"}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <Link
+              href="/workspace/advanced"
+              className="inline-flex rounded-xl border border-zinc-800 bg-zinc-900/70 px-3 py-2 text-sm text-zinc-400 transition hover:border-zinc-700 hover:text-zinc-200"
+            >
+              Advanced
+            </Link>
             <Link
               href="/"
               className="inline-flex rounded-xl border border-zinc-800 bg-zinc-900/70 px-3 py-2 text-sm text-zinc-300 transition hover:border-zinc-700 hover:text-white xl:hidden"
             >
               Home
             </Link>
-            <button
-              type="button"
-              onClick={() => void refreshSummary()}
-              disabled={summaryLoading || objectListLoading}
-              className="rounded-xl border border-zinc-800 bg-zinc-900/70 px-3 py-2 text-sm text-zinc-300 transition hover:border-zinc-700 hover:text-white disabled:opacity-40"
-            >
-              {summaryLoading || objectListLoading ? "Refreshing..." : "Refresh graph"}
-            </button>
             <button
               type="button"
               onClick={resetWorkspaceUpload}
@@ -587,13 +496,6 @@ export default function IntelliWorkspace() {
             </button>
           </div>
         </div>
-        <ProjectStatsBar
-          stats={projectStats}
-          selectedObjectName={
-            selectedObject?.name ??
-            (selectedObjectId ? selectedObjectId.split("/").pop() ?? selectedObjectId : "")
-          }
-        />
       </header>
       <div className="flex min-h-0 flex-1">
         <Sidebar
@@ -615,11 +517,10 @@ export default function IntelliWorkspace() {
           objectListProjectTotal={objectListProjectTotal}
           objectListFetchSucceeded={objectListFetchSucceeded}
           hasActiveObjectFilter={hasActiveObjectFilter}
-          objectTypeFilter={objectTypeFilter}
-          onObjectTypeFilter={setObjectTypeFilter}
           objectListOffset={objectListOffset}
           objectListHasPrev={objectListHasPrev}
           objectListHasNext={objectListHasNext}
+          showObjectPaging={objectListTotal > OBJECT_FINDER_PAGE_SIZE}
           onObjectListPrev={() =>
             setObjectListOffset((o) => Math.max(0, o - OBJECT_FINDER_PAGE_SIZE))
           }
@@ -632,23 +533,26 @@ export default function IntelliWorkspace() {
           onSelectObject={(id) => {
             setSelectedObjectId(id);
             setTraceError(null);
+            void runTraceV2(id);
           }}
           question={question}
           onQuestionChange={setQuestion}
-          answerStyle={answerStyle}
-          onAnswerStyleChange={setAnswerStyle}
           askLoading={askLoading}
           onAsk={() => void ask()}
+          selectedTagLabel={
+            selectedObject?.name ??
+            (selectedObjectId
+              ? selectedObjectId.split("/").pop() ?? selectedObjectId
+              : null)
+          }
         />
         <AnswerView
           selectedObject={selectedObject}
           selectedObjectId={selectedObjectId}
           trace={trace}
-          traceVersion={traceVersion}
           traceLoading={traceLoading}
           traceError={traceError}
           askedQuestion={askedQuestion}
-          onRunTrace={runTrace}
           runtimeSnapshotText={runtimeSnapshotText}
           onRuntimeSnapshotTextChange={(t) => {
             setRuntimeSnapshotText(t);
@@ -683,31 +587,30 @@ function WorkspaceNoProject({
       <div className="relative w-full max-w-3xl rounded-[2rem] border border-white/10 bg-zinc-950/75 p-6 shadow-2xl shadow-black/40 backdrop-blur">
         <div className="mx-auto max-w-2xl">
           <Badge tone="info" uppercase>
-            workspace standby
+            Step 1 — Import
           </Badge>
           <h1 className="mt-4 text-4xl font-semibold tracking-[-0.04em] text-white">
-            Load a control project to start reasoning.
+            Upload your L5X to start diagnosing.
           </h1>
           <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-zinc-400">
-            Upload a supported export and INTELLI will move into object search,
-            trace, ask, and runtime diagnosis mode. The backend keeps the most
-            recent project in memory during development.
+            Import a Studio 5000 export, search for a tag, and INTELLI traces
+            what controls it with evidence-backed conclusions.
           </p>
         </div>
 
         <div className="mx-auto mt-8 max-w-xl rounded-2xl border border-zinc-800/80 bg-zinc-900/45 p-4 text-left">
-          <label className="block cursor-pointer rounded-2xl border border-dashed border-cyan-400/30 bg-cyan-400/[0.04] px-4 py-7 text-center transition hover:border-cyan-300/60">
+          <label className="block cursor-pointer rounded-2xl border-2 border-dashed border-cyan-400/35 bg-cyan-400/[0.06] px-4 py-8 text-center transition hover:border-cyan-300/55">
             <input
               type="file"
-              accept=".l5x,.L5X,.xml,.XML,.fhx,.FHX,.scl,.SCL,.txt,.csv,.cl,.hwl,.hwh,.hsc,.epr,application/xml,text/xml,text/plain"
+              accept=".l5x,.L5X,application/xml,text/xml"
               onChange={(e) => onFileChange(e.target.files?.[0] ?? null)}
               className="sr-only"
             />
             <p className="text-sm font-medium text-zinc-100">
-              {file ? file.name : "Choose a PLC or DCS export"}
+              {file ? file.name : "Drop L5X here or click to browse"}
             </p>
             <p className="mt-2 text-xs text-zinc-500">
-              Rockwell L5X, Siemens XML, DeltaV FHX, Honeywell text/XML.
+              Studio 5000 export (.l5x)
             </p>
           </label>
           <button
@@ -716,7 +619,7 @@ function WorkspaceNoProject({
             disabled={uploading || !file}
             className="mt-4 w-full rounded-xl bg-cyan-300 py-3 text-sm font-semibold text-cyan-950 transition hover:bg-cyan-200 disabled:opacity-40"
           >
-            {uploading ? "Uploading..." : "Analyze project"}
+            {uploading ? "Uploading..." : "Upload & analyze"}
           </button>
           {uploadError ? (
             <p className="mt-3 rounded-lg border border-rose-900/60 bg-rose-950/30 px-3 py-2 text-sm text-rose-100">
@@ -736,34 +639,3 @@ function WorkspaceNoProject({
   );
 }
 
-function ProjectStatsBar({
-  stats,
-  selectedObjectName,
-}: {
-  stats: {
-    controllers: number;
-    programs: number;
-    routines: number;
-    objects: number;
-    relationships: number;
-  };
-  selectedObjectName: string;
-}) {
-  return (
-    <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-      <div className="flex flex-wrap gap-2">
-        <Stat value={stats.controllers} label="controllers" />
-        <Stat value={stats.programs} label="programs" />
-        <Stat value={stats.routines} label="routines" />
-        <Stat value={stats.objects} label="objects" />
-        <Stat value={stats.relationships} label="relationships" />
-      </div>
-      <div className="min-w-0 rounded-xl border border-zinc-800/80 bg-zinc-900/55 px-3 py-2 text-xs">
-        <span className="text-zinc-500">Selected target: </span>
-        <span className="text-zinc-200">
-          {selectedObjectName || "none yet"}
-        </span>
-      </div>
-    </div>
-  );
-}

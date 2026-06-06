@@ -26,7 +26,6 @@ import {
 import {
   Accordion,
   Badge,
-  Button,
   Card,
   CardBody,
   CardHeader,
@@ -36,7 +35,6 @@ import {
   InlineError,
   KVRow,
   LoadingLine,
-  Stat,
 } from "./ui";
 
 import {
@@ -47,49 +45,27 @@ import {
   WriterPathResultsSection,
 } from "./RuntimeDiagnosisView";
 
-/**
- * Main panel -- shows the answer for the currently selected target.
- *
- * Layered top to bottom:
- *
- *   1. Selected-object card + trace actions.
- *   2. Runtime snapshot panel (diagnosis mode).
- *   3. Operational verdict card when ``trace_version === "runtime_v2"``.
- *   4. Design trace answer (natural-language Trace v2, excluding runtime
- *      overlay conclusions).
- *   5. Key conditions (writer_conditions / branch_warning).
- *   6. Runtime condition breakdown, writer paths, conflicts (runtime v2).
- *   7. Writers / readers count strip.
- *   8. Evidence accordion.
- *   9. Debug accordion (raw JSON hidden until expanded).
- *
- * Trace v2 is the default. A small "Trace v1" link in the header
- * triggers the raw v1 endpoint for advanced users.
- */
+const IS_DEV = process.env.NODE_ENV === "development";
 
-type TraceVersion = "v1" | "v2";
+/**
+ * Main panel — MVP diagnosis layout for the selected tag.
+ */
 
 interface AnswerViewProps {
   selectedObject: NormalizedControlObjectSummary | null;
   selectedObjectId: string;
 
   trace: TraceResponse | null;
-  traceVersion: TraceVersion | null;
-  traceLoading: TraceVersion | null;
+  traceLoading: boolean;
   traceError: string | null;
-  /** Set when the most recent trace was triggered via /api/ask-v1. */
   askedQuestion: string | null;
 
-  onRunTrace: (version: TraceVersion) => void;
-
-  /** Runtime v2 snapshot JSON (controlled). */
   runtimeSnapshotText: string;
   onRuntimeSnapshotTextChange: (text: string) => void;
   onEvaluateRuntimeV2: (snapshot: Record<string, unknown>) => void;
   runtimeEvaluating: boolean;
   runtimeEvalError: string | null;
 
-  /** Present after a successful ``/api/ask-v3`` (deterministic-first assist). */
   llmAssist: LLMAssistResponse | null;
 }
 
@@ -98,11 +74,9 @@ export default function AnswerView(props: AnswerViewProps) {
     selectedObject,
     selectedObjectId,
     trace,
-    traceVersion,
     traceLoading,
     traceError,
     askedQuestion,
-    onRunTrace,
     runtimeSnapshotText,
     onRuntimeSnapshotTextChange,
     onEvaluateRuntimeV2,
@@ -116,7 +90,7 @@ export default function AnswerView(props: AnswerViewProps) {
   );
 
   const runtimePanelDisabled =
-    !selectedObjectId.trim() || traceLoading !== null;
+    !selectedObjectId.trim() || traceLoading || runtimeEvaluating;
 
   const handleRuntimeEvaluate = useCallback(() => {
     setRuntimeParseError(null);
@@ -145,38 +119,28 @@ export default function AnswerView(props: AnswerViewProps) {
     void onEvaluateRuntimeV2(parsed as Record<string, unknown>);
   }, [runtimeSnapshotText, onEvaluateRuntimeV2]);
 
+  const displayName =
+    selectedObject?.name ??
+    (selectedObjectId
+      ? selectedObjectId.split("/").pop() ?? selectedObjectId
+      : null);
+
   return (
     <main className="flex h-full min-w-0 flex-1 flex-col gap-6 overflow-y-auto bg-[radial-gradient(circle_at_top_right,rgba(8,145,178,0.12),transparent_34%),linear-gradient(180deg,rgba(15,23,42,0.58),rgba(2,6,23,0.96))] px-5 py-5 lg:px-8 lg:py-7">
-      <SelectedObjectCard
-        selectedObject={selectedObject}
-        selectedObjectId={selectedObjectId}
-        trace={trace}
-        traceVersion={traceVersion}
-        traceLoading={traceLoading}
-        onRunTrace={onRunTrace}
-      />
-
-      <RuntimeSnapshotPanel
-        value={runtimeSnapshotText}
-        onChange={(t) => {
-          onRuntimeSnapshotTextChange(t);
-          if (runtimeParseError) setRuntimeParseError(null);
-        }}
-        onEvaluate={handleRuntimeEvaluate}
-        disabled={runtimePanelDisabled}
-        evaluating={runtimeEvaluating}
-        parseError={runtimeParseError}
-        apiError={runtimeEvalError}
-      />
+      {displayName ? (
+        <SelectedTagHeader
+          name={displayName}
+          trace={trace}
+          loading={traceLoading}
+        />
+      ) : null}
 
       {traceError ? <InlineError>{traceError}</InlineError> : null}
 
       {traceLoading && !trace ? (
         <Card>
           <CardBody>
-            <LoadingLine>
-              Running {traceLoading === "v2" ? "Trace v2" : "Trace v1"}...
-            </LoadingLine>
+            <LoadingLine>Tracing what controls this tag…</LoadingLine>
           </CardBody>
         </Card>
       ) : null}
@@ -191,31 +155,32 @@ export default function AnswerView(props: AnswerViewProps) {
 
       {trace ? (
         <>
-          {llmAssist ? (
+          {askedQuestion && llmAssist ? (
             <LlmAssistNaturalCard assist={llmAssist} askedQuestion={askedQuestion} />
-          ) : null}
-
-          {askedQuestion ? (
-            <RouterPill trace={trace} askedQuestion={askedQuestion} />
           ) : null}
 
           {isRuntimeV2Trace(trace) ? <OperationalVerdictCard trace={trace} /> : null}
 
-          {llmAssist ? (
-            <LlmAssistSuggestedCard assist={llmAssist} trace={trace} />
-          ) : null}
+          {!llmAssist || !askedQuestion ? (
+            <PrimaryAnswerCard trace={trace} variant="default" />
+          ) : (
+            <PrimaryAnswerCard trace={trace} variant="assist_secondary" />
+          )}
+
+          <ConditionsCard trace={trace} />
 
           {llmAssist ? <LlmAssistStructuredEvidence assist={llmAssist} /> : null}
 
-          <TrustAssessmentCard trace={trace} assist={llmAssist} />
           <WhyIntelliThinksThisCard trace={trace} assist={llmAssist} />
-          {llmAssist ? <SequenceSemanticsCard assist={llmAssist} /> : null}
+          <EvidenceAccordion trace={trace} />
 
-          <PrimaryAnswerCard
-            trace={trace}
-            variant={llmAssist ? "assist_secondary" : "default"}
-          />
-          <ConditionsCard trace={trace} />
+          <TrustAssessmentCard trace={trace} assist={llmAssist} />
+
+          {trace.recommended_checks.length > 0 ? (
+            <RecommendedChecks checks={trace.recommended_checks} />
+          ) : llmAssist ? (
+            <LlmAssistSuggestedCard assist={llmAssist} trace={trace} />
+          ) : null}
 
           {isRuntimeV2Trace(trace) ? (
             <>
@@ -225,9 +190,29 @@ export default function AnswerView(props: AnswerViewProps) {
             </>
           ) : null}
 
-          <CountsStrip trace={trace} />
-          <EvidenceAccordion trace={trace} />
-          <DebugAccordion trace={trace} />
+          {llmAssist ? <SequenceSemanticsCard assist={llmAssist} /> : null}
+
+          <Accordion
+            eyebrow="Optional"
+            title="Paste runtime snapshot"
+            defaultOpen={false}
+          >
+            <RuntimeSnapshotPanel
+              value={runtimeSnapshotText}
+              onChange={(t) => {
+                onRuntimeSnapshotTextChange(t);
+                if (runtimeParseError) setRuntimeParseError(null);
+              }}
+              onEvaluate={handleRuntimeEvaluate}
+              disabled={runtimePanelDisabled}
+              evaluating={runtimeEvaluating}
+              parseError={runtimeParseError}
+              apiError={runtimeEvalError}
+              embedded
+            />
+          </Accordion>
+
+          {IS_DEV ? <DebugAccordion trace={trace} /> : null}
         </>
       ) : null}
 
@@ -235,8 +220,8 @@ export default function AnswerView(props: AnswerViewProps) {
         <Card>
           <CardBody>
             <EmptyState
-              title="Choose an object to begin"
-              hint="Use the sidebar to find a control object, then run Trace v2 — or ask a question."
+              title="Select a tag to diagnose"
+              hint="Search the tag list in the sidebar — INTELLI traces automatically when you pick one."
             />
           </CardBody>
         </Card>
@@ -245,148 +230,41 @@ export default function AnswerView(props: AnswerViewProps) {
   );
 }
 
-// ===========================================================================
-// 1. Selected object card -- always visible header card for the main panel.
-// ===========================================================================
-
-function SelectedObjectCard({
-  selectedObject,
-  selectedObjectId,
+function SelectedTagHeader({
+  name,
   trace,
-  traceVersion,
-  traceLoading,
-  onRunTrace,
+  loading,
 }: {
-  selectedObject: NormalizedControlObjectSummary | null;
-  selectedObjectId: string;
+  name: string;
   trace: TraceResponse | null;
-  traceVersion: TraceVersion | null;
-  traceLoading: TraceVersion | null;
-  onRunTrace: (version: TraceVersion) => void;
+  loading: boolean;
 }) {
-  const targetReady = Boolean(selectedObjectId.trim());
-  const displayName =
-    selectedObject?.name ??
-    (selectedObjectId ? selectedObjectId.split("/").pop() ?? selectedObjectId : null);
-
   return (
-    <Card>
-      <CardHeader
-        eyebrow="Selected object"
-        title={
-          displayName ? (
-            <span className="text-base text-zinc-50">{displayName}</span>
-          ) : (
-            <span className="text-zinc-500">No object selected</span>
-          )
-        }
-        trailing={
-          <div className="flex shrink-0 items-center gap-2">
-            <Button
-              tone="primary"
-              disabled={!targetReady || traceLoading !== null}
-              onClick={() => onRunTrace("v2")}
-              title="Natural-language, condition-aware trace"
-            >
-              {traceLoading === "v2" ? "Tracing..." : "Trace v2"}
-            </Button>
-            <Button
-              tone="ghost"
-              disabled={!targetReady || traceLoading !== null}
-              onClick={() => onRunTrace("v1")}
-              title="Raw dependency graph (advanced)"
-            >
-              {traceLoading === "v1" ? "..." : "v1"}
-            </Button>
-          </div>
-        }
-      />
-      <CardBody className="space-y-2">
-        {selectedObject ? (
-          <>
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge tone="outline" uppercase>
-                {selectedObject.object_type}
-              </Badge>
-              {trace?.confidence ? (
-                <ConfidenceBadge value={trace.confidence} />
-              ) : null}
-              {traceVersion ? (
-                <Badge tone="info" uppercase>
-                  trace {traceVersion}
-                </Badge>
-              ) : null}
-              {trace && isRuntimeV2Trace(trace) ? (
-                <Badge tone="success" uppercase>
-                  runtime v2
-                </Badge>
-              ) : null}
-            </div>
-            <KVRow k="id" v={selectedObject.id} mono breakAll />
-            {selectedObject.source_location ? (
-              <KVRow
-                k="source"
-                v={selectedObject.source_location}
-                mono
-                breakAll
-              />
-            ) : null}
-          </>
-        ) : selectedObjectId ? (
-          <>
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge tone="outline" uppercase>
-                manual id
-              </Badge>
-            </div>
-            <KVRow k="id" v={selectedObjectId} mono breakAll />
-            <p className="text-xs text-zinc-500">
-              Object metadata isn&apos;t loaded yet. Load the object list
-              from the sidebar to view its source location and type.
-            </p>
-          </>
-        ) : (
-          <p className="text-sm text-zinc-500">
-            Use the sidebar to pick a control object, or ask INTELLI a
-            question.
-          </p>
-        )}
-      </CardBody>
-    </Card>
-  );
-}
-
-// ===========================================================================
-// Router pill: shown when the trace was triggered by /api/ask-v1.
-// ===========================================================================
-
-function RouterPill({
-  trace,
-  askedQuestion,
-}: {
-  trace: TraceResponse;
-  askedQuestion: string;
-}) {
-  const intent = getStringMeta(trace.platform_specific, "detected_intent");
-  const detected = getStringMeta(
-    trace.platform_specific,
-    "detected_target_object_id",
-  );
-  return (
-    <Card>
-      <CardBody className="flex flex-wrap items-baseline justify-between gap-3 py-3">
-        <p className="text-sm text-zinc-300">
-          <span className="text-zinc-500">You asked: </span>
-          <span className="italic text-zinc-100">
-            &ldquo;{askedQuestion}&rdquo;
-          </span>
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500">
+          Diagnosing
         </p>
-        <div className="flex flex-wrap items-center gap-1.5">
-          {intent ? <Badge tone="info">intent: {intent}</Badge> : null}
-          {detected ? <Badge tone="neutral">target identified</Badge> : null}
-        </div>
-      </CardBody>
-    </Card>
+        <h2 className="mt-1 text-xl font-semibold tracking-tight text-white">
+          {name}
+        </h2>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        {loading ? (
+          <Badge tone="info" uppercase>
+            tracing
+          </Badge>
+        ) : null}
+        {trace?.confidence ? (
+          <ConfidenceBadge value={trace.confidence} />
+        ) : null}
+        {trace && isRuntimeV2Trace(trace) ? (
+          <Badge tone="success" uppercase>
+            runtime
+          </Badge>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
@@ -852,10 +730,10 @@ function PrimaryAnswerCard({
   return (
     <Card>
       <CardHeader
-        eyebrow={variant === "assist_secondary" ? "Deterministic" : "Design trace"}
+        eyebrow={variant === "assist_secondary" ? "Logic path" : "Diagnosis"}
         title={
           variant === "assist_secondary"
-            ? "Trace conclusions (source of truth)"
+            ? "Deterministic conclusions"
             : "What controls this?"
         }
       />
@@ -881,9 +759,6 @@ function PrimaryAnswerCard({
           </ul>
         ) : null}
 
-        {variant === "default" && trace.recommended_checks.length > 0 ? (
-          <RecommendedChecks checks={trace.recommended_checks} />
-        ) : null}
       </CardBody>
     </Card>
   );
@@ -918,16 +793,16 @@ function ConclusionBullet({ conclusion }: { conclusion: TraceConclusion }) {
 
 function RecommendedChecks({ checks }: { checks: string[] }) {
   return (
-    <div className="rounded-lg border border-zinc-800/70 bg-zinc-900/40 px-4 py-3">
-      <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500">
-        Recommended checks
-      </p>
-      <ul className="mt-1 list-disc pl-5 text-sm text-zinc-200">
-        {checks.map((c, i) => (
-          <li key={i}>{c}</li>
-        ))}
-      </ul>
-    </div>
+    <Card>
+      <CardHeader eyebrow="Next steps" title="Tags to check next" />
+      <CardBody>
+        <ul className="list-disc space-y-1 pl-5 text-sm text-zinc-200">
+          {checks.map((c, i) => (
+            <li key={i}>{c}</li>
+          ))}
+        </ul>
+      </CardBody>
+    </Card>
   );
 }
 
@@ -988,8 +863,8 @@ function ConditionsCard({ trace }: { trace: TraceResponse }) {
   return (
     <Card>
       <CardHeader
-        eyebrow="Key conditions"
-        title="When does this fire?"
+        eyebrow="Blocking conditions"
+        title="What must be true?"
       />
       <CardBody className="space-y-4">
         {conditionGroups.map((g) => (
@@ -1045,27 +920,7 @@ function ConditionsCard({ trace }: { trace: TraceResponse }) {
 }
 
 // ===========================================================================
-// 4. Counts strip -- compact summary chips between answer and evidence.
-// ===========================================================================
-
-function CountsStrip({ trace }: { trace: TraceResponse }) {
-  const writers = trace.writer_relationships.length;
-  const readers = trace.reader_relationships.length;
-  const upstream = trace.upstream_object_ids.length;
-  const downstream = trace.downstream_object_ids.length;
-
-  return (
-    <div className="flex flex-wrap items-center gap-2 px-1 text-xs text-zinc-400">
-      <Stat value={writers} label="writers" />
-      <Stat value={readers} label="readers" />
-      <Stat value={upstream} label="upstream" />
-      <Stat value={downstream} label="downstream" />
-    </div>
-  );
-}
-
-// ===========================================================================
-// 5. Evidence accordion -- writers / readers as expandable rows.
+// Evidence accordion -- writers / readers as expandable rows.
 // ===========================================================================
 
 function EvidenceAccordion({ trace }: { trace: TraceResponse }) {

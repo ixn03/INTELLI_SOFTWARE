@@ -26,6 +26,7 @@ export function RuntimeSnapshotPanel({
   evaluating,
   parseError,
   apiError,
+  embedded = false,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -34,47 +35,49 @@ export function RuntimeSnapshotPanel({
   evaluating: boolean;
   parseError: string | null;
   apiError: string | null;
+  embedded?: boolean;
 }) {
+  const body = (
+    <div className="space-y-3">
+      <p className="text-xs leading-relaxed text-zinc-500">
+        Paste tag values as JSON. This does not connect to a PLC yet.
+      </p>
+      <textarea
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        spellCheck={false}
+        placeholder='{"StartPB": true, "Faulted": false}'
+        rows={5}
+        aria-label="Runtime snapshot JSON"
+        className="w-full resize-y rounded-lg border border-zinc-800 bg-zinc-950/70 px-3 py-2 font-mono text-xs leading-relaxed text-zinc-100 placeholder:text-zinc-600 focus:border-violet-700/60 focus:outline-none focus:ring-1 focus:ring-violet-700/40"
+      />
+      <Button
+        type="button"
+        tone="secondary"
+        disabled={disabled || evaluating}
+        onClick={onEvaluate}
+      >
+        {evaluating ? "Evaluating…" : "Evaluate runtime"}
+      </Button>
+      {parseError ? (
+        <p className="rounded-lg border border-rose-900/60 bg-rose-950/30 px-3 py-2 text-sm text-rose-100">
+          {parseError}
+        </p>
+      ) : null}
+      {apiError ? (
+        <p className="rounded-lg border border-rose-900/60 bg-rose-950/30 px-3 py-2 text-sm text-rose-100">
+          {apiError}
+        </p>
+      ) : null}
+    </div>
+  );
+
+  if (embedded) return body;
+
   return (
     <Card className="border-violet-900/30 bg-zinc-900/40">
-      <CardHeader
-        eyebrow="Diagnosis mode"
-        title="Runtime snapshot"
-        trailing={
-          <Button
-            type="button"
-            tone="secondary"
-            disabled={disabled || evaluating}
-            onClick={onEvaluate}
-          >
-            {evaluating ? "Evaluating…" : "Evaluate runtime"}
-          </Button>
-        }
-      />
-      <CardBody className="space-y-3">
-        <p className="text-xs leading-relaxed text-zinc-500">
-          Paste tag values as JSON. This does not connect to a PLC yet.
-        </p>
-        <textarea
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          spellCheck={false}
-          placeholder='{"StartPB": true, "Faulted": false}'
-          rows={5}
-          aria-label="Runtime snapshot JSON"
-          className="w-full resize-y rounded-lg border border-zinc-800 bg-zinc-950/70 px-3 py-2 font-mono text-xs leading-relaxed text-zinc-100 placeholder:text-zinc-600 focus:border-violet-700/60 focus:outline-none focus:ring-1 focus:ring-violet-700/40"
-        />
-        {parseError ? (
-          <p className="rounded-lg border border-rose-900/60 bg-rose-950/30 px-3 py-2 text-sm text-rose-100">
-            {parseError}
-          </p>
-        ) : null}
-        {apiError ? (
-          <p className="rounded-lg border border-rose-900/60 bg-rose-950/30 px-3 py-2 text-sm text-rose-100">
-            {apiError}
-          </p>
-        ) : null}
-      </CardBody>
+      <CardHeader eyebrow="Diagnosis mode" title="Runtime snapshot" />
+      <CardBody>{body}</CardBody>
     </Card>
   );
 }
