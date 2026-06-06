@@ -1,0 +1,118 @@
+import type { SignalTroubleshootingWorkspace } from "@/types/reasoning";
+
+export const mockSignalTroubleshootingWorkspace: SignalTroubleshootingWorkspace = {
+  question: "Why is Motor_C not energizing?",
+  interpretation: {
+    intent: "why_not_energized",
+    target_signal_candidates: [
+      {
+        id: "tag::PLC/Program_A/Motor_C",
+        name: "Motor_C",
+        source_location: "Controller:PLC/Program:Program_A/Tag:Motor_C",
+        match_type: "exact_tag_match",
+        score: 0.99,
+      },
+    ],
+    selected_target_signal: {
+      id: "tag::PLC/Program_A/Motor_C",
+      name: "Motor_C",
+      source_location: "Controller:PLC/Program:Program_A/Tag:Motor_C",
+      match_type: "exact_tag_match",
+      score: 0.99,
+    },
+    confidence: 0.99,
+    metadata: { resolver_version: "signal_workspace_v1" },
+  },
+  target_signal: {
+    id: "tag::PLC/Program_A/Motor_C",
+    name: "Motor_C",
+    object_type: "tag",
+    source_location: "Controller:PLC/Program:Program_A/Tag:Motor_C",
+  },
+  writer_rungs: [
+    {
+      source_id: "rung::PLC/Program_A/Routine_1/1",
+      source_name: "Rung 1",
+      source_type: "rung",
+      target_id: "tag::PLC/Program_A/Motor_C",
+      target_name: "Motor_C",
+      relationship_type: "writes",
+      source_location: "Controller:PLC/Program:Program_A/Routine:Routine_1/Rung[1]",
+      instruction_type: "OTE",
+      write_behavior: "sets_true",
+      condition_signal_ids: ["tag::PLC/Program_A/Permissive_1"],
+      condition_signal_names: ["Permissive_1"],
+      confidence: 0.92,
+      metadata: { relationship_id: "rel::write::1" },
+    },
+  ],
+  upstream_required_conditions: [
+    {
+      source_id: "rung::PLC/Program_A/Routine_1/1",
+      source_name: "Rung 1",
+      source_type: "rung",
+      target_id: "tag::PLC/Program_A/Permissive_1",
+      target_name: "Permissive_1",
+      relationship_type: "reads",
+      source_location: "Controller:PLC/Program:Program_A/Routine:Routine_1/Rung[1]",
+      instruction_type: "XIC",
+      write_behavior: null,
+      condition_signal_ids: [],
+      condition_signal_names: [],
+      confidence: 0.92,
+      metadata: { relationship_id: "rel::read::1" },
+    },
+  ],
+  downstream_readers: [
+    {
+      source_id: "rung::PLC/Program_A/Routine_2/5",
+      source_name: "Rung 5",
+      source_type: "rung",
+      target_id: "tag::PLC/Program_A/Motor_C",
+      target_name: "Motor_C",
+      relationship_type: "reads",
+      source_location: "Controller:PLC/Program:Program_A/Routine:Routine_2/Rung[5]",
+      instruction_type: "XIC",
+      write_behavior: null,
+      condition_signal_ids: [],
+      condition_signal_names: [],
+      confidence: 0.92,
+      metadata: { relationship_id: "rel::read::2" },
+    },
+  ],
+  unknown_direction_blocks: [
+    {
+      source_id: "block::PLC/Program_A/Generic_1",
+      source_name: "Generic_1",
+      source_type: "function_block",
+      target_id: "tag::PLC/Program_A/Motor_C",
+      target_name: "Motor_C",
+      relationship_type: "references",
+      source_location: "Controller:PLC/Program:Program_A/Routine:Routine_3/Block:1",
+      instruction_type: null,
+      write_behavior: null,
+      condition_signal_ids: [],
+      condition_signal_names: [],
+      confidence: 0.48,
+      metadata: {
+        relationship_id: "rel::reference::1",
+        binding_status: "direction_unknown",
+      },
+    },
+  ],
+  confidence_summary: {
+    confidence: 0.74,
+    evidence: ["normalized_plc_logic", "writer_relationships", "downstream_readers"],
+    missing_evidence: ["live_tag_state", "historical_occurrence"],
+    warnings: [
+      "Direction-unknown block references exist and were not treated as causes.",
+    ],
+  },
+  deterministic_explanation:
+    "Motor_C is written in 1 location. 1 upstream signal may gate those writes. It is read downstream in 1 location. Direction-unknown references are shown separately and are not treated as causes.",
+  advanced_details: {
+    relationship_ids: ["rel::write::1", "rel::read::2", "rel::reference::1"],
+    dependency_edge_count: 2,
+    parser_metadata: { target_match_type: "exact_tag_match" },
+  },
+};

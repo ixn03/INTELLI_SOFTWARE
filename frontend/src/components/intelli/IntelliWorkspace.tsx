@@ -1,8 +1,8 @@
-﻿"use client";
+"use client";
 
 import axios from "axios";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   extractIntelliError,
@@ -10,53 +10,13 @@ import {
 } from "@/context/IntelliProjectContext";
 import type { ControlProject } from "@/types/intelli";
 import type {
-  AskAnswerStyle,
-  LLMAssistResponse,
   NormalizedControlObjectSummary,
   NormalizedSummaryResponse,
-  TraceResponse,
+  SignalTroubleshootingWorkspace,
 } from "@/types/reasoning";
 
-import AnswerView from "./AnswerView";
-import Sidebar from "./Sidebar";
-import { Badge } from "./ui";
-
-const IS_DEV = process.env.NODE_ENV === "development";
-
-/** Page size for object finder (server limit/offset). */
-const OBJECT_FINDER_PAGE_SIZE = 100;
-
-function num(v: unknown, fallback: number): number {
-  return typeof v === "number" && Number.isFinite(v) ? v : fallback;
-}
-
-/** Normalize FastAPI / proxy JSON (snake_case or camelCase). */
-function parseControlObjectsPayload(data: unknown): {
-  objects: NormalizedControlObjectSummary[];
-  totalMatching: number;
-  projectTotal: number;
-} {
-  const d =
-    data && typeof data === "object"
-      ? (data as Record<string, unknown>)
-      : {};
-  const raw = d.control_objects ?? d.controlObjects;
-  const objects = Array.isArray(raw)
-    ? (raw as NormalizedControlObjectSummary[])
-    : [];
-  const totalMatching = num(
-    d.total_control_object_count ?? d.totalControlObjectCount,
-    objects.length,
-  );
-  const projectTotal = num(
-    d.project_control_object_count ??
-      d.projectControlObjectCount ??
-      d.control_object_count ??
-      d.controlObjectCount,
-    totalMatching,
-  );
-  return { objects, totalMatching, projectTotal };
-}
+import { SignalTroubleshootingWorkspaceView } from "./SignalTroubleshootingWorkspaceView";
+import { Badge, Button, InlineError, LoadingLine } from "./ui";
 
 interface UploadResponse {
   project_id: string;
@@ -65,10 +25,22 @@ interface UploadResponse {
   graph: Record<string, number>;
 }
 
-/**
- * Main engineering workspace: upload, object search, trace, ask,
- * runtime evaluation. Expects ``IntelliProjectProvider`` above in the tree.
- */
+function parseObjectSuggestions(data: unknown): NormalizedControlObjectSummary[] {
+  const d =
+    data && typeof data === "object"
+      ? (data as Partial<NormalizedSummaryResponse>)
+      : {};
+  return Array.isArray(d.control_objects) ? d.control_objects : [];
+}
+
+function displayProjectName(projectName: string | null | undefined): string {
+  const name = (projectName ?? "").trim();
+  if (!name || name.toLowerCase().startsWith("unknown")) {
+    return "Imported control project";
+  }
+  return name;
+}
+
 export default function IntelliWorkspace() {
   const { apiBase, project, projectId, setUploadedProject, clearProject } =
     useIntelliProject();
@@ -77,182 +49,56 @@ export default function IntelliWorkspace() {
   const [uploadLoading, setUploadLoading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
-  const [summary, setSummary] = useState<NormalizedSummaryResponse | null>(
+  const [question, setQuestion] = useState("");
+  const [workspace, setWorkspace] =
+    useState<SignalTroubleshootingWorkspace | null>(null);
+  const [troubleshootLoading, setTroubleshootLoading] = useState(false);
+  const [troubleshootError, setTroubleshootError] = useState<string | null>(
     null,
   );
-  const [summaryLoading, setSummaryLoading] = useState(false);
-  const [summaryError, setSummaryError] = useState<string | null>(null);
 
-  const [objectList, setObjectList] = useState<NormalizedControlObjectSummary[]>(
-    [],
-  );
-  const [objectListTotal, setObjectListTotal] = useState(0);
-  const [objectListProjectTotal, setObjectListProjectTotal] = useState(0);
-  const [objectListFetchSucceeded, setObjectListFetchSucceeded] =
-    useState(false);
-  const [objectListLoading, setObjectListLoading] = useState(false);
-  const [objectListError, setObjectListError] = useState<string | null>(null);
-  const objectTypeFilter = "tag";
-  const [objectListOffset, setObjectListOffset] = useState(0);
-
-  const [search, setSearch] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
-
-  const [selectedObjectId, setSelectedObjectId] = useState("");
-
-  const [trace, setTrace] = useState<TraceResponse | null>(null);
-  const [traceLoading, setTraceLoading] = useState(false);
-  const [traceError, setTraceError] = useState<string | null>(null);
-
-  const [question, setQuestion] = useState("");
-  const answerStyle: AskAnswerStyle = "controls_engineer";
-  const [askLoading, setAskLoading] = useState(false);
-  const [askedQuestion, setAskedQuestion] = useState<string | null>(null);
-  const [llmAssist, setLlmAssist] = useState<LLMAssistResponse | null>(null);
-
-  const [runtimeSnapshotText, setRuntimeSnapshotText] = useState("{}");
-  const [runtimeEvaluating, setRuntimeEvaluating] = useState(false);
-  const [runtimeEvalError, setRuntimeEvalError] = useState<string | null>(null);
-
-  const lastObjectFinderFilterSig = useRef<string | null>(null);
-
-  useEffect(() => {
-    const t = window.setTimeout(() => setDebouncedSearch(search.trim()), 320);
-    return () => window.clearTimeout(t);
-  }, [search]);
+  const [suggestions, setSuggestions] = useState<
+    NormalizedControlObjectSummary[]
+  >([]);
+  const [suggestionLoading, setSuggestionLoading] = useState(false);
 
   const projectApiKey = useMemo(
     () => (projectId || project?.file_hash || "").trim(),
     [projectId, project?.file_hash],
   );
 
-  const hasActiveObjectFilter = useMemo(
-    () =>
-      Boolean(debouncedSearch) ||
-      Boolean(
-        objectTypeFilter.trim() &&
-          objectTypeFilter.trim().toLowerCase() !== "all",
-      ),
-    [debouncedSearch, objectTypeFilter],
-  );
+  const apiRoot = useMemo(() => apiBase.replace(/\/$/, ""), [apiBase]);
 
-  const loadLightSummary = useCallback(async () => {
+  useEffect(() => {
     if (!projectApiKey) return;
-    setSummaryError(null);
-    setSummaryLoading(true);
-    try {
-      const res = await axios.get<NormalizedSummaryResponse>(
-        `${apiBase.replace(/\/$/, "")}/api/normalized-summary`,
-        {
-          params: { limit: 1, offset: 0, rel_limit: 1, rel_offset: 0 },
-        },
-      );
-      setSummary(res.data);
-    } catch (err) {
-      setSummary(null);
-      setSummaryError(extractIntelliError(err, "Could not load summary"));
-    } finally {
-      setSummaryLoading(false);
-    }
-  }, [apiBase, projectApiKey]);
-
-  const fetchObjectPage = useCallback(async () => {
-    if (!projectApiKey) return;
-
-    const filterSig = `${projectApiKey}\x00${debouncedSearch}\x00${objectTypeFilter}`;
-    const filterChanged = lastObjectFinderFilterSig.current !== filterSig;
-
-    if (filterChanged && objectListOffset !== 0) {
-      lastObjectFinderFilterSig.current = filterSig;
-      setObjectListOffset(0);
+    const q = question.trim();
+    if (q.length < 2) {
       return;
     }
 
-    if (filterChanged) {
-      lastObjectFinderFilterSig.current = filterSig;
-    }
-
-    const offsetForRequest = filterChanged ? 0 : objectListOffset;
-
-    setObjectListError(null);
-    setObjectListFetchSucceeded(false);
-    setObjectListLoading(true);
-    const params = new URLSearchParams();
-    params.set("limit", String(OBJECT_FINDER_PAGE_SIZE));
-    params.set("offset", String(offsetForRequest));
-    params.set("rel_limit", "1");
-    params.set("rel_offset", "0");
-    const q = debouncedSearch.trim();
-    if (q) params.set("search", q);
-    const otRaw = objectTypeFilter.trim();
-    const otLower = otRaw.toLowerCase();
-    if (otRaw && otLower !== "all") params.set("object_type", otRaw);
-    // Use normalized-summary for the object list so it cannot 404 while the
-    // summary chips work (same handler, filters, and counts as control-objects).
-    const url = `${apiBase.replace(/\/$/, "")}/api/normalized-summary?${params.toString()}`;
-    try {
-      const res = await axios.get(url);
-      const parsed = parseControlObjectsPayload(res.data);
-      setObjectList(parsed.objects);
-      setObjectListTotal(parsed.totalMatching);
-      setObjectListProjectTotal(parsed.projectTotal);
-      setObjectListFetchSucceeded(true);
-      if (IS_DEV) {
-        console.info("[INTELLI] object-finder (normalized-summary)", {
-          url,
-          offset: offsetForRequest,
-          totalMatching: parsed.totalMatching,
-          projectTotal: parsed.projectTotal,
-          returned: parsed.objects.length,
-          sampleIds: parsed.objects.slice(0, 3).map((o) => o.id),
+    const id = window.setTimeout(async () => {
+      setSuggestionLoading(true);
+      try {
+        const res = await axios.get(`${apiRoot}/api/normalized-summary`, {
+          params: {
+            limit: 8,
+            offset: 0,
+            rel_limit: 1,
+            rel_offset: 0,
+            object_type: "tag",
+            search: q,
+          },
         });
+        setSuggestions(parseObjectSuggestions(res.data));
+      } catch {
+        setSuggestions([]);
+      } finally {
+        setSuggestionLoading(false);
       }
-    } catch (err) {
-      setObjectList([]);
-      setObjectListTotal(0);
-      setObjectListProjectTotal(0);
-      setObjectListFetchSucceeded(false);
-      setObjectListError(extractIntelliError(err, "Object search failed"));
-      if (IS_DEV) {
-        console.warn("[INTELLI] object-finder error", url, err);
-      }
-    } finally {
-      setObjectListLoading(false);
-    }
-  }, [apiBase, projectApiKey, debouncedSearch, objectTypeFilter, objectListOffset]);
+    }, 220);
 
-  useEffect(() => {
-    if (!projectApiKey) return;
-    const id = window.setTimeout(() => {
-      void loadLightSummary();
-    }, 0);
     return () => window.clearTimeout(id);
-  }, [projectApiKey, loadLightSummary]);
-
-  useEffect(() => {
-    if (!projectApiKey) return;
-    const id = window.setTimeout(() => {
-      void fetchObjectPage();
-    }, 0);
-    return () => window.clearTimeout(id);
-  }, [projectApiKey, fetchObjectPage]);
-
-  const selectedObject = useMemo((): NormalizedControlObjectSummary | null => {
-    if (!selectedObjectId) return null;
-    return (
-      objectList.find((o) => o.id === selectedObjectId) ?? {
-        id: selectedObjectId,
-        name: selectedObjectId.split("/").pop() ?? selectedObjectId,
-        object_type: "unknown",
-        source_location: null,
-      }
-    );
-  }, [objectList, selectedObjectId]);
-
-  const objectListHasPrev = objectListOffset > 0;
-  const objectListHasNext =
-    objectListFetchSucceeded &&
-    objectListOffset + objectList.length < objectListTotal;
+  }, [apiRoot, projectApiKey, question]);
 
   async function uploadFile() {
     setUploadError(null);
@@ -264,23 +110,11 @@ export default function IntelliWorkspace() {
     formData.append("file", file);
     try {
       setUploadLoading(true);
-      lastObjectFinderFilterSig.current = null;
-      setSummary(null);
-      setSummaryError(null);
-      setObjectListOffset(0);
-      setSelectedObjectId("");
-      setTrace(null);
-      setTraceError(null);
-      setAskedQuestion(null);
-      setLlmAssist(null);
       setQuestion("");
-      setRuntimeSnapshotText("{}");
-      setRuntimeEvaluating(false);
-      setRuntimeEvalError(null);
-      const res = await axios.post<UploadResponse>(
-        `${apiBase.replace(/\/$/, "")}/upload`,
-        formData,
-      );
+      setWorkspace(null);
+      setTroubleshootError(null);
+      setSuggestions([]);
+      const res = await axios.post<UploadResponse>(`${apiRoot}/upload`, formData);
       const uploadKey =
         (res.data.project_id && res.data.project_id.trim()) ||
         (res.data.project.file_hash && res.data.project.file_hash.trim()) ||
@@ -293,156 +127,44 @@ export default function IntelliWorkspace() {
     }
   }
 
-  const refreshSummary = useCallback(async () => {
-    if (!projectApiKey) {
-      setSummaryError("No active project.");
-      return;
-    }
-    await loadLightSummary();
-    await fetchObjectPage();
-  }, [projectApiKey, loadLightSummary, fetchObjectPage]);
-
-  const runTraceV2 = useCallback(
-    async (targetId: string) => {
-      if (!project) {
-        setTraceError("Upload a project first.");
-        return;
-      }
-      const id = targetId.trim();
-      if (!id) return;
-
-      setTraceError(null);
-      setRuntimeEvalError(null);
-      setTraceLoading(true);
-      setAskedQuestion(null);
-      setLlmAssist(null);
-      try {
-        const res = await axios.post<TraceResponse>(
-          `${apiBase.replace(/\/$/, "")}/api/trace-v2`,
-          { target_object_id: id },
-        );
-        setTrace(res.data);
-      } catch (err) {
-        setTrace(null);
-        setTraceError(extractIntelliError(err, "Could not run trace"));
-      } finally {
-        setTraceLoading(false);
-      }
-    },
-    [apiBase, project],
-  );
-
-  function parseRuntimeSnapshotJson(): Record<string, unknown> | null {
-    const trimmed = runtimeSnapshotText.trim();
-    if (!trimmed || trimmed === "{}") return null;
-    try {
-      return JSON.parse(trimmed) as Record<string, unknown>;
-    } catch {
-      return null;
-    }
-  }
-
-  async function ask() {
-    if (!project) {
-      setTraceError("Upload a project first.");
-      return;
-    }
+  const askTroubleshootingQuestion = useCallback(async () => {
     const q = question.trim();
-    if (!q) return;
-    setTraceError(null);
-    setRuntimeEvalError(null);
-    setAskLoading(true);
-    setAskedQuestion(q);
-    setLlmAssist(null);
-    const runtimeSnapshot = parseRuntimeSnapshotJson();
+    if (!projectApiKey || !q) return;
+
+    setTroubleshootError(null);
+    setTroubleshootLoading(true);
     try {
-      const res = await axios.post<LLMAssistResponse>(
-        `${apiBase.replace(/\/$/, "")}/api/ask-v3`,
+      const res = await axios.post<SignalTroubleshootingWorkspace>(
+        `${apiRoot}/api/troubleshoot/question`,
         {
+          project_id: projectApiKey,
           question: q,
-          runtime_snapshot: runtimeSnapshot ?? undefined,
-          current_selected_object: selectedObjectId || undefined,
-          last_discussed_state:
-            typeof trace?.platform_specific?.["last_discussed_state"] === "string"
-              ? trace.platform_specific["last_discussed_state"]
-              : undefined,
-          prior_runtime_snapshot: runtimeSnapshot ?? undefined,
-          prior_sequence_discussion:
-            trace?.platform_specific?.["sequence_semantics"] ?? undefined,
-          answer_style: answerStyle,
         },
       );
-      setLlmAssist(res.data);
-      setTrace(res.data.deterministic_result);
-      const tid = res.data.target_object_id;
-      if (typeof tid === "string" && tid.length > 0) {
-        setSelectedObjectId(tid);
-      }
+      setWorkspace(res.data);
     } catch (err) {
-      setTrace(null);
-      setLlmAssist(null);
-      setTraceError(extractIntelliError(err, "Could not route question"));
+      setWorkspace(null);
+      setTroubleshootError(
+        extractIntelliError(err, "Could not build troubleshooting workspace"),
+      );
     } finally {
-      setAskLoading(false);
+      setTroubleshootLoading(false);
     }
-  }
-
-  const evaluateRuntimeV2 = useCallback(
-    async (runtimeSnapshot: Record<string, unknown>) => {
-      if (!project) {
-        setRuntimeEvalError("Upload a project first.");
-        return;
-      }
-      const id = selectedObjectId.trim();
-      if (!id) {
-        setRuntimeEvalError("No object selected.");
-        return;
-      }
-      setRuntimeEvalError(null);
-      setRuntimeEvaluating(true);
-      try {
-        const res = await axios.post<TraceResponse>(
-          `${apiBase.replace(/\/$/, "")}/api/evaluate-runtime-v2`,
-          {
-            target_object_id: id,
-            runtime_snapshot: runtimeSnapshot,
-          },
-        );
-        setTrace(res.data);
-      } catch (err) {
-        setRuntimeEvalError(
-          extractIntelliError(err, "Runtime evaluation failed."),
-        );
-      } finally {
-        setRuntimeEvaluating(false);
-      }
-    },
-    [apiBase, project, selectedObjectId],
-  );
+  }, [apiRoot, projectApiKey, question]);
 
   function resetWorkspaceUpload() {
     setFile(null);
     clearProject();
-    lastObjectFinderFilterSig.current = null;
     setUploadError(null);
-    setSummary(null);
-    setSummaryError(null);
-    setObjectList([]);
-    setObjectListTotal(0);
-    setObjectListProjectTotal(0);
-    setObjectListFetchSucceeded(false);
-    setObjectListError(null);
-    setSelectedObjectId("");
-    setSearch("");
-    setObjectListOffset(0);
-    setTrace(null);
-    setTraceError(null);
-    setAskedQuestion(null);
-    setLlmAssist(null);
     setQuestion("");
-    setRuntimeSnapshotText("{}");
-    setRuntimeEvaluating(false);
-    setRuntimeEvalError(null);
+    setWorkspace(null);
+    setTroubleshootError(null);
+    setSuggestions([]);
+  }
+
+  function askForSuggestion(signal: NormalizedControlObjectSummary) {
+    const name = signal.name ?? signal.id.split("/").pop() ?? signal.id;
+    setQuestion(`Why is ${name} not energizing?`);
   }
 
   if (!project) {
@@ -459,111 +181,92 @@ export default function IntelliWorkspace() {
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[#050914] text-zinc-100">
-      <header className="shrink-0 border-b border-white/10 bg-zinc-950/80 px-5 py-4 backdrop-blur">
+      <header className="shrink-0 border-b border-white/10 bg-zinc-950/85 px-5 py-4 backdrop-blur">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="min-w-0">
             <Badge tone="info" uppercase>
-              Step 3 — Diagnose
+              Signal troubleshooting
             </Badge>
-            <h1 className="mt-2 truncate text-2xl font-semibold tracking-[-0.03em] text-white">
-              {project.project_name || "Imported control project"}
+            <h1 className="mt-2 truncate text-2xl font-semibold text-white">
+              {displayProjectName(project.project_name)}
             </h1>
             <p className="mt-1 max-w-3xl truncate text-sm text-zinc-500">
-              {selectedObject
-                ? `Tracing ${selectedObject.name ?? selectedObjectId.split("/").pop()}`
-                : "Select a tag to see what controls it"}
+              Ask a controls question, then jump straight to writer rungs,
+              required conditions, downstream readers, and evidence.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Link
               href="/workspace/advanced"
-              className="inline-flex rounded-xl border border-zinc-800 bg-zinc-900/70 px-3 py-2 text-sm text-zinc-400 transition hover:border-zinc-700 hover:text-zinc-200"
+              className="inline-flex rounded-lg border border-zinc-800 bg-zinc-900/70 px-3 py-2 text-sm text-zinc-400 transition hover:border-zinc-700 hover:text-zinc-200"
             >
               Advanced
-            </Link>
-            <Link
-              href="/"
-              className="inline-flex rounded-xl border border-zinc-800 bg-zinc-900/70 px-3 py-2 text-sm text-zinc-300 transition hover:border-zinc-700 hover:text-white xl:hidden"
-            >
-              Home
             </Link>
             <button
               type="button"
               onClick={resetWorkspaceUpload}
-              className="rounded-xl border border-cyan-400/30 bg-cyan-400/10 px-3 py-2 text-sm font-medium text-cyan-100 transition hover:bg-cyan-400/15"
+              className="rounded-lg border border-cyan-400/30 bg-cyan-400/10 px-3 py-2 text-sm font-medium text-cyan-100 transition hover:bg-cyan-400/15"
             >
               Switch project
             </button>
           </div>
         </div>
       </header>
-      <div className="flex min-h-0 flex-1">
-        <Sidebar
-          project={project}
-          uploadFile={file}
-          onFileChange={setFile}
-          onUploadSubmit={() => void uploadFile()}
-          onResetUpload={resetWorkspaceUpload}
-          uploadLoading={uploadLoading}
-          uploadError={uploadError}
-          summary={summary}
-          summaryLoading={summaryLoading}
-          summaryError={summaryError}
-          onLoadSummary={() => void refreshSummary()}
-          objectList={objectList}
-          objectListTotal={objectListTotal}
-          objectListLoading={objectListLoading}
-          objectListError={objectListError}
-          objectListProjectTotal={objectListProjectTotal}
-          objectListFetchSucceeded={objectListFetchSucceeded}
-          hasActiveObjectFilter={hasActiveObjectFilter}
-          objectListOffset={objectListOffset}
-          objectListHasPrev={objectListHasPrev}
-          objectListHasNext={objectListHasNext}
-          showObjectPaging={objectListTotal > OBJECT_FINDER_PAGE_SIZE}
-          onObjectListPrev={() =>
-            setObjectListOffset((o) => Math.max(0, o - OBJECT_FINDER_PAGE_SIZE))
-          }
-          onObjectListNext={() =>
-            setObjectListOffset((o) => o + OBJECT_FINDER_PAGE_SIZE)
-          }
-          search={search}
-          onSearch={setSearch}
-          selectedObjectId={selectedObjectId}
-          onSelectObject={(id) => {
-            setSelectedObjectId(id);
-            setTraceError(null);
-            void runTraceV2(id);
-          }}
-          question={question}
-          onQuestionChange={setQuestion}
-          askLoading={askLoading}
-          onAsk={() => void ask()}
-          selectedTagLabel={
-            selectedObject?.name ??
-            (selectedObjectId
-              ? selectedObjectId.split("/").pop() ?? selectedObjectId
-              : null)
-          }
-        />
-        <AnswerView
-          selectedObject={selectedObject}
-          selectedObjectId={selectedObjectId}
-          trace={trace}
-          traceLoading={traceLoading}
-          traceError={traceError}
-          askedQuestion={askedQuestion}
-          runtimeSnapshotText={runtimeSnapshotText}
-          onRuntimeSnapshotTextChange={(t) => {
-            setRuntimeSnapshotText(t);
-            setRuntimeEvalError(null);
-          }}
-          onEvaluateRuntimeV2={evaluateRuntimeV2}
-          runtimeEvaluating={runtimeEvaluating}
-          runtimeEvalError={runtimeEvalError}
-          llmAssist={llmAssist}
-        />
-      </div>
+
+      <main className="flex min-h-0 flex-1 flex-col gap-4 p-5">
+        <section className="rounded-lg border border-zinc-800/80 bg-zinc-950/55 p-4">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void askTroubleshootingQuestion();
+            }}
+            className="flex flex-col gap-3 lg:flex-row"
+          >
+            <input
+              value={question}
+              onChange={(e) => {
+                const next = e.target.value;
+                setQuestion(next);
+                if (next.trim().length < 2) setSuggestions([]);
+                setTroubleshootError(null);
+              }}
+              placeholder="Ask why a motor, valve, permissive, or alarm is not changing state..."
+              className="min-h-14 flex-1 rounded-lg border border-zinc-800 bg-zinc-950/70 px-4 text-base text-zinc-100 placeholder:text-zinc-500 focus:border-cyan-300/50 focus:outline-none focus:ring-1 focus:ring-cyan-300/30"
+            />
+            <Button
+              type="submit"
+              disabled={troubleshootLoading || !question.trim()}
+              className="min-h-14 px-6"
+            >
+              {troubleshootLoading ? "Tracing..." : "Troubleshoot"}
+            </Button>
+          </form>
+
+          <div className="mt-3 min-h-8">
+            {troubleshootError ? <InlineError>{troubleshootError}</InlineError> : null}
+            {!troubleshootError && suggestionLoading ? (
+              <LoadingLine>Checking tag suggestions...</LoadingLine>
+            ) : null}
+            {!troubleshootError && suggestions.length ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs text-zinc-500">Tag suggestions</span>
+                {suggestions.map((signal) => (
+                  <button
+                    key={signal.id}
+                    type="button"
+                    onClick={() => askForSuggestion(signal)}
+                    className="rounded-md border border-zinc-800 bg-zinc-900/70 px-2 py-1 text-xs text-zinc-300 transition hover:border-cyan-500/50 hover:text-cyan-100"
+                  >
+                    {signal.name ?? signal.id.split("/").pop() ?? signal.id}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        </section>
+
+        <SignalTroubleshootingWorkspaceView workspace={workspace} />
+      </main>
     </div>
   );
 }
@@ -584,22 +287,22 @@ function WorkspaceNoProject({
   return (
     <div className="relative grid min-h-screen place-items-center overflow-hidden bg-[radial-gradient(circle_at_top,#10223a_0,#050914_55%,#020617_100%)] px-6 py-12 text-center">
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(rgba(148,163,184,0.035)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.035)_1px,transparent_1px)] bg-[size:42px_42px]" />
-      <div className="relative w-full max-w-3xl rounded-[2rem] border border-white/10 bg-zinc-950/75 p-6 shadow-2xl shadow-black/40 backdrop-blur">
+      <div className="relative w-full max-w-3xl rounded-lg border border-white/10 bg-zinc-950/75 p-6 shadow-2xl shadow-black/40 backdrop-blur">
         <div className="mx-auto max-w-2xl">
           <Badge tone="info" uppercase>
-            Step 1 — Import
+            Step 1 - Import
           </Badge>
-          <h1 className="mt-4 text-4xl font-semibold tracking-[-0.04em] text-white">
+          <h1 className="mt-4 text-4xl font-semibold text-white">
             Upload your L5X to start diagnosing.
           </h1>
           <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-zinc-400">
-            Import a Studio 5000 export, search for a tag, and INTELLI traces
-            what controls it with evidence-backed conclusions.
+            Import a Studio 5000 export, ask a controls question, and INTELLI
+            traces writer rungs, required conditions, and downstream uses.
           </p>
         </div>
 
-        <div className="mx-auto mt-8 max-w-xl rounded-2xl border border-zinc-800/80 bg-zinc-900/45 p-4 text-left">
-          <label className="block cursor-pointer rounded-2xl border-2 border-dashed border-cyan-400/35 bg-cyan-400/[0.06] px-4 py-8 text-center transition hover:border-cyan-300/55">
+        <div className="mx-auto mt-8 max-w-xl rounded-lg border border-zinc-800/80 bg-zinc-900/45 p-4 text-left">
+          <label className="block cursor-pointer rounded-lg border-2 border-dashed border-cyan-400/35 bg-cyan-400/[0.06] px-4 py-8 text-center transition hover:border-cyan-300/55">
             <input
               type="file"
               accept=".l5x,.L5X,application/xml,text/xml"
@@ -617,9 +320,9 @@ function WorkspaceNoProject({
             type="button"
             onClick={onUpload}
             disabled={uploading || !file}
-            className="mt-4 w-full rounded-xl bg-cyan-300 py-3 text-sm font-semibold text-cyan-950 transition hover:bg-cyan-200 disabled:opacity-40"
+            className="mt-4 w-full rounded-lg bg-cyan-300 py-3 text-sm font-semibold text-cyan-950 transition hover:bg-cyan-200 disabled:opacity-40"
           >
-            {uploading ? "Uploading..." : "Upload & analyze"}
+            {uploading ? "Uploading..." : "Upload and analyze"}
           </button>
           {uploadError ? (
             <p className="mt-3 rounded-lg border border-rose-900/60 bg-rose-950/30 px-3 py-2 text-sm text-rose-100">
@@ -638,4 +341,3 @@ function WorkspaceNoProject({
     </div>
   );
 }
-

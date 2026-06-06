@@ -548,3 +548,75 @@ export interface VersionImpactSummary {
   confidence: number;
   evidence: Record<string, unknown>;
 }
+
+// ---------------------------------------------------------------------------
+// POST /api/troubleshoot/question
+// ---------------------------------------------------------------------------
+
+export type TroubleshootingIntent =
+  | "why_not_energized"
+  | "why_on"
+  | "where_written"
+  | "where_read"
+  | "trace_upstream"
+  | "trace_downstream"
+  | "general_signal_lookup";
+
+export interface SignalCandidate {
+  id: string;
+  name: string | null;
+  source_location: string | null;
+  match_type: string;
+  score: number;
+}
+
+export interface QuestionInterpretation {
+  intent: TroubleshootingIntent;
+  target_signal_candidates: SignalCandidate[];
+  selected_target_signal: SignalCandidate | null;
+  confidence: number;
+  metadata: Record<string, unknown>;
+}
+
+export interface SignalRef {
+  id: string;
+  name: string | null;
+  object_type: string | null;
+  source_location: string | null;
+}
+
+export interface SignalEvidenceItem {
+  source_id: string;
+  source_name: string | null;
+  source_type: string | null;
+  target_id: string;
+  target_name: string | null;
+  relationship_type: string;
+  source_location: string | null;
+  instruction_type: string | null;
+  write_behavior: string | null;
+  condition_signal_ids: string[];
+  condition_signal_names: string[];
+  confidence: number;
+  metadata: Record<string, unknown>;
+}
+
+export interface SignalConfidenceSummary {
+  confidence: number;
+  evidence: string[];
+  missing_evidence: string[];
+  warnings: string[];
+}
+
+export interface SignalTroubleshootingWorkspace {
+  question: string;
+  interpretation: QuestionInterpretation;
+  target_signal: SignalRef | null;
+  writer_rungs: SignalEvidenceItem[];
+  upstream_required_conditions: SignalEvidenceItem[];
+  downstream_readers: SignalEvidenceItem[];
+  unknown_direction_blocks: SignalEvidenceItem[];
+  confidence_summary: SignalConfidenceSummary;
+  deterministic_explanation: string;
+  advanced_details: Record<string, unknown>;
+}

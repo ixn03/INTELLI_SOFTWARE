@@ -22,6 +22,10 @@ from app.services.runtime_evaluation_v2_service import (
 from app.services.runtime_snapshot_service import evaluate_trace_conditions
 from app.services.trace_service import trace_object, trace_tag
 from app.services.trace_v2_service import trace_object_v2
+from app.services.troubleshooting_workspace_service import (
+    SignalTroubleshootingWorkspace,
+    build_signal_workspace,
+)
 from app.services.sequence_reasoning_service import (
     analyze_sequences,
     filter_sequence_result_for_tag,
@@ -472,6 +476,11 @@ class AskV2Request(BaseModel):
     runtime_snapshot: Optional[dict[str, Any]] = None
 
 
+class TroubleshootQuestionRequest(BaseModel):
+    project_id: str
+    question: str
+
+
 class SequenceTraceRequest(BaseModel):
     state_tag_id: str
 
@@ -490,6 +499,32 @@ def ask_v2(request: AskV2Request) -> ReasoningTraceResult:
         relationships=normalized["relationships"],
         execution_contexts=normalized["execution_contexts"],
         runtime_snapshot=request.runtime_snapshot,
+    )
+
+
+@router.post(
+    "/api/troubleshoot/question",
+    response_model=SignalTroubleshootingWorkspace,
+)
+def troubleshoot_question(
+    request: TroubleshootQuestionRequest,
+) -> SignalTroubleshootingWorkspace:
+    """Return a signal-centric troubleshooting workspace for a question.
+
+    This is deterministic and evidence-first: resolve the target signal,
+    gather writers/readers/upstream conditions/unknown references, and
+    return a UI-ready workspace payload. No LLM reasoning is used.
+    """
+
+    try:
+        normalized = project_store.get_normalized(request.project_id)
+        project_store.set_latest(request.project_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return build_signal_workspace(
+        question=request.question,
+        control_objects=normalized["control_objects"],
+        relationships=normalized["relationships"],
     )
 
 
