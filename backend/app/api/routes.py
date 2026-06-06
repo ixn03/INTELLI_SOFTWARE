@@ -43,9 +43,13 @@ from app.services.version_compare_service import compare_projects
 from app.services.version_intelligence_service import analyze_version_impact
 from app.services.llm_assist_service import answer_with_llm_assist
 from app.services.runtime_adapter_registry import get_adapter, list_adapter_descriptors
+from app.api.ingest_routes import router as ingest_router
+from app.api.tag_registry_routes import router as tag_registry_router
 
 
 router = APIRouter()
+router.include_router(tag_registry_router)
+router.include_router(ingest_router)
 
 _OBJECT_TYPE_ALIASES: dict[str, str] = {
     "tags": "tag",

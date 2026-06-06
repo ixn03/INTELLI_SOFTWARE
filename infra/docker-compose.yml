@@ -1,0 +1,149 @@
+# INTELLI live data ingestion stack (MVP)
+# OPC UA Collector → Tag Normalizer → InfluxDB + PostgreSQL → Reasoning (Neo4j graph)
+#
+# Start:  docker compose --env-file .env up -d
+# Stop:   docker compose --env-file .env down
+# Logs:   docker compose --env-file .env logs -f backend
+
+name: intelli-live
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: intelli-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-intelli}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-intelli}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-intelli} -d ${POSTGRES_DB:-intelli}",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  influxdb:
+    image: quay.io/influxdb/influxdb3-core:latest
+    container_name: intelli-influxdb
+    restart: unless-stopped
+    command:
+      - influxdb3
+      - serve
+      - --node-id=${INFLUXDB_NODE_ID:-node0}
+      - --object-store=file
+      - --data-dir=/var/lib/influxdb3/data
+      - --http-bind=0.0.0.0:8181
+    ports:
+      - "${INFLUXDB_PORT:-8181}:8181"
+    volumes:
+      - influxdb_data:/var/lib/influxdb3/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8181/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  neo4j:
+    image: neo4j:5-community
+    container_name: intelli-neo4j
+    restart: unless-stopped
+    environment:
+      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-change_me_neo4j}
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_dbms_security_procedures_unrestricted: apoc.*
+    ports:
+      - "${NEO4J_HTTP_PORT:-7474}:7474"
+      - "${NEO4J_BOLT_PORT:-7687}:7687"
+    volumes:
+      - neo4j_data:/data
+    healthcheck:
+      test: ["CMD", "neo4j", "status"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 40s
+
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: intelli-backend
+    restart: unless-stopped
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    environment:
+      # Metadata
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-intelli}:${POSTGRES_PASSWORD:-change_me_postgres}@postgres:5432/${POSTGRES_DB:-intelli}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-intelli}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-intelli}
+      # Time series
+      INFLUXDB_URL: http://influxdb:8181
+      INFLUXDB_HOST: influxdb
+      INFLUXDB_PORT: 8181
+      INFLUXDB_TOKEN: ${INFLUXDB_TOKEN:-}
+      INFLUXDB_ORG: ${INFLUXDB_ORG:-intelli}
+      INFLUXDB_BUCKET: ${INFLUXDB_BUCKET:-intelli_ts}
+      INTELLI_BACKEND_URL: http://backend:8000
+      # Graph
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: ${NEO4J_USER:-neo4j}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-change_me_neo4j}
+      # App
+      INTELLI_ENV: docker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      influxdb:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 25s
+
+  opcua-collector:
+    profiles: ["opcua"]
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: intelli-opcua-collector
+    restart: unless-stopped
+    command: ["python", "tools/opcua_collector.py"]
+    environment:
+      INTELLI_BACKEND_URL: http://backend:8000
+      OPCUA_ENDPOINT_URL: ${OPCUA_ENDPOINT_URL:-opc.tcp://host.docker.internal:53530/OPCUA/SimulationServer}
+      COLLECTOR_POLL_MS: ${COLLECTOR_POLL_MS:-1000}
+      COLLECTOR_SOURCE_SYSTEMS: ${COLLECTOR_SOURCE_SYSTEMS:-OPC_UA}
+    depends_on:
+      backend:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  postgres_data:
+  influxdb_data:
+  neo4j_data:

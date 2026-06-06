@@ -1,0 +1,168 @@
+{
+  "version": 1,
+  "description": "Synthetic and committed-fixture troubleshooting workspace eval suite. Signal keys are opaque; tag names live only in fixture maps and are redacted from harness output.",
+  "fixtures": {
+    "synthetic_motor": {
+      "kind": "inline",
+      "builder": "synthetic_motor",
+      "signals": {
+        "SIG_TARGET": "Motor_Run",
+        "SIG_PERM": "Permissive_A",
+        "SIG_FAULT": "Fault_1",
+        "SIG_VALVE": "Valve_Open",
+        "SIG_NONE": "No_Writer"
+      }
+    },
+    "mini_routine_mix": {
+      "kind": "l5x",
+      "path": "mini_routine_mix.L5X",
+      "signals": {
+        "SIG_OUT": "Out",
+        "SIG_P1": "P1",
+        "SIG_P2": "P2",
+        "SIG_S": "S"
+      }
+    },
+    "intelli_ladder": {
+      "kind": "l5x",
+      "path": "INTELLI_Ladder_Test.L5X",
+      "signals": {
+        "SIG_FILL": "State_Fill",
+        "SIG_VALVE": "XV_Fill_Open",
+        "SIG_ESTOP": "EStop_OK",
+        "SIG_AUTO": "AutoMode"
+      }
+    },
+    "intelli_st": {
+      "kind": "l5x",
+      "path": "INTELLI_StructuredText_Test.L5X",
+      "signals": {
+        "SIG_MOTOR": "Motor_Run"
+      }
+    },
+    "synthetic_aoi": {
+      "kind": "l5x",
+      "path": "synthetic_aoi_udt_system.L5X",
+      "signals": {
+        "SIG_PUMP_RUN": "Pump_Transfer.Run_Cmd",
+        "SIG_PERM": "Permissive_OK"
+      }
+    }
+  },
+  "cases": [
+    {
+      "id": "syn_001_why_not",
+      "fixture": "synthetic_motor",
+      "question": "Why is Motor_Run not energizing?",
+      "expect": {
+        "target_signal": "SIG_TARGET",
+        "intent": "why_not_energized",
+        "writer_count_min": 1,
+        "upstream_signals": ["SIG_PERM", "SIG_FAULT"],
+        "unknown_direction_count_min": 1,
+        "unknown_direction_count_max": 1,
+        "min_confidence": 0.4
+      }
+    },
+    {
+      "id": "syn_002_where_written",
+      "fixture": "synthetic_motor",
+      "question": "Where is Motor_Run written?",
+      "expect": {
+        "target_signal": "SIG_TARGET",
+        "intent": "where_written",
+        "writer_count_min": 2,
+        "writer_count_max": 2
+      }
+    },
+    {
+      "id": "syn_003_where_read",
+      "fixture": "synthetic_motor",
+      "question": "Where is Motor_Run read?",
+      "expect": {
+        "target_signal": "SIG_TARGET",
+        "intent": "where_read",
+        "downstream_count_min": 1,
+        "downstream_count_max": 1
+      }
+    },
+    {
+      "id": "syn_004_fuzzy_match",
+      "fixture": "synthetic_motor",
+      "question": "why is moter run not changing",
+      "expect": {
+        "target_signal": "SIG_TARGET",
+        "intent": "why_not_energized"
+      }
+    },
+    {
+      "id": "syn_005_no_writer",
+      "fixture": "synthetic_motor",
+      "question": "Why is No_Writer not on?",
+      "expect": {
+        "target_signal": "SIG_NONE",
+        "intent": "why_not_energized",
+        "no_writers_expected": true
+      }
+    },
+    {
+      "id": "mini_001_out_why_not",
+      "fixture": "mini_routine_mix",
+      "question": "Why is Out not energizing?",
+      "expect": {
+        "target_signal": "SIG_OUT",
+        "intent": "why_not_energized",
+        "writer_count_min": 1,
+        "upstream_signals": ["SIG_P1", "SIG_P2", "SIG_S"],
+        "upstream_recall_min": 1.0
+      }
+    },
+    {
+      "id": "ladder_001_fill_why_not",
+      "fixture": "intelli_ladder",
+      "question": "Why is State_Fill not energizing?",
+      "expect": {
+        "target_signal": "SIG_FILL",
+        "intent": "why_not_energized",
+        "writer_count_min": 1,
+        "upstream_signals": ["SIG_ESTOP", "SIG_AUTO"],
+        "upstream_recall_min": 1.0
+      }
+    },
+    {
+      "id": "ladder_002_valve_where_written",
+      "fixture": "intelli_ladder",
+      "question": "Where is XV_Fill_Open written?",
+      "expect": {
+        "target_signal": "SIG_VALVE",
+        "intent": "where_written",
+        "writer_count_min": 1,
+        "writer_count_max": 1
+      }
+    },
+    {
+      "id": "st_001_motor_st_writer",
+      "fixture": "intelli_st",
+      "question": "Why is Motor_Run not running?",
+      "expect": {
+        "target_signal": "SIG_MOTOR",
+        "intent": "why_not_energized",
+        "writer_count_min": 1,
+        "unified_has_st_writer": true
+      }
+    },
+    {
+      "id": "aoi_001_pump_run_cmd",
+      "fixture": "synthetic_aoi",
+      "question": "Why is Pump_Transfer.Run_Cmd not on?",
+      "expect": {
+        "target_signal": "SIG_PUMP_RUN",
+        "intent": "why_not_energized",
+        "writer_count_min": 1,
+        "upstream_signals": ["SIG_PERM"],
+        "upstream_recall_min": 1.0,
+        "aoi_parameter_present": "Run"
+      }
+    }
+  ]
+}

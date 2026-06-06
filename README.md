@@ -12,6 +12,178 @@
 # This software and associated documentation are proprietary and confidential.
 # Unauthorized copying, distribution, modification, or use is strictly prohibited.
 
+## Live data stack (Docker)
+
+Local InfluxDB, PostgreSQL, Neo4j, and FastAPI backend for OPC UA ingestion MVP:
+
+```bash
+cd infra
+cp env.example .env
+docker compose --env-file .env up -d --build
+```
+
+See [infra/README.md](infra/README.md) for ports, volumes, health checks, and stop/reset commands.
+
+## Step 2 — Tag registry
+
+INTELLI separates **raw source names** from **canonical tag identity**:
+
+| Field | Example | Meaning |
+|-------|---------|---------|
+| `raw_name` | `Program:MainProgram.P101_RunningFB` | Address/name from OPC UA / PI / DeltaV |
+| `canonical_name` | `P101_RunningFB` | INTELLI troubleshooting identity |
+| `equipment_id` | P101 Pump | What the tag belongs to |
+| `tag_role` | `FEEDBACK` | COMMAND, FEEDBACK, PERMISSIVE, etc. |
+
+After starting the Docker stack:
+
+```bash
+curl http://localhost:8000/api/tags
+curl http://localhost:8000/api/data-sources
+```
+
+Run registry API tests:
+
+```bash
+cd backend
+pip install -r requirements.txt
+python -m pytest tests/test_tag_registry_api.py -q
+```
+
+More examples: [infra/README.md](infra/README.md#step-2--tag-registry-api-examples).
+
+## Step 3 — Live tag ingestion (OPC UA → InfluxDB)
+
+Production-style live data path:
+
+```text
+Prosys OPC UA Simulation Server
+        ↓
+INTELLI OPC UA Collector (backend/tools/opcua_collector.py)
+        ↓
+POST /api/ingest/tag-samples/batch
+        ↓
+Backend validation + normalization → InfluxDB
+        ↓
+GET /api/tags/{tag_id}/latest | /history
+```
+
+The collector is **stateless** and posts samples to the backend only — it never writes to InfluxDB directly.
+
+### Configure Prosys OPC UA endpoint
+
+Set `OPCUA_ENDPOINT_URL` in `infra/.env`. When the collector runs inside Docker and Prosys runs on your Windows host, use `host.docker.internal`:
+
+```bash
+OPCUA_ENDPOINT_URL=opc.tcp://host.docker.internal:53530/OPCUA/SimulationServer
+INTELLI_BACKEND_URL=http://localhost:8000
+```
+
+### Create Prosys variables (Simulation/PumpSystem)
+
+In **Prosys OPC UA Simulation Server**:
+
+1. Open **Address Space** → **Objects** → create folder `Simulation` (if missing).
+2. Under `Simulation`, create folder `PumpSystem`.
+3. Add variables with these **Browse names** (BOOL unless noted):
+
+| Variable | Type | Demo NodeId (ns=3) |
+|----------|------|-------------------|
+| P101_RunCmd | BOOL | `ns=3;i=1009` |
+| P101_RunningFB | BOOL | `ns=3;i=1010` |
+| P101_Fault | BOOL | `ns=3;i=1011` |
+| XV101_OpenCmd | BOOL | `ns=3;i=1012` |
+| XV101_OpenFB | BOOL | `ns=3;i=1013` |
+| Tank101_Level | REAL | `ns=3;i=1014` |
+
+Prosys assigns numeric NodeIds when you create variables. Copy the actual NodeId from **Browse** (right-click variable → copy NodeId) — it must match the registry.
+
+### Discover NodeIds with list_opcua_nodes.py
+
+```bash
+cd backend
+pip install -r requirements.txt
+set OPCUA_ENDPOINT_URL=opc.tcp://localhost:53530/OPCUA/SimulationServer
+python tools/list_opcua_nodes.py
+```
+
+The script browses `Simulation/PumpSystem` and prints DisplayName, BrowseName, NodeId, DataType, and AccessLevel. If PumpSystem is missing, it lists what it finds under Objects.
+
+### Map NodeIds in the tag registry
+
+Set **both** `node_id` and `source_address` on each tag (`source_system=OPC_UA`, `raw_name` = simple name like `P101_RunCmd`).
+
+Demo seed (Docker init + `seed.py`) uses the numeric NodeIds above. If your Prosys install differs:
+
+**Option A — PATCH via API:**
+
+```bash
+curl -X PATCH http://localhost:8000/api/tags/11111111-1111-1111-1111-111111111201 \
+  -H "Content-Type: application/json" \
+  -d '{"node_id": "ns=3;i=1009", "source_address": "ns=3;i=1009"}'
+```
+
+**Option B — re-seed:** update `infra/postgres/init/02-tag-registry.sql` and `backend/app/db/seed.py`, then recreate volumes (`docker compose down -v && up -d --build`).
+
+### Run the collector
+
+On the host (backend running locally):
+
+```bash
+cd backend
+pip install -r requirements.txt
+set OPCUA_ENDPOINT_URL=opc.tcp://localhost:53530/OPCUA/SimulationServer
+set INTELLI_BACKEND_URL=http://localhost:8000
+python tools/opcua_collector.py
+```
+
+Via Docker Compose (profile `opcua`):
+
+```bash
+cd infra
+docker compose --env-file .env --profile opcua up -d opcua-collector
+docker compose --env-file .env logs -f opcua-collector
+```
+
+### Ingestion examples
+
+Single sample:
+
+```bash
+curl -X POST http://localhost:8000/api/ingest/tag-samples \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tag_id": "11111111-1111-1111-1111-111111111201",
+    "raw_tag_name": "P101_RunCmd",
+    "value": true,
+    "timestamp": "2026-06-05T12:00:00Z",
+    "quality": "good",
+    "source": "OPC_UA"
+  }'
+```
+
+Batch:
+
+```bash
+curl -X POST http://localhost:8000/api/ingest/tag-samples/batch \
+  -H "Content-Type: application/json" \
+  -d '{"samples": [{"tag_id": "11111111-1111-1111-1111-111111111201", "raw_tag_name": "P101_RunCmd", "value": true, "timestamp": "2026-06-05T12:00:00Z", "quality": "good", "source": "OPC_UA"}]}'
+```
+
+### Latest and history examples
+
+```bash
+curl http://localhost:8000/api/tags/11111111-1111-1111-1111-111111111201/latest
+curl "http://localhost:8000/api/tags/11111111-1111-1111-1111-111111111201/history?limit=50"
+```
+
+### Tests
+
+```bash
+cd backend
+python -m pytest tests/test_tag_ingestion_api.py tests/test_tag_registry_api.py -q
+```
+
 ## Internal Model Architecture
 
 INTELLI treats vendor files as source inputs, not as the reasoning surface.
@@ -95,6 +267,19 @@ The Signal Troubleshooting Workspace shows three levels:
 
 Confidence is deterministic and evidence-based. No LLM scoring is used in this
 layer.
+
+### Troubleshooting eval harness
+
+Offline benchmark for the workspace endpoint (no LLM, no live PLC):
+
+```bash
+cd backend
+PYTHONPATH=. python tools/troubleshoot_eval.py --pretty
+```
+
+The suite in `backend/tests/fixtures/troubleshoot_eval/suite.json` uses synthetic
+graphs and committed INTELLI fixtures. Reports redact tag/rung names to opaque
+signal keys and emit aggregate pass rates by check type, fixture, and intent.
 
 Vendor AMP blocks (`AMP_*_INTRALOX`) register as AOI-style parameter bindings
 with deterministic `Out` writes and `In_*` reads. Structured-text and AOI

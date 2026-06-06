@@ -116,6 +116,13 @@ class InMemoryProjectStore:
 
     # -- Test / dev helpers -------------------------------------------
 
+    def seed_normalized(self, project_id: str, normalized: dict[str, Any]) -> None:
+        """Inject a pre-normalized graph for eval harnesses and tests."""
+
+        if project_id not in self._projects:
+            raise KeyError(f"Project {project_id} was not found.")
+        self._normalized_cache[project_id] = normalized
+
     def reset(self) -> None:
         """Wipe all stored projects and caches. For tests / dev only."""
 
