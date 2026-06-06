@@ -29,3 +29,8 @@ dist/
 # OS / IDE
 .DS_Store
 Thumbs.db
+/private_samples/
+/scratch_confidential/
+/tmp_l5x_analysis/
+*.L5X
+*.l5x

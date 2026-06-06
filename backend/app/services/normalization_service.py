@@ -56,7 +56,7 @@ Scope today (what this module emits)
       ``write_behavior=calculates`` for the destination. ``CPT`` emits
       only the destination ``WRITES`` because Rockwell encodes the
       expression as a quoted string the ladder tokenizer doesn't crack.
-    - Move / copy (``MOV`` / ``COP``) -> ``READS`` for the source,
+    - Move / copy (``MOV`` / ``COP`` / ``FLL``) -> ``READS`` for the source,
       ``WRITES`` with ``write_behavior=moves_value`` for the destination.
     - One-shots (``ONS`` / ``OSR`` / ``OSF``) -> ``READS`` for the
       storage bit, ``WRITES`` with ``write_behavior=pulses`` for the
@@ -113,9 +113,10 @@ Structured Text normalization (NEW)
     is preserved with ``st_parse_status="too_complex"``. Expanding the
     envelope (WHILE / FOR / REPEAT / OR / parens / arithmetic) is a
     future extension of the parser, not the normalizer.
-TODO(intelli/normalization): Function Block Diagram (FBD)
-    normalization. Each block instance is its own ControlObject; pin
-    connections become explicit READS/WRITES/REFERENCES relationships.
+Function Block Diagram (FBD) Phase 1
+    FBD block instances and pins become structural ControlObjects. Explicit
+    pin directions emit conservative READS/WRITES; unknown-direction pins
+    remain REFERENCES. Wires become SIGNAL_CONNECTS relationships.
 TODO(intelli/normalization): Sequential Function Chart (SFC)
     normalization. SFC steps become ``ControlObjectType.SFC_STEP``,
     transitions become ``Relationship`` edges of type ``SEQUENCES`` or
@@ -170,6 +171,8 @@ from app.models.control_model import (
     ControlRoutine,
     ControlTag,
     DataTypeDef,
+    FBDBlock,
+    FBDPin,
 )
 from app.models.reasoning import (
     ConfidenceLevel,
@@ -238,9 +241,11 @@ class _InstructionFamily(str, Enum):
     RESET = "reset"                    # RES
     COMPARISON = "comparison"          # EQU, NEQ, LES, LEQ, GRT, GEQ, LIM
     MATH = "math"                      # ADD, SUB, MUL, DIV, CPT
-    MOVE_COPY = "move_copy"            # MOV, COP
+    MOVE_COPY = "move_copy"            # MOV, COP, FLL
     ROUTINE_CALL = "routine_call"      # JSR
     ONE_SHOT = "one_shot"              # ONS, OSR, OSF
+    SYSTEM_ACCESS = "system_access"    # GSV, SSV
+    COMMUNICATION = "communication"    # MSG
     CONTROL_LOOP = "control_loop"      # PID
     NO_OP = "no_op"                    # NOP (recognized; emits no edges)
     LOGIC_BLOCK = "logic_block"        # AOI instance call -> universal LogicBlock
@@ -534,6 +539,57 @@ INSTRUCTION_SEMANTICS: dict[str, _InstructionSemantics] = {
         notes="Copy File: COP(Source, Dest, Length).",
         implemented=True,
     ),
+    "FLL": _InstructionSemantics(
+        family=_InstructionFamily.MOVE_COPY,
+        read_operand_indices=(0,),
+        write_operand_index=1,
+        write_behavior=WriteBehaviorType.MOVES_VALUE,
+        notes=(
+            "Fill File: FLL(Source, Dest, Length). Source is read, "
+            "destination/range is written; Length is preserved as an "
+            "operand but not resolved as a tag target."
+        ),
+        implemented=True,
+    ),
+
+    # ---- Controller/system attribute access ------------------------------
+    # GSV/SSV are modeled as universal system-attribute data flow. The
+    # class/instance/attribute operands identify a normalized
+    # SYSTEM_ATTRIBUTE object; tag operands still resolve through the
+    # ordinary tag index.
+    "GSV": _InstructionSemantics(
+        family=_InstructionFamily.SYSTEM_ACCESS,
+        write_operand_index=3,
+        write_behavior=WriteBehaviorType.MOVES_VALUE,
+        notes=(
+            "Get System Value: reads a controller/system attribute and "
+            "writes the destination tag operand."
+        ),
+        implemented=True,
+    ),
+    "SSV": _InstructionSemantics(
+        family=_InstructionFamily.SYSTEM_ACCESS,
+        read_operand_indices=(3,),
+        write_behavior=WriteBehaviorType.MOVES_VALUE,
+        notes=(
+            "Set System Value: reads the source operand and writes a "
+            "controller/system attribute."
+        ),
+        implemented=True,
+    ),
+
+    # ---- Communication / message instructions ----------------------------
+    "MSG": _InstructionSemantics(
+        family=_InstructionFamily.COMMUNICATION,
+        read_operand_indices=(0,),
+        write_operand_index=0,
+        notes=(
+            "Message instruction: the message control structure is read "
+            "and updated; configured remote data flow is preserved as "
+            "metadata until message configuration parsing is added."
+        ),
+        implemented=True,
+    ),
 
     # ---- One-shots --------------------------------------------------------
     # ONS storage bit is both read (previous scan) and written (current
@@ -590,6 +646,7 @@ INSTRUCTION_SEMANTICS: dict[str, _InstructionSemantics] = {
 
 
 CONTROLLER_SCOPE_KEY = "__controller__"
+STRUCTURAL_LADDER_INSTRUCTIONS = {"BST", "NXB", "BND", "PARALLEL_BRANCH"}
 
 
 def _unsupported_ladder_instruction_inventory(
@@ -603,6 +660,10 @@ def _unsupported_ladder_instruction_inventory(
             continue
         attrs = o.attributes or {}
         if attrs.get("language") != "ladder":
+            continue
+        if str(attrs.get("instruction_type") or o.name or "").upper() in (
+            STRUCTURAL_LADDER_INSTRUCTIONS
+        ):
             continue
         if attrs.get("semantic_implemented"):
             continue
@@ -662,7 +723,42 @@ def normalize_l5x_project(parsed_project: ControlProject) -> dict:
             "unsupported_ladder_instruction_inventory": (
                 _unsupported_ladder_instruction_inventory(control_objects)
             ),
+            "fbd_structural_inventory": _fbd_structural_inventory(
+                control_objects,
+                relationships,
+            ),
         },
+    }
+
+
+def _fbd_structural_inventory(
+    control_objects: list[ControlObject],
+    relationships: list[Relationship],
+) -> dict[str, int]:
+    fbd_blocks = [
+        obj
+        for obj in control_objects
+        if obj.object_type == ControlObjectType.FUNCTION_BLOCK
+        and (obj.attributes or {}).get("language") == "fbd"
+    ]
+    fbd_pins = [
+        obj
+        for obj in control_objects
+        if obj.object_type == ControlObjectType.FUNCTION_BLOCK_PIN
+        and (obj.attributes or {}).get("language") == "fbd"
+    ]
+    return {
+        "block_count": len(fbd_blocks),
+        "pin_count": len(fbd_pins),
+        "unknown_direction_pin_count": sum(
+            1 for pin in fbd_pins if (pin.attributes or {}).get("direction") == "unknown"
+        ),
+        "wire_count": sum(
+            1
+            for rel in relationships
+            if rel.relationship_type == RelationshipType.SIGNAL_CONNECTS
+            and (rel.platform_specific or {}).get("language") == "fbd"
+        ),
     }
 
 
@@ -1165,8 +1261,41 @@ def _normalize_routine(
         )
         return
 
-    # FBD / SFC: preserve routine + instructions with explicit unsupported
-    # parse status (no vendor diagram parser yet).
+    if routine.language == "function_block" and routine.fbd_blocks:
+        routine_co = control_objects[-1]
+        ps_r = dict(routine_co.platform_specific)
+        ps_r["parse_status"] = "parsed"
+        ps_r["raw_logic_present"] = bool(routine.raw_logic)
+        ps_r["raw_logic_preserved"] = False
+        ps_r["language"] = routine.language
+        ps_r["fbd_block_count"] = len(routine.fbd_blocks)
+        ps_r["fbd_pin_count"] = sum(len(block.pins) for block in routine.fbd_blocks)
+        ps_r["fbd_unknown_direction_pin_count"] = sum(
+            1
+            for block in routine.fbd_blocks
+            for pin in block.pins
+            if pin.direction == "unknown"
+        )
+        routine_co.confidence = ConfidenceLevel.MEDIUM
+        routine_co.platform_specific = ps_r
+        _normalize_fbd_routine_ir(
+            controller_name=controller_name,
+            controller_id=controller_id,
+            program_name=program_name,
+            program_id=program_id,
+            routine_id=routine_id,
+            routine_loc=routine_loc,
+            blocks=list(routine.fbd_blocks),
+            exec_ctx_id=exec_ctx_id,
+            tag_index=tag_index,
+            control_objects=control_objects,
+            relationships=relationships,
+            source_platform=source_platform,
+        )
+        return
+
+    # FBD / SFC fallback: preserve routine + instructions with explicit
+    # unsupported or placeholder parse status.
     if routine.language in ("function_block", "sfc"):
         routine_co = control_objects[-1]
         ps_r = dict(routine_co.platform_specific)
@@ -1243,6 +1372,317 @@ def _normalize_routine(
             relationships=relationships,
             source_platform=source_platform,
         )
+
+
+def _normalize_fbd_routine_ir(
+    *,
+    controller_name: str,
+    controller_id: str,
+    program_name: str,
+    program_id: str,
+    routine_id: str,
+    routine_loc: str,
+    blocks: list[FBDBlock],
+    exec_ctx_id: str,
+    tag_index: dict[tuple[str, str], str],
+    control_objects: list[ControlObject],
+    relationships: list[Relationship],
+    source_platform: str,
+) -> None:
+    """Normalize structural FBD IR without inferring block semantics."""
+
+    pin_ids: set[str] = set()
+    wire_by_id: dict[str, dict[str, Any]] = {}
+
+    for block in blocks:
+        block_loc = _fbd_source_location(block.source_location, routine_loc)
+        unknown_pin_count = sum(1 for pin in block.pins if pin.direction == "unknown")
+        control_objects.append(
+            ControlObject(
+                id=block.id,
+                name=block.instance_name or block.definition_name,
+                object_type=ControlObjectType.FUNCTION_BLOCK,
+                source_platform=source_platform,
+                source_location=block_loc,
+                parent_ids=[routine_id, program_id, controller_id],
+                attributes={
+                    "language": "fbd",
+                    "object_subtype": "fbd_block",
+                    "definition_name": block.definition_name,
+                    "instance_name": block.instance_name,
+                    "pin_count": len(block.pins),
+                    "unknown_direction_pin_count": unknown_pin_count,
+                },
+                confidence=ConfidenceLevel.MEDIUM,
+                platform_specific={
+                    "parse_status": "parsed",
+                    "platform_source": "rockwell_l5x_fbd",
+                    "block_type": block.definition_name,
+                    "block_name": block.instance_name,
+                    "fbd_metadata": block.metadata,
+                },
+            )
+        )
+        relationships.append(
+            Relationship(
+                source_id=routine_id,
+                target_id=block.id,
+                relationship_type=RelationshipType.CONTAINS,
+                execution_context_id=exec_ctx_id,
+                source_platform=source_platform,
+                source_location=block_loc,
+                confidence=ConfidenceLevel.HIGH,
+                platform_specific={"language": "fbd", "fbd_relation": "routine_block"},
+            )
+        )
+
+        for pin in block.pins:
+            pin_ids.add(pin.id)
+            _normalize_fbd_pin(
+                controller_name=controller_name,
+                program_name=program_name,
+                block=block,
+                pin=pin,
+                exec_ctx_id=exec_ctx_id,
+                tag_index=tag_index,
+                control_objects=control_objects,
+                relationships=relationships,
+                source_platform=source_platform,
+            )
+
+        for wire in block.wires:
+            wire_id = str(wire.get("id") or "")
+            if wire_id and wire_id not in wire_by_id:
+                wire_by_id[wire_id] = wire
+
+    for wire in wire_by_id.values():
+        _normalize_fbd_wire(
+            wire=wire,
+            pin_ids=pin_ids,
+            exec_ctx_id=exec_ctx_id,
+            relationships=relationships,
+            source_platform=source_platform,
+        )
+
+
+def _normalize_fbd_pin(
+    *,
+    controller_name: str,
+    program_name: str,
+    block: FBDBlock,
+    pin: FBDPin,
+    exec_ctx_id: str,
+    tag_index: dict[tuple[str, str], str],
+    control_objects: list[ControlObject],
+    relationships: list[Relationship],
+    source_platform: str,
+) -> None:
+    direction = pin.direction or "unknown"
+    pin_loc = _fbd_source_location(pin.source_location, None)
+    tag_name = pin.tag.raw if pin.tag else None
+    control_objects.append(
+        ControlObject(
+            id=pin.id,
+            name=pin.name,
+            object_type=ControlObjectType.FUNCTION_BLOCK_PIN,
+            source_platform=source_platform,
+            source_location=pin_loc,
+            parent_ids=[block.id],
+            attributes={
+                "language": "fbd",
+                "object_subtype": "fbd_pin",
+                "direction": direction,
+                "pin_name": pin.name,
+                "parent_block_id": block.id,
+                "tag": tag_name,
+            },
+            confidence=(
+                ConfidenceLevel.LOW
+                if direction == "unknown"
+                else ConfidenceLevel.MEDIUM
+            ),
+            platform_specific={
+                "parse_status": "parsed",
+                "platform_source": "rockwell_l5x_fbd",
+                "pin_metadata": pin.metadata,
+                "binding_status": (
+                    "direction_unknown" if direction == "unknown" else "direction_known"
+                ),
+            },
+        )
+    )
+    relationships.append(
+        Relationship(
+            source_id=block.id,
+            target_id=pin.id,
+            relationship_type=RelationshipType.CONTAINS,
+            execution_context_id=exec_ctx_id,
+            source_platform=source_platform,
+            source_location=pin_loc,
+            confidence=ConfidenceLevel.HIGH,
+            platform_specific={"language": "fbd", "fbd_relation": "block_pin"},
+        )
+    )
+
+    structural_type = _fbd_structural_pin_relationship(direction)
+    relationships.append(
+        Relationship(
+            source_id=block.id,
+            target_id=pin.id,
+            relationship_type=structural_type,
+            execution_context_id=exec_ctx_id,
+            source_platform=source_platform,
+            source_location=pin_loc,
+            confidence=(
+                ConfidenceLevel.LOW
+                if direction == "unknown"
+                else ConfidenceLevel.MEDIUM
+            ),
+            platform_specific={
+                "language": "fbd",
+                "pin_direction": direction,
+                "pin_id": pin.id,
+                "binding_status": (
+                    "direction_unknown" if direction == "unknown" else "direction_known"
+                ),
+                "fbd_relation": "block_pin_signal",
+            },
+        )
+    )
+
+    if not pin.tag or not pin.tag.raw:
+        return
+
+    tag_id = _resolve_tag_id_or_stub(
+        operand=pin.tag.raw,
+        controller_name=controller_name,
+        program_name=program_name,
+        tag_index=tag_index,
+        control_objects=control_objects,
+    )
+    tag_binding_role = (pin.metadata or {}).get("tag_binding_role")
+    tag_rel_type = _fbd_tag_relationship_type(direction, tag_binding_role)
+    confidence = ConfidenceLevel.MEDIUM if direction != "unknown" else ConfidenceLevel.LOW
+    relationships.append(
+        Relationship(
+            source_id=block.id,
+            target_id=tag_id,
+            relationship_type=tag_rel_type,
+            execution_context_id=exec_ctx_id,
+            source_platform=source_platform,
+            source_location=pin_loc,
+            confidence=confidence,
+            platform_specific={
+                "language": "fbd",
+                "pin_direction": direction,
+                "pin_id": pin.id,
+                "pin_name": pin.name,
+                "tag_binding_role": tag_binding_role,
+                "binding_status": (
+                    "direction_unknown" if direction == "unknown" else "direction_known"
+                ),
+                "fbd_relation": "pin_tag_binding",
+            },
+        )
+    )
+    if direction == "inout":
+        opposite = (
+            RelationshipType.WRITES
+            if tag_rel_type == RelationshipType.READS
+            else RelationshipType.READS
+        )
+        relationships.append(
+            Relationship(
+                source_id=block.id,
+                target_id=tag_id,
+                relationship_type=opposite,
+                execution_context_id=exec_ctx_id,
+                source_platform=source_platform,
+                source_location=pin_loc,
+                confidence=ConfidenceLevel.MEDIUM,
+                platform_specific={
+                    "language": "fbd",
+                    "pin_direction": direction,
+                    "pin_id": pin.id,
+                    "pin_name": pin.name,
+                    "tag_binding_role": tag_binding_role,
+                    "binding_status": "direction_known",
+                    "fbd_relation": "pin_tag_binding",
+                },
+            )
+        )
+
+
+def _normalize_fbd_wire(
+    *,
+    wire: dict[str, Any],
+    pin_ids: set[str],
+    exec_ctx_id: str,
+    relationships: list[Relationship],
+    source_platform: str,
+) -> None:
+    source_pin_id = wire.get("source_pin_id")
+    target_pin_id = wire.get("target_pin_id")
+    if (
+        not isinstance(source_pin_id, str)
+        or not isinstance(target_pin_id, str)
+        or source_pin_id not in pin_ids
+        or target_pin_id not in pin_ids
+    ):
+        return
+    relationships.append(
+        Relationship(
+            source_id=source_pin_id,
+            target_id=target_pin_id,
+            relationship_type=RelationshipType.SIGNAL_CONNECTS,
+            execution_context_id=exec_ctx_id,
+            source_platform=source_platform,
+            source_location=str(wire.get("source_location") or ""),
+            confidence=ConfidenceLevel.MEDIUM,
+            platform_specific={
+                "language": "fbd",
+                "wire_id": wire.get("id"),
+                "fbd_relation": "wire",
+                "parse_status": "parsed",
+            },
+        )
+    )
+
+
+def _fbd_structural_pin_relationship(direction: str) -> RelationshipType:
+    if direction == "input":
+        return RelationshipType.READS
+    if direction == "output":
+        return RelationshipType.WRITES
+    if direction == "inout":
+        return RelationshipType.REFERENCES
+    return RelationshipType.REFERENCES
+
+
+def _fbd_tag_relationship_type(
+    direction: str,
+    tag_binding_role: Any,
+) -> RelationshipType:
+    if tag_binding_role == "source_tag":
+        return RelationshipType.READS
+    if tag_binding_role == "destination_tag":
+        return RelationshipType.WRITES
+    if direction == "input":
+        return RelationshipType.READS
+    if direction == "output":
+        return RelationshipType.WRITES
+    if direction == "inout":
+        return RelationshipType.READS
+    return RelationshipType.REFERENCES
+
+
+def _fbd_source_location(
+    source_location: Any,
+    fallback: str | None,
+) -> str:
+    if source_location is not None and getattr(source_location, "path", None):
+        return str(source_location.path)
+    return fallback or ""
 
 
 # ---------------------------------------------------------------------------
@@ -1490,6 +1930,13 @@ def _normalize_ladder_routine(
                     aoi_def=aoi_def,
                     ctx=rung_ctx,
                 )
+            elif _handle_generic_logic_block(
+                instruction=instruction,
+                instr_id=instr_id,
+                instr_obj=control_objects[-1],
+                ctx=rung_ctx,
+            ):
+                continue
             else:
                 _dispatch_instruction_semantics(
                     instruction=instruction,
@@ -3313,6 +3760,10 @@ def _dispatch_instruction_semantics(
         _handle_move_copy(instruction, sem, ctx)
     elif family == _InstructionFamily.ONE_SHOT:
         _handle_one_shot(instruction, sem, ctx)
+    elif family == _InstructionFamily.SYSTEM_ACCESS:
+        _handle_system_access(instruction, sem, ctx)
+    elif family == _InstructionFamily.COMMUNICATION:
+        _handle_communication(instruction, sem, ctx)
     # NO_OP (NOP), PID / CONTROL_LOOP, LOGIC_BLOCK, and UNKNOWN families
     # remain undispatched here. NO_OP is intentionally edge-free but
     # recognized; AOI instances (LOGIC_BLOCK) are resolved by
@@ -4036,6 +4487,80 @@ def _handle_aoi_instance(
         )
 
 
+def _handle_generic_logic_block(
+    instruction: ControlInstruction,
+    instr_id: str,
+    instr_obj: ControlObject,
+    ctx: _RungContext,
+) -> bool:
+    """Preserve unknown vendor/AOI-like calls as neutral LogicBlocks.
+
+    When no enrolled semantics or AOI definition exists, we still know
+    the instruction is a callable block shape with operands. We retype
+    it to ``FUNCTION_BLOCK`` and emit direction-unknown ``REFERENCES``
+    edges to tag-shaped operands. This gives provenance and review
+    workflows something deterministic to show without fabricating
+    READS or WRITES.
+    """
+
+    itype = instruction.instruction_type.upper()
+    sem = INSTRUCTION_SEMANTICS.get(itype)
+    if sem is not None and sem.implemented:
+        return False
+    if itype in STRUCTURAL_LADDER_INSTRUCTIONS:
+        return False
+    if not instruction.operands:
+        return False
+
+    instr_obj.object_type = ControlObjectType.FUNCTION_BLOCK
+    attrs = dict(instr_obj.attributes or {})
+    attrs["is_generic_logic_block"] = True
+    attrs["block_kind"] = "unknown_or_vendor_block"
+    attrs["semantic_family"] = _InstructionFamily.LOGIC_BLOCK.value
+    attrs["semantic_implemented"] = False
+    attrs["operand_count"] = len(instruction.operands)
+    instr_obj.attributes = attrs
+    ps = dict(instr_obj.platform_specific or {})
+    ps["generic_logic_block"] = True
+    ps["binding_status"] = "direction_unknown"
+    instr_obj.platform_specific = ps
+
+    for idx, operand in enumerate(instruction.operands):
+        if not operand or not _looks_like_tag_operand(operand):
+            continue
+        target_id = _resolve_tag_id_or_stub(
+            operand=operand,
+            controller_name=ctx.controller_name,
+            program_name=ctx.program_name,
+            tag_index=ctx.tag_index,
+            control_objects=ctx.control_objects,
+        )
+        ctx.relationships.append(
+            Relationship(
+                source_id=instr_id,
+                target_id=target_id,
+                relationship_type=RelationshipType.REFERENCES,
+                execution_context_id=ctx.exec_ctx_id,
+                logic_condition=ctx.rung_raw_text,
+                source_platform="rockwell",
+                source_location=ctx.rung_loc,
+                confidence=ConfidenceLevel.LOW,
+                platform_specific=_rel_meta(
+                    ctx,
+                    instruction,
+                    operand=operand,
+                    extras={
+                        "operand_index": idx,
+                        "operand_role": "generic_block_parameter",
+                        "binding_status": "direction_unknown",
+                        "gating_kind": "generic_logic_block",
+                    },
+                ),
+            )
+        )
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Newer family handlers
 # ---------------------------------------------------------------------------
@@ -4220,7 +4745,7 @@ def _handle_move_copy(
     sem: _InstructionSemantics,
     ctx: _RungContext,
 ) -> None:
-    """MOV(Source, Dest) / COP(Source, Dest, Length).
+    """MOV(Source, Dest) / COP/FLL(Source, Dest, Length).
 
     Source becomes READS when it looks like a tag; destination becomes
     WRITES with ``write_behavior=MOVES_VALUE``.
@@ -4378,6 +4903,215 @@ def _handle_one_shot(
                         else "one_shot_storage"
                     ),
                 },
+            ),
+        )
+    )
+
+
+def _handle_system_access(
+    instruction: ControlInstruction,
+    sem: _InstructionSemantics,
+    ctx: _RungContext,
+) -> None:
+    """GSV / SSV system-attribute data flow.
+
+    ``GSV(Class, Instance, Attribute, Dest)``:
+        READS a normalized SYSTEM_ATTRIBUTE object and WRITES ``Dest``.
+
+    ``SSV(Class, Instance, Attribute, Source)``:
+        READS ``Source`` when it is a tag and WRITES the normalized
+        SYSTEM_ATTRIBUTE object. Literal source values are preserved as
+        metadata on the write rather than fabricated as tags.
+    """
+
+    itype = instruction.instruction_type.upper()
+    system_id = _resolve_system_attribute_object(
+        controller_name=ctx.controller_name,
+        instruction=instruction,
+        control_objects=ctx.control_objects,
+    )
+    system_meta = _system_attribute_meta(instruction)
+
+    if itype == "GSV":
+        ctx.relationships.append(
+            Relationship(
+                source_id=ctx.rung_id,
+                target_id=system_id,
+                relationship_type=RelationshipType.READS,
+                execution_context_id=ctx.exec_ctx_id,
+                logic_condition=ctx.rung_raw_text,
+                source_platform="rockwell",
+                source_location=ctx.rung_loc,
+                confidence=ConfidenceLevel.MEDIUM,
+                platform_specific=_rel_meta(
+                    ctx,
+                    instruction,
+                    extras={
+                        **system_meta,
+                        "system_access_kind": "get",
+                        "operand_role": "system_attribute_source",
+                        "gating_kind": "system_attribute",
+                    },
+                ),
+            )
+        )
+        dest_operand = _operand_at(instruction, sem.write_operand_index)
+        if dest_operand is None or not _looks_like_tag_operand(dest_operand):
+            return
+        dest_id = _resolve_tag_id_or_stub(
+            operand=dest_operand,
+            controller_name=ctx.controller_name,
+            program_name=ctx.program_name,
+            tag_index=ctx.tag_index,
+            control_objects=ctx.control_objects,
+        )
+        ctx.relationships.append(
+            Relationship(
+                source_id=ctx.rung_id,
+                target_id=dest_id,
+                relationship_type=RelationshipType.WRITES,
+                write_behavior=sem.write_behavior,
+                execution_context_id=ctx.exec_ctx_id,
+                logic_condition=ctx.rung_raw_text,
+                source_platform="rockwell",
+                source_location=ctx.rung_loc,
+                confidence=ConfidenceLevel.HIGH,
+                platform_specific=_rel_meta(
+                    ctx,
+                    instruction,
+                    operand=dest_operand,
+                    extras={
+                        **system_meta,
+                        "system_access_kind": "get",
+                        "operand_index": sem.write_operand_index,
+                        "operand_role": "system_value_destination",
+                    },
+                ),
+            )
+        )
+        return
+
+    if itype != "SSV":
+        return
+
+    source_operand = _operand_at(instruction, 3)
+    if source_operand and _looks_like_tag_operand(source_operand):
+        source_id = _resolve_tag_id_or_stub(
+            operand=source_operand,
+            controller_name=ctx.controller_name,
+            program_name=ctx.program_name,
+            tag_index=ctx.tag_index,
+            control_objects=ctx.control_objects,
+        )
+        ctx.relationships.append(
+            Relationship(
+                source_id=ctx.rung_id,
+                target_id=source_id,
+                relationship_type=RelationshipType.READS,
+                execution_context_id=ctx.exec_ctx_id,
+                logic_condition=ctx.rung_raw_text,
+                source_platform="rockwell",
+                source_location=ctx.rung_loc,
+                confidence=ConfidenceLevel.HIGH,
+                platform_specific=_rel_meta(
+                    ctx,
+                    instruction,
+                    operand=source_operand,
+                    extras={
+                        **system_meta,
+                        "system_access_kind": "set",
+                        "operand_index": 3,
+                        "operand_role": "system_value_source",
+                        "gating_kind": "system_attribute",
+                    },
+                ),
+            )
+        )
+
+    ctx.relationships.append(
+        Relationship(
+            source_id=ctx.rung_id,
+            target_id=system_id,
+            relationship_type=RelationshipType.WRITES,
+            write_behavior=sem.write_behavior,
+            execution_context_id=ctx.exec_ctx_id,
+            logic_condition=ctx.rung_raw_text,
+            source_platform="rockwell",
+            source_location=ctx.rung_loc,
+            confidence=ConfidenceLevel.MEDIUM,
+            platform_specific=_rel_meta(
+                ctx,
+                instruction,
+                extras={
+                    **system_meta,
+                    "system_access_kind": "set",
+                    "operand_role": "system_attribute_destination",
+                    "source_operand": source_operand,
+                    "source_operand_is_tag": bool(
+                        source_operand and _looks_like_tag_operand(source_operand)
+                    ),
+                },
+            ),
+        )
+    )
+
+
+def _handle_communication(
+    instruction: ControlInstruction,
+    sem: _InstructionSemantics,
+    ctx: _RungContext,
+) -> None:
+    """MSG communication control structure data flow."""
+
+    control_operand = _operand_at(instruction, 0)
+    if control_operand is None or not _looks_like_tag_operand(control_operand):
+        return
+    control_id = _resolve_tag_id_or_stub(
+        operand=control_operand,
+        controller_name=ctx.controller_name,
+        program_name=ctx.program_name,
+        tag_index=ctx.tag_index,
+        control_objects=ctx.control_objects,
+    )
+    common = {
+        "communication_kind": "message_instruction",
+        "message_role": "control_structure",
+        "operand_index": 0,
+        "gating_kind": "communication",
+    }
+    ctx.relationships.append(
+        Relationship(
+            source_id=ctx.rung_id,
+            target_id=control_id,
+            relationship_type=RelationshipType.READS,
+            execution_context_id=ctx.exec_ctx_id,
+            logic_condition=ctx.rung_raw_text,
+            source_platform="rockwell",
+            source_location=ctx.rung_loc,
+            confidence=ConfidenceLevel.MEDIUM,
+            platform_specific=_rel_meta(
+                ctx,
+                instruction,
+                operand=control_operand,
+                extras={**common, "operand_role": "message_control_read"},
+            ),
+        )
+    )
+    ctx.relationships.append(
+        Relationship(
+            source_id=ctx.rung_id,
+            target_id=control_id,
+            relationship_type=RelationshipType.WRITES,
+            execution_context_id=ctx.exec_ctx_id,
+            logic_condition=ctx.rung_raw_text,
+            source_platform="rockwell",
+            source_location=ctx.rung_loc,
+            confidence=ConfidenceLevel.MEDIUM,
+            platform_specific=_rel_meta(
+                ctx,
+                instruction,
+                operand=control_operand,
+                extras={**common, "operand_role": "message_control_write"},
             ),
         )
     )
@@ -4667,6 +5401,67 @@ def _operand_at(
 # ---------------------------------------------------------------------------
 # Object construction helpers
 # ---------------------------------------------------------------------------
+
+
+def _system_attribute_meta(instruction: ControlInstruction) -> dict[str, Any]:
+    operands = list(instruction.operands)
+    return {
+        "system_class": operands[0] if len(operands) > 0 else "",
+        "system_instance": operands[1] if len(operands) > 1 else "",
+        "system_attribute": operands[2] if len(operands) > 2 else "",
+    }
+
+
+def _resolve_system_attribute_object(
+    *,
+    controller_name: str,
+    instruction: ControlInstruction,
+    control_objects: list[ControlObject],
+) -> str:
+    meta = _system_attribute_meta(instruction)
+    attr_id = _system_attribute_id(
+        controller_name,
+        meta["system_class"],
+        meta["system_instance"],
+        meta["system_attribute"],
+    )
+    if any(obj.id == attr_id for obj in control_objects):
+        return attr_id
+
+    display_parts = [
+        part
+        for part in (
+            meta["system_class"],
+            meta["system_instance"],
+            meta["system_attribute"],
+        )
+        if part
+    ]
+    control_objects.append(
+        ControlObject(
+            id=attr_id,
+            name=".".join(display_parts) if display_parts else "SystemAttribute",
+            object_type=ControlObjectType.SYSTEM_ATTRIBUTE,
+            source_platform="rockwell",
+            source_location=(
+                f"Controller:{controller_name}/SystemAttribute:"
+                f"{meta['system_class']}:{meta['system_instance']}:"
+                f"{meta['system_attribute']}"
+            ),
+            attributes={
+                "system_class": meta["system_class"],
+                "system_instance": meta["system_instance"],
+                "system_attribute": meta["system_attribute"],
+            },
+            confidence=ConfidenceLevel.MEDIUM,
+            platform_specific={
+                "platform_source": "rockwell_l5x_system_attribute",
+                "rockwell_metadata": meta,
+                "platform_metadata": meta,
+            },
+        )
+    )
+    return attr_id
 
 
 def _tag_to_control_object(
@@ -5086,6 +5881,24 @@ def _tag_id(
     if scope_key == CONTROLLER_SCOPE_KEY:
         return f"tag::{controller_name}/{tag_name}"
     return f"tag::{controller_name}/{scope_key}/{tag_name}"
+
+
+def _system_attribute_id(
+    controller_name: str,
+    system_class: str,
+    system_instance: str,
+    system_attribute: str,
+) -> str:
+    return (
+        f"system_attribute::{_id_part(controller_name)}"
+        f"/{_id_part(system_class)}/{_id_part(system_instance)}"
+        f"/{_id_part(system_attribute)}"
+    )
+
+
+def _id_part(value: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "_", value.strip())
+    return cleaned or "_"
 
 
 __all__ = [

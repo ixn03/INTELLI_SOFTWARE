@@ -127,6 +127,33 @@ def _eval_node(
             return True, []
         return None, terms
 
+    if kind == LogicExpressionKind.CONSTANT:
+        if expr.constant_value is None:
+            return None, [
+                UnsatisfiedTerm(
+                    tag=None,
+                    instruction_type=expr.instruction_type,
+                    required_value=None,
+                    branch_index=expr.branch_index,
+                    reason="unknown",
+                    path=path,
+                    display="constant condition unknown",
+                )
+            ]
+        if expr.constant_value is True:
+            return True, []
+        return False, [
+            UnsatisfiedTerm(
+                tag=None,
+                instruction_type=expr.instruction_type,
+                required_value=True,
+                branch_index=expr.branch_index,
+                reason="false",
+                path=path,
+                display="unconditional FALSE",
+            )
+        ]
+
     if kind == LogicExpressionKind.CONTACT:
         tag = expr.tag
         required = expr.examined_value

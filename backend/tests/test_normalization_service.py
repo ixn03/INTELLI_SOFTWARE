@@ -351,25 +351,46 @@ class NormalizationServiceTests(unittest.TestCase):
         self,
     ) -> None:
         # The fixture includes one ``MyAOI`` instruction with no
-        # registry entry. It should still appear as an INSTRUCTION
-        # ControlObject (so the graph is complete) but must not produce
-        # any READS / WRITES / RESETS / CALLS edges.
+        # registry entry. Unknown callable shapes are preserved as
+        # generic FUNCTION_BLOCK objects with direction-unknown
+        # references, but must not fabricate READS / WRITES / CALLS.
         my_aoi_objects = [
             o for o in self.control_objects
-            if o.object_type == ControlObjectType.INSTRUCTION
+            if o.object_type == ControlObjectType.FUNCTION_BLOCK
             and o.name == "MyAOI"
         ]
         self.assertEqual(len(my_aoi_objects), 1)
+        self.assertTrue(
+            my_aoi_objects[0].attributes.get("is_generic_logic_block")
+        )
 
-        non_containment_edges = [
+        cause_effect_edges = [
             r for r in self.relationships
-            if r.relationship_type != RelationshipType.CONTAINS
+            if r.relationship_type
+            in {
+                RelationshipType.READS,
+                RelationshipType.WRITES,
+                RelationshipType.RESETS,
+                RelationshipType.CALLS,
+            }
             and r.platform_specific.get("instruction_type") == "MyAOI"
         ]
         self.assertEqual(
-            non_containment_edges,
+            cause_effect_edges,
             [],
-            "unknown instruction must not emit cause/effect edges",
+            "unknown instruction must not emit fabricated cause/effect edges",
+        )
+        references = [
+            r for r in self.relationships
+            if r.relationship_type == RelationshipType.REFERENCES
+            and r.platform_specific.get("instruction_type") == "MyAOI"
+        ]
+        self.assertTrue(references)
+        self.assertTrue(
+            all(
+                r.platform_specific.get("binding_status") == "direction_unknown"
+                for r in references
+            )
         )
 
 

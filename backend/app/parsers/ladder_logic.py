@@ -143,7 +143,7 @@ def _build_from_instructions(
                     w for w in arm_warnings if w != "empty_expression"
                 ]
                 warnings.extend(arm_warnings)
-                if arm_expr is not None:
+                if arm_expr is not None and not _is_unconditional_constant(arm_expr):
                     arm_exprs.append(arm_expr)
             or_node = _parallel(arm_exprs)
             if or_node is not None:
@@ -176,8 +176,36 @@ def _build_from_instructions(
 
     result = _series(series)
     if result is None:
+        if _has_effect_instruction(instructions):
+            return (
+                LogicExpression(
+                    kind=LogicExpressionKind.CONSTANT,
+                    constant_value=True,
+                    instruction_type="UNCONDITIONAL",
+                ),
+                warnings,
+            )
         warnings.append("empty_expression")
     return result, warnings
+
+
+def _has_effect_instruction(instructions: list[ControlInstruction]) -> bool:
+    for inst in instructions:
+        itype = inst.instruction_type.upper()
+        if itype in _BRANCH_MARKERS or itype in _SKIP_FOR_TREE:
+            continue
+        if itype in NO_OP_INSTRUCTIONS:
+            continue
+        return True
+    return False
+
+
+def _is_unconditional_constant(expr: LogicExpression) -> bool:
+    return (
+        expr.kind == LogicExpressionKind.CONSTANT
+        and expr.constant_value is True
+        and expr.instruction_type == "UNCONDITIONAL"
+    )
 
 
 def _is_gating_instruction(inst: ControlInstruction) -> bool:
@@ -261,6 +289,8 @@ def _render(expr: LogicExpression) -> str:
     if kind == LogicExpressionKind.NOT:
         child = _render(expr.children[0]) if expr.children else "?"
         return f"NOT ({child})"
+    if kind == LogicExpressionKind.CONSTANT:
+        return "TRUE" if expr.constant_value is True else "FALSE"
     if kind == LogicExpressionKind.CONTACT:
         tag = expr.tag or "?"
         if expr.examined_value is False:

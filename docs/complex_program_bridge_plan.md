@@ -88,11 +88,11 @@ is the early warning sign to watch).
 | LogicObject | Yes | `ControlObject` |
 | LogicRead / LogicWrite | Yes | `Relationship(READS / WRITES)` |
 | LogicSequence | Yes | `Relationship(SEQUENCES)` |
-| LogicBlock (AOI / Siemens FB) | Partly | `ControlObject(FUNCTION_BLOCK)` |
-| LogicCondition | Yes, but **only as a text string** | `Relationship.logic_condition` |
-| **LogicExpression (AND/OR/NOT tree)** | **No — this is the gap** | **Built in Phase 3** |
+| LogicBlock (AOI / Siemens FB) | **Yes** (Phase 2) | `ControlObject(FUNCTION_BLOCK)` |
+| LogicCondition | Yes — text + structured tree | `Relationship.logic_condition` + `LogicExpression` |
+| **LogicExpression (AND/OR/NOT tree)** | **Yes** (Phase 3, Jun 2026) | `LogicExpression` in `reasoning.py` |
 
-So the deliberate net-new universal object is **`LogicExpression`** (Phase 3),
+The deliberate net-new universal object **`LogicExpression`** (Phase 3) is now
 plus making **`LogicBlock`** a genuinely shared shape (Phase 2). Phase 3 is not
 a Rockwell feature — it is the universal logic representation that Rockwell
 Ladder, Siemens LAD/FBD, DeltaV, and Honeywell will all reuse. That is why it is
@@ -102,10 +102,14 @@ the moat.
 
 Stop at **reliable understanding**, not perfection:
 
-✅ Ladder ✅ Structured Text ✅ AOIs ✅ UDTs ✅ Aliases ✅ Branch logic ✅ Tasks
+✅ Ladder ✅ Structured Text (depth) ✅ AOIs ✅ UDTs ✅ Aliases ✅ Branch logic
+⬜ Tasks ⬜ FBD/SFC ⬜ Durable graph ⬜ Live runtime merge
 
-That is roughly 80–90% of real Rockwell programs (Phases 1–5 below). At that
-point, **start the Siemens connector** — not because Rockwell is "finished," but
+Phases 0–4 are largely complete on the curated fixture corpus (commit
+`95830d2`, branch `cursor/evidence-trust-ui`). **Tasks, FBD/SFC, persistence,
+and runtime truth are still open** — do not treat grader "A" grades as plant
+readiness. At **~80–90% Rockwell understanding** (Phases 1–6 + persistence),
+**start the Siemens connector** — not because Rockwell is "finished," but
 because every new vendor exposes weaknesses in the universal model. The loop is:
 
 ```
@@ -118,26 +122,85 @@ in the shared model.
 
 ---
 
-## Recommended order (dependency-aware)
+## Status (verified Jun 2026, commit `95830d2`)
+
+| Phase | Status | Evidence |
+|-------|--------|----------|
+| **0** Corpus + scoring | ✅ Done | 17 L5X fixtures; `parser_grade.py` scorecard; `compare_grades.py` regression diff |
+| **1** Instruction registry | ✅ Largely done | Fleet known-opcode coverage ~100% on fixtures; residual unknowns (`SQO`, `END`, vendor blocks like `MBTCP_CLIENT`) |
+| **2** AOI / UDT / alias | ✅ Done | Connector defs + normalizer `LogicBlock`; alias/UDT member resolution; AOI body `CALLS` |
+| **3** Branch-aware logic | ✅ Done (fixture-scoped) | `LogicExpression` in `reasoning.py`; builder in `ladder_logic.py`; answer keys + eval for `INTELLI_Ladder_Test` rungs 4+8; pf525 branched rungs 100% resolved |
+| **4** Structured Text depth | ✅ Done (slices 1–3) | Loops, arithmetic, nested IF/CASE, RETURN, FB/JSR/AOI in ST, cross-program JSR, nested-IF gating AND, ladder AOI body normalization; LiOH ladder `st_too_complex` 0% |
+| **5** Tasks / scan order | ⬜ Not started | L5X `<Tasks>` not parsed; one execution context per routine |
+| **6** FBD / SFC | ⬜ Hollow | Structural parse only; no tag-level wire/step data flow |
+| **7** Persistence / graph storage | ⬜ Not started | `project_store` in-memory only; graph lost on restart |
+| **8** Runtime truth + live adapters | ⬜ Not started | Manual runtime eval on curated fixtures; no OPC/live merge |
+| **9** Unified reasoner | ⬜ Not started | `trace_v2`, `ask_v2`, `sequence_reasoning`, `runtime_evaluation_v2` — separate services |
+| **10** Siemens connector | ⬜ Shell only | Stress-test deferred until universal model + persistence ready |
+| **11** NL / ML assist | ⬜ Explicitly last | `llm_assist_service` exists; not primary reasoning layer |
+
+**Fleet reality check:** `traceability_score` averages **~0.32** across fixtures
+with logic (grader still awards "A" on many files). Upload → trace v2 → manual
+runtime eval works on curated programs; that is the credible demo path today.
+
+---
+
+## Current state vs vision (honest, controls-friendly)
+
+**Vision:** Connectors → Universal Model → One Reasoner.
+
+**Today:** A capable **Rockwell compiler** (L5X → normalized graph) plus
+**trace microservices** and a **demo UI**. The universal model in
+`reasoning.py` is real and growing, but intelligence is scattered across
+services and the graph is **ephemeral** (`project_store`).
+
+What a controls engineer can trust today:
+- Upload an L5X, get trace v2 on ladder/ST with branch-level "why false"
+  on tested rungs.
+- AOI/UDT/alias resolution on real-ish fixtures (LiOH, pf525, synthetic AOI).
+- Deterministic normalization — same file in, same graph out.
+
+What you cannot trust yet for plant work:
+- **Scan order / task causality** (Phase 5) — periodic vs continuous context missing.
+- **FBD/SFC programs** — structure only, no cause/effect (Phase 6).
+- **Durable knowledge** — no DB/KG; re-upload every session (Phase 7).
+- **Live I/O truth** — no OPC/runtime merge to say "tag is actually false" (Phase 8).
+- **One reasoner** — ask/trace/sequence/runtime are separate paths (Phase 9).
+- **Grader optimism** — letter grades overstate readiness; use `traceability_score`
+  and answer-key tests as the bar.
+
+NL/ML and live-data-assisted troubleshooting stay **out of the critical path**
+until Phases 5 + 7 + 8 land.
+
+---
+
+## Recommended order (dependency-aware, revised)
 
 ```
-Phase 0  Foundation: real-program corpus + scoring        (do first, always)
-Phase 1  Quick win: expand instruction registry           (build confidence)
-Phase 2  AOI + UDT/alias resolution                        (biggest real-world coverage)
-Phase 3  Branch-aware boolean logic (the moat)             (biggest correctness)
-Phase 4  Structured Text depth                             (common in modern code)
-Phase 5  Execution / scan + task model                     (causality correctness)
-Phase 6  FBD / SFC normalization                           (breadth)
+Phase 0  Foundation: corpus + scoring                 ✅ Done
+Phase 1  Instruction registry                         ✅ Largely done
+Phase 2  AOI + UDT/alias → LogicBlock                 ✅ Done
+Phase 3  Branch-aware boolean logic (moat)            ✅ Done (fixture-scoped)
+Phase 4  Structured Text depth                        ✅ Done (slices 1–3)
+─── below here is the path to INTELLI vision ───
+Phase 5  Execution / scan + task model                (causality correctness)
+Phase 6  FBD / SFC normalization                      (breadth)
+Phase 7  Persistence / durable graph storage          (was implicit; now explicit)
+Phase 8  Runtime truth merge + live data adapters     (OPC / snapshot / historian)
+Phase 9  Unified reasoner consolidation               (one entry point on universal model)
+Phase 10 Siemens connector stress test                (after model + persistence)
+Phase 11 NL / ML assist layer                         (last — never in normalization)
 ```
 
-Phases 1–3 are the heart. If you only did 0–3, INTELLI would jump from "demo"
-to "credible on real Rockwell programs."
+Phases 0–4 moved INTELLI from "demo tokenizer" to "credible on curated
+Rockwell ladder + ST." Phases 5–9 are what separate **compiler + trace demo**
+from **plant troubleshooting platform**. Phase 10 validates vendor-neutrality;
+Phase 11 adds explanation assist only after deterministic truth exists.
 
-> Note on ordering: Phase 3 (branch-awareness) delivers the **most correctness
-> value**, but it's the hardest and changes the data model. We put the quick
-> win (Phase 1) and the high-coverage win (Phase 2) first so you build software
-> confidence and momentum before the big refactor. Do **not** defer Phase 3
-> indefinitely — it is the actual moat.
+> **Ordering note:** Persistence (7) can start in parallel with Phase 5 once the
+> graph schema stabilizes — you need durable storage before live runtime merge (8).
+> Do **not** prioritize NL/ML or Siemens until 5 + 7 + at least one live adapter (8)
+> prove the loop: export → graph → runtime snapshot → trace.
 
 ---
 
@@ -174,6 +237,12 @@ are your domain; a SW engineer wires the scorecard output.
 
 **Done when:** Running one command prints a coverage scorecard for every
 fixture, and you have written answer keys to compare trace output against.
+
+**Status: ✅ Done (Jun 2026).** 17 fixtures in `backend/tests/fixtures/l5x/`;
+`backend/tools/parser_grade.py` emits per-file scorecards;
+`backend/tools/compare_grades.py` diffs baselines. Answer keys exist for
+`INTELLI_Ladder_Test` (rungs 4+8); expand keys to more branched/ST fixtures
+as regression targets.
 
 ---
 
@@ -212,6 +281,11 @@ is copy-paste.
 
 **Done when:** The "unknown opcode" list in the Phase 0 scorecard shrinks to
 genuinely exotic instructions only.
+
+**Status: ✅ Largely done.** Fixture fleet shows ~100% known-opcode hits on
+most files. Residual unknowns: `SQO` (synthetic AOI fixture), `END`, and
+vendor/library blocks (`MBTCP_CLIENT`, `SYS_*`). `PID` registered but edges
+deferred per plan.
 
 **Explicitly defer:** `PID/PIDE` deep semantics (control-loop math) — register
 them as recognized but leave full behavior for later; just capture the SP/PV/CV
@@ -288,6 +362,12 @@ fiddly software, but every directional decision is yours to confirm.
 **Done when:** A trace on an AOI output correctly lists the bound input tags as
 causes, and alias/UDT references resolve to base tags in the graph.
 
+**Status: ✅ Done (Jun 2026).** AOI instances normalize to universal
+`LogicBlock` (`FUNCTION_BLOCK`); alias `alias_for` and UDT member paths
+resolve in trace. LiOH full export exercises real AOI defs + ST instance
+calls. **Remaining gap:** ladder AOI *body* logic is linked via `CALLS` but
+deep in-body trace is still thinner than top-level rung trace.
+
 ---
 
 ## Phase 3 — Branch-aware boolean logic (the moat)
@@ -324,19 +404,13 @@ store it.
 > into the model.)
 
 **What changes / where:**
-- `backend/app/parsers/ladder.py` — upgrade from "tokenize" to "build the
-  series/parallel tree" using the `BST`/`NXB`/`BND` nesting it already detects
-  (it currently records branch level/index but doesn't assemble the tree).
-- `backend/app/models/reasoning.py` — add the `LogicExpression` type here, in
-  the **universal model** (AND/OR/NOT/contact leaves), and let a
-  rung/edge carry a structured condition instead of only a text string. This is
-  the key model change. Today `logic_condition` is just a string and
-  `ControlInstruction.operands` is a flat `List[str]` with no boolean structure.
-- `backend/app/models/control_model.py` — the parser may build an interim
-  expression here, but the canonical structured condition belongs on the
-  universal `Relationship` / rung object in `reasoning.py`.
-- `backend/app/services/trace_service.py` / trace v2 — consume the boolean
-  tree to give precise "this branch satisfied, that one didn't" answers.
+- `backend/app/parsers/ladder_logic.py` — build the series/parallel tree from
+  `BST`/`NXB`/`BND` nesting (extracted from `ladder.py` tokenizer output).
+- `backend/app/models/reasoning.py` — `LogicExpression` type (AND/OR/NOT/contact
+  leaves) on the universal model; rung/edge carries structured condition plus
+  display text.
+- `backend/app/services/trace_v2_service.py` / runtime eval — walk the tree for
+  precise "this branch satisfied, that one didn't" answers.
 
 **Steps:**
 1. **Design the tree model** with a software engineer (AND/OR/NOT + leaf =
@@ -354,6 +428,13 @@ store it.
 
 **Done when:** For a branched rung, trace explains the exact failing term/branch
 and it matches your hand-written answer key.
+
+**Status: ✅ Done on fixture corpus (Jun 2026).** `LogicExpression` +
+`evaluate_logic_expression` in place; `INTELLI_Ladder_Test` rungs 4+8 have
+answer keys + automated acceptance tests; pf525 branched rungs 100% resolved.
+**Remaining gaps:** not every fixture has answer keys; some files still show
+~88–89% `logic_expression_resolved_pct` (unbranched/complex rungs fall back to
+text). Expand keys before claiming plant-wide correctness.
 
 **Scope discipline:** Keep the conservative policy — if a rung's structure is
 ambiguous (ASCII art, exotic notation), fall back to the text-string condition
@@ -394,6 +475,13 @@ semantics; SW engineer extends the parser.
 **Done when:** The `too_complex` rate on real ST routines drops substantially
 and loop/call data flow shows up in trace.
 
+**Status: ✅ Done — slices 1–3 + closure (Jun 2026, `95830d2`).** Handles
+`FOR`/`WHILE`/`REPEAT`, arithmetic RHS, nested IF/CASE/RETURN, FB/JSR/AOI
+calls, cross-program JSR, nested-IF gating as AND, ladder AOI body
+normalization. LiOH ladder fixture: `st_too_complex` 0%. **Residual:**
+LiOH full export 5.9%; pf525 ST 2.7% — exotic constructs still flagged, not
+guessed.
+
 ---
 
 ## Phase 5 — Execution / scan + task model
@@ -424,6 +512,9 @@ vs periodic vs event, priority), SW engineer models it.
 
 **Done when:** The graph shows tasks with their rates and scheduled programs,
 and trace respects scan/task context.
+
+**Status: ⬜ Not started.** Connector still walks Programs only; fixtures
+contain `<Tasks>` sections that are ignored.
 
 ---
 
@@ -458,24 +549,137 @@ define correct semantics.
 **Done when:** A trace on an FBD output or SFC step lists the upstream blocks /
 transition conditions as causes.
 
+**Status: ⬜ Not started (hollow).** FBD/SFC objects preserved structurally;
+normalizer TODOs at `normalization_service.py` lines 116–122 unchanged.
+
+---
+
+## Phase 7 — Persistence / durable graph storage
+
+**Goal:** Store normalized graphs durably so projects, diffs, and traces survive
+restarts — the foundation for a real knowledge graph, not an upload session.
+
+**Why it matters:** `project_store` is in-process only. Without persistence,
+there is no fleet history, no cross-session trace, and no serious live-data
+correlation.
+
+**What changes / where:**
+- Replace or back `project_store` with a DB or graph store (SQLite/Postgres +
+  optional graph layer).
+- Version normalized output per `file_hash` + upload timestamp.
+- API: list projects, diff two versions, trace by stable project id.
+
+**Effort:** **L** · **Who:** **SW-led**, you define retention/versioning needs.
+
+**Done when:** Re-upload is optional; trace v2 works against a stored project
+after backend restart.
+
+**Status: ⬜ Not started.**
+
+---
+
+## Phase 8 — Runtime truth merge + live data adapters
+
+**Goal:** Merge **program logic truth** (graph) with **runtime truth** (live or
+snapshotted tag values) so trace answers reflect what the plant is doing now.
+
+**Why it matters:** Today runtime eval is manual/curated. Live troubleshooting
+requires OPC UA, FactoryTalk, or historian snapshots feeding the same tag model
+the normalizer built.
+
+**What changes / where:**
+- `runtime_snapshot_service` / `runtime_evaluation_v2_service` — wire to real
+  adapters, not fixture-only snapshots.
+- Tag identity map: normalized tag id ↔ live OPC node id.
+- Trust/evidence layer: distinguish "logic says false" vs "I/O reads false."
+
+**Effort:** **L–XL** · **Who:** **Pair** — you define tag↔I/O mapping rules;
+SW builds adapters.
+
+**Done when:** Upload L5X + connect OPC (or import snapshot) → trace v2 uses
+live values on at least one pilot program.
+
+**Status: ⬜ Not started** (blocked on Phase 7 for production use).
+
+---
+
+## Phase 9 — Unified reasoner consolidation
+
+**Goal:** One reasoning entry point over the universal model — not separate
+`trace_v2`, `ask_v2`, `sequence_reasoning`, and `runtime_evaluation_v2` paths.
+
+**Why it matters:** Fragmented services duplicate graph walks and drift in
+semantics. The vision is **One Reasoner, Many Connectors**.
+
+**What changes / where:**
+- Consolidate question routing into a single reasoner module consuming
+  `ControlObject` / `Relationship` / `LogicExpression`.
+- Keep services as thin API facades if needed; core logic lives once.
+
+**Effort:** **L** · **Who:** **SW-led**, you validate trace answers unchanged.
+
+**Done when:** "Why is X false?" and "What sequences before Y?" share one graph
+walk and one explanation format.
+
+**Status: ⬜ Not started.**
+
+---
+
+## Phase 10 — Siemens connector (universal-model stress test)
+
+**Goal:** Second vendor connector to prove `LogicBlock`, `LogicExpression`, and
+execution contexts are truly vendor-neutral.
+
+**Why it matters:** Rockwell-first development hides model assumptions. Siemens
+LAD/FBD/FB exposes different parameter binding and block shapes.
+
+**Effort:** **XL** · **Who:** **Pair** — you supply TIA export examples; SW
+maps to universal model.
+
+**Done when:** Same reasoner (Phase 9) traces a Siemens program without
+Rockwell-specific branches in core logic.
+
+**Status: ⬜ Shell only** — defer until Phases 5–7 + reasoner sketch (9).
+
+---
+
+## Phase 11 — NL / ML assist layer (explicitly last)
+
+**Goal:** Natural-language explanation and search **on top of** deterministic
+trace — never inside normalization.
+
+**Why it matters:** LLMs can phrase answers well but must not invent causality.
+Normalization stays deterministic (Guardrail #2).
+
+**What changes / where:**
+- `llm_assist_service` — consume reasoner output + evidence bundle only.
+- UI: assistive narrative, not authoritative trace.
+
+**Effort:** **M** · **Who:** **SW-led**, you review for controls accuracy.
+
+**Done when:** NL answers cite deterministic trace paths; disabling LLM leaves
+full troubleshooting capability.
+
+**Status: ⬜ Exists as assist stub; not primary layer.**
+
 ---
 
 ## At-a-glance summary
 
-| Phase | Gap closed | Effort | Who drives | Value |
-|-------|-----------|--------|-----------|-------|
-| 0 | Test corpus + scoring | M | You (controls) | Enables everything |
-| 1 | Instruction coverage | S each | You (controls) | High, easy |
-| 2 | AOI / UDT / alias resolution | M + L | Pair / SW-led | **Highest coverage** |
-| 3 | Branch-aware boolean logic | L–XL | SW-led | **Highest correctness (moat)** |
-| 4 | Structured Text depth | M–L | Pair | Medium-high |
-| 5 | Execution / task model | M | Pair | Medium (correctness) |
-| 6 | FBD / SFC normalization | XL | SW-led | Breadth |
-
-**Suggested first 30 days:** Phase 0 (week 1–2) → Phase 1 quick wins in
-parallel (week 2) → start Phase 2A connector work (week 3–4). That sequence
-gives you a measurable coverage jump and the codebase familiarity to tackle the
-Phase 3 moat with confidence.
+| Phase | Gap closed | Effort | Who drives | Status |
+|-------|-----------|--------|-----------|--------|
+| 0 | Test corpus + scoring | M | You (controls) | ✅ Done |
+| 1 | Instruction coverage | S each | You (controls) | ✅ Largely done |
+| 2 | AOI / UDT / alias → LogicBlock | M + L | Pair / SW-led | ✅ Done |
+| 3 | Branch-aware boolean logic | L–XL | SW-led | ✅ Done (fixture-scoped) |
+| 4 | Structured Text depth | M–L | Pair | ✅ Done (slices 1–3) |
+| 5 | Execution / task model | M | Pair | ⬜ Next |
+| 6 | FBD / SFC normalization | XL | SW-led | ⬜ |
+| 7 | Persistence / graph storage | L | SW-led | ⬜ |
+| 8 | Runtime truth + live adapters | L–XL | Pair | ⬜ |
+| 9 | Unified reasoner | L | SW-led | ⬜ |
+| 10 | Siemens stress test | XL | Pair | ⬜ |
+| 11 | NL / ML assist | M | SW-led | ⬜ Last |
 
 ---
 
@@ -488,3 +692,54 @@ Phase 3 moat with confidence.
    never silently regress.
 4. **One instruction / one construct at a time.** Small, reviewable steps beat
    big rewrites — especially while you're building software fluency.
+5. **Grade on `traceability_score`, not letter grade.** Fleet average ~0.32
+   today; "A" on sparse fixtures is not plant readiness.
+
+---
+
+## Next steps — prioritized 90-day roadmap
+
+Tied to vision milestones: **durable graph → correct scan order → live truth →
+one reasoner**. NL/ML and Siemens stay off the critical path until then.
+
+### Days 1–30 — Phase 5 kickoff + measurement honesty
+
+| Milestone | Who | Outcome |
+|-----------|-----|---------|
+| Parse L5X `<Tasks>` (type, rate, priority, scheduled programs) | **Pair** | Task → program hierarchy in `ControlProject` + `ExecutionContext` |
+| Grader: task coverage + scan-order fields | **Pair** | Scorecard shows task parse rate per fixture |
+| Expand answer keys to 3 more branched/ST fixtures (e.g. pf525, LiOH ladder) | **You (controls)** | Regression bar beyond rungs 4+8 |
+| Close residual Phase 1 unknowns (`SQO`, `END`) | **You (controls)** | Registry entries + fixture rungs |
+
+**Vision checkpoint:** Trace can state *which task* owns a routine (even if
+ordering logic is minimal).
+
+### Days 31–60 — Phase 7 persistence + Phase 5 completion
+
+| Milestone | Who | Outcome |
+|-----------|-----|---------|
+| DB-backed project store (survives restart) | **SW-led** | Stable project id; normalized graph cached on disk |
+| Trace v2 reads from stored graph (no re-normalize) | **SW-led** | Upload-once, trace-many sessions |
+| Trace respects task/scan context for causality ordering | **Pair** | Periodic vs continuous shown in trace metadata |
+| Project diff API wired to stored versions | **SW-led** | Supports change review workflows |
+
+**Vision checkpoint:** Graph is **durable**; causality includes **when** logic runs.
+
+### Days 61–90 — Phase 8 pilot + reasoner sketch
+
+| Milestone | Who | Outcome |
+|-----------|-----|---------|
+| One live adapter (OPC UA or snapshot CSV) for pilot tags | **Pair** | Runtime eval uses real values, not hand-entered |
+| Tag map: normalized id ↔ live node | **Pair** | Evidence layer distinguishes logic vs I/O |
+| Reasoner consolidation design doc + shared graph-walk module | **SW-led** | Single path for trace + ask; services become facades |
+| Phase 6 scoping: pick one FBD or SFC fixture for first wire | **You (controls)** | Breadth work queued with clear acceptance test |
+
+**Vision checkpoint:** **Upload → store → live snapshot → trace** works on one
+pilot cell. Siemens connector (Phase 10) and NL assist (Phase 11) start only
+after this loop is proven.
+
+### Explicitly defer (90 days)
+
+- **Phase 6 full FBD/SFC** — start scoping only; implementation after persistence.
+- **Phase 10 Siemens** — until universal model survives second-vendor paper test.
+- **Phase 11 NL/ML as primary** — assist narrative only, never in normalization.

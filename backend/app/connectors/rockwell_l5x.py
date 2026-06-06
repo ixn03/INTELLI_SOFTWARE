@@ -12,8 +12,18 @@ from app.models.control_model import (
     DataTypeDef,
     DataTypeMember,
 )
-from app.parsers.fbd import extract_fbd_tags, parse_l5x_fbd_routine
-from app.parsers.ladder import extract_operand_tags, parse_ladder_rung_text
+from app.parsers.fbd import (
+    extract_fbd_block_tags,
+    extract_fbd_tags,
+    parse_l5x_fbd_blocks,
+    parse_l5x_fbd_routine,
+)
+from app.parsers.ladder import (
+    build_ladder_rung_ir,
+    extract_operand_tags,
+    parse_ladder_rung_text,
+)
+from app.parsers.ladder_logic import build_rung_logic_expression
 from app.parsers.sfc import extract_sfc_tags, parse_l5x_sfc_routine
 from app.parsers.st_comments import strip_st_comments_for_parsing
 from app.parsers.structured_text import (
@@ -208,6 +218,23 @@ def _extract_structured_text(routine_element: etree._Element) -> str:
     return "".join(routine_element.itertext()).strip()
 
 
+def _logic_expression_payload(expression: object | None) -> dict | None:
+    """Serialize a LogicExpression without preserving raw instruction text."""
+
+    if expression is None or not hasattr(expression, "model_dump"):
+        return None
+    payload = expression.model_dump(mode="json")  # type: ignore[attr-defined]
+
+    def scrub(node: dict) -> None:
+        node.pop("raw_text", None)
+        for child in node.get("children") or []:
+            if isinstance(child, dict):
+                scrub(child)
+
+    scrub(payload)
+    return payload
+
+
 def _normalize_routine_language(type_raw: str) -> tuple[str, str]:
     """Map Rockwell ``Routine/@Type`` to ``ControlRoutine.language``.
 
@@ -348,6 +375,7 @@ class RockwellL5XConnector(PlatformConnector):
         if language == "ladder":
 
             instructions = []
+            ladder_rungs = []
             raw_rungs: list[str] = []
 
             rung_elements = routine_element.findall(".//Rung")
@@ -372,19 +400,37 @@ class RockwellL5XConnector(PlatformConnector):
 
                 raw_rungs.append(rung_text)
 
+                rung_instructions = []
                 if rung_text:
-                    instructions.extend(
-                        parse_ladder_rung_text(
-                            rung_text,
-                            rung_number,
-                        )
+                    rung_instructions = parse_ladder_rung_text(
+                        rung_text,
+                        rung_number,
                     )
+                    instructions.extend(rung_instructions)
+
+                expression, warnings, resolved = build_rung_logic_expression(
+                    rung_instructions,
+                    rung_raw_text=rung_text,
+                    rung_number=rung_number,
+                )
+                ladder_rungs.append(
+                    build_ladder_rung_ir(
+                        rung_text,
+                        rung_number,
+                        instructions=rung_instructions,
+                        logic_expression=_logic_expression_payload(expression),
+                        logic_expression_resolved=resolved,
+                        logic_warnings=warnings,
+                        routine=routine_name,
+                    )
+                )
 
             return ControlRoutine(
                 name=routine_name,
                 language="ladder",
                 instructions=instructions,
                 raw_logic="\n".join(raw_rungs) if raw_rungs else None,
+                ladder_rungs=ladder_rungs,
                 parameters=routine_params,
                 parse_status="parsed",
                 metadata={
@@ -425,21 +471,26 @@ class RockwellL5XConnector(PlatformConnector):
 
         if language == "function_block":
             instructions = parse_l5x_fbd_routine(routine_element)
-            raw_logic = etree.tostring(
+            fbd_blocks = parse_l5x_fbd_blocks(
                 routine_element,
-                encoding="unicode",
-                method="xml",
-            ).strip()
+                source_file=None,
+                controller=None,
+                program=None,
+                routine=routine_name,
+            )
             return ControlRoutine(
                 name=routine_name,
                 language="function_block",
                 instructions=instructions,
-                raw_logic=raw_logic or None,
+                raw_logic=None,
+                fbd_blocks=fbd_blocks,
                 parameters=routine_params,
-                parse_status="parsed" if instructions else "unsupported",
+                parse_status="parsed" if fbd_blocks or instructions else "unsupported",
                 metadata={
                     "rockwell_type": routine_element.get("Type"),
                     "rockwell_type_normalized": norm_type,
+                    "raw_logic_preserved": False,
+                    "fbd_block_count": len(fbd_blocks),
                 },
             )
 
@@ -507,6 +558,7 @@ class RockwellL5XConnector(PlatformConnector):
                         )
                     elif routine.language == "function_block":
                         discovered.update(extract_fbd_tags(routine.instructions))
+                        discovered.update(extract_fbd_block_tags(routine.fbd_blocks))
                     elif routine.language == "sfc":
                         discovered.update(extract_sfc_tags(routine.instructions))
                     else:

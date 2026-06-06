@@ -90,6 +90,8 @@ class ControlObjectType(str, Enum):
     CONTROL_MODULE = "control_module"
     EQUIPMENT_MODULE = "equipment_module"
     FUNCTION_BLOCK = "function_block"
+    SYSTEM_ATTRIBUTE = "system_attribute"
+    MESSAGE = "message"
     UNKNOWN = "unknown"
 
 
@@ -498,6 +500,7 @@ class LogicExpressionKind(str, Enum):
     AND = "and"
     OR = "or"
     NOT = "not"
+    CONSTANT = "constant"
     CONTACT = "contact"
     COMPARE = "compare"
     INSTRUCTION = "instruction"
@@ -554,6 +557,7 @@ class LogicExpression(BaseModel):
     instruction_id: Optional[str] = None
     raw_text: Optional[str] = None
     branch_index: Optional[int] = None
+    constant_value: Optional[bool] = None
 
 
 # ---------------------------------------------------------------------------

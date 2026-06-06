@@ -48,6 +48,7 @@ from app.models.reasoning import (  # noqa: E402
 from app.services.normalization_service import (  # noqa: E402
     normalize_l5x_project,
 )
+from app.parsers.ladder import parse_ladder_rung_text  # noqa: E402
 
 
 def _ladder_instr(
@@ -655,6 +656,19 @@ class LadderBranchDetectionTests(unittest.TestCase):
             ):
                 self.assertIs(meta.get("rung_has_branches"), True)
                 self.assertEqual(meta.get("rung_branch_count"), 2)
+
+    def test_branch_markers_do_not_count_as_unsupported_opcodes(self) -> None:
+        rung_text = "BST XIC(A) NXB XIC(B) BND OTE(C)"
+        instrs = parse_ladder_rung_text(rung_text, rung_number=0)
+        project = _make_project(
+            rungs=[(instrs, rung_text)],
+            program_tags=["A", "B", "C"],
+        )
+        output = normalize_l5x_project(project)
+        inv = output["normalization_metadata"][
+            "unsupported_ladder_instruction_inventory"
+        ]
+        self.assertEqual(inv, {})
 
     def test_three_parallel_branches(self) -> None:
         rung_text = "BST XIC(A) NXB XIC(B) NXB XIC(C) BND OTE(D)"
