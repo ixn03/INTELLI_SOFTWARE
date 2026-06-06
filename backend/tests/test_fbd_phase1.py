@@ -82,6 +82,30 @@ _SYNTH_FBD_MISSING_WIRE = b"""<?xml version="1.0" encoding="UTF-8"?>
 </RSLogix5000Content>"""
 
 
+_SYNTH_FBD_VISIBLE_PINS = b"""<?xml version="1.0" encoding="UTF-8"?>
+<RSLogix5000Content SchemaRevision="1.0" TargetName="Synth" TargetType="Controller">
+  <Controller Name="Synth">
+    <Programs>
+      <Program Name="PRG_FBD">
+        <Routines>
+          <Routine Name="FBD_Main" Type="FBD">
+            <FBDContent>
+              <Sheet Number="0">
+                <IRef ID="1" Operand="Pump_A" X="10" Y="20"/>
+                <Block ID="2" Type="GENERIC_BLOCK" Operand="Block_A" VisiblePins="In Out Aux" X="30" Y="40"/>
+                <ORef ID="3" Operand="Motor_C" X="50" Y="60"/>
+                <Wire FromID="1" ToID="2" FromParam="Out" ToParam="In"/>
+                <Wire FromID="2" ToID="3" FromParam="Out" ToParam="In"/>
+              </Sheet>
+            </FBDContent>
+          </Routine>
+        </Routines>
+      </Program>
+    </Programs>
+  </Controller>
+</RSLogix5000Content>"""
+
+
 class FBDPhase1Tests(unittest.TestCase):
     def test_parser_populates_blocks_pins_and_wires(self) -> None:
         project = RockwellL5XConnector().parse("synthetic_fbd.L5X", _SYNTH_FBD_PHASE1)
@@ -181,6 +205,40 @@ class FBDPhase1Tests(unittest.TestCase):
         self.assertTrue(
             any(issue.code == "fbd_wire_source_pin_missing" for issue in issues)
         )
+
+    def test_visible_pins_are_preserved_and_wire_directions_upgrade(self) -> None:
+        project = RockwellL5XConnector().parse(
+            "synthetic_fbd_visible_pins.L5X",
+            _SYNTH_FBD_VISIBLE_PINS,
+        )
+        routine = project.controllers[0].programs[0].routines[0]
+        block = next(
+            block
+            for block in routine.fbd_blocks
+            if block.definition_name == "GENERIC_BLOCK"
+        )
+        pins = {pin.name: pin for pin in block.pins}
+
+        self.assertEqual(block.metadata["visible_pin_count"], 3)
+        self.assertEqual(block.metadata["x"], "30")
+        self.assertEqual(block.metadata["y"], "40")
+        self.assertEqual(pins["In"].direction, "input")
+        self.assertEqual(
+            pins["In"].metadata["prior_direction_source"],
+            "visible_pins_attribute",
+        )
+        self.assertEqual(pins["Out"].direction, "output")
+        self.assertEqual(pins["Aux"].direction, "unknown")
+
+        out = normalize_l5x_project(project)
+        graph = build_control_dependency_graph(out["control_objects"], out["relationships"])
+        edge_names = {
+            (edge.upstream_tag_name, edge.downstream_tag_name)
+            for edge in graph.edges
+        }
+        self.assertIn(("Pump_A", "Out"), edge_names)
+        self.assertIn(("Out", "Motor_C"), edge_names)
+        self.assertNotIn(("Pump_A", "Motor_C"), edge_names)
 
     def test_validation_reports_block_without_source_location(self) -> None:
         block = FBDBlock(id="fbd_block::Missing", definition_name="CALC")

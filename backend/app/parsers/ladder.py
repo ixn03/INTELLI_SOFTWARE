@@ -45,7 +45,7 @@ CONDITION_INSTRUCTIONS = {
 }
 COMPARISON_INSTRUCTIONS = {"EQU", "NEQ", "GRT", "GEQ", "LES", "LEQ", "LIM", "CMP"}
 MATH_INSTRUCTIONS = {"ADD", "SUB", "MUL", "DIV", "MOD", "CPT", "AND", "OR", "XOR"}
-MOVE_INSTRUCTIONS = {"MOV", "MOVE", "COP", "FLL", "BTR", "BTW", "BTS", "BTT"}
+MOVE_INSTRUCTIONS = {"MOV", "MOVE", "COP", "CPS", "FLL", "SIZE", "BTR", "BTW", "BTS", "BTT"}
 SYSTEM_ACCESS_INSTRUCTIONS = {"GSV", "SSV"}
 COMMUNICATION_INSTRUCTIONS = {"MSG"}
 CALL_INSTRUCTIONS = {"JSR", "SBR", "RET"}
@@ -528,7 +528,7 @@ def _read_indices_for_instruction(
         return list(range(len(instruction.operands)))
     if itype in {"ADD", "SUB", "MUL", "DIV", "MOD", "AND", "OR", "XOR"}:
         return [0, 1]
-    if itype in {"MOV", "MOVE", "COP", "FLL"}:
+    if itype in {"MOV", "MOVE", "COP", "CPS", "FLL", "SIZE"}:
         return [0]
     if itype == "GSV":
         return []
@@ -553,7 +553,7 @@ def _write_behavior_for_instruction(instruction_type: str) -> str | None:
         return "writes_instruction_structure"
     if itype == "RES":
         return "resets"
-    if itype in {"MOV", "MOVE", "COP", "FLL"}:
+    if itype in {"MOV", "MOVE", "COP", "CPS", "FLL", "SIZE"}:
         return "moves_value"
     if itype == "GSV":
         return "moves_system_value"
@@ -795,8 +795,10 @@ def _get_output_operand(instruction_type: str, operands: list[str]) -> str | Non
         return operands[2] if len(operands) > 2 else None
     if itype == "CPT":
         return operands[0] if operands else None
-    if itype in {"MOV", "MOVE", "COP", "FLL"}:
+    if itype in {"MOV", "MOVE", "COP", "CPS", "FLL"}:
         return operands[1] if len(operands) > 1 else None
+    if itype == "SIZE":
+        return operands[2] if len(operands) > 2 else None
     if itype == "GSV":
         return operands[3] if len(operands) > 3 else None
     if itype == "MSG":

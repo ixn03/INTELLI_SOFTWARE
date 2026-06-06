@@ -539,6 +539,18 @@ INSTRUCTION_SEMANTICS: dict[str, _InstructionSemantics] = {
         notes="Copy File: COP(Source, Dest, Length).",
         implemented=True,
     ),
+    "CPS": _InstructionSemantics(
+        family=_InstructionFamily.MOVE_COPY,
+        read_operand_indices=(0,),
+        write_operand_index=1,
+        write_behavior=WriteBehaviorType.MOVES_VALUE,
+        notes=(
+            "Synchronous Copy File: CPS(Source, Dest, Length). Same "
+            "conservative data flow as COP; source is read, destination "
+            "range is written, and Length is preserved as an operand."
+        ),
+        implemented=True,
+    ),
     "FLL": _InstructionSemantics(
         family=_InstructionFamily.MOVE_COPY,
         read_operand_indices=(0,),
@@ -548,6 +560,18 @@ INSTRUCTION_SEMANTICS: dict[str, _InstructionSemantics] = {
             "Fill File: FLL(Source, Dest, Length). Source is read, "
             "destination/range is written; Length is preserved as an "
             "operand but not resolved as a tag target."
+        ),
+        implemented=True,
+    ),
+    "SIZE": _InstructionSemantics(
+        family=_InstructionFamily.MOVE_COPY,
+        read_operand_indices=(0,),
+        write_operand_index=2,
+        write_behavior=WriteBehaviorType.MOVES_VALUE,
+        notes=(
+            "Size: SIZE(SourceArray, Dimension, Dest). Source array is "
+            "read and Dest receives the requested dimension size. The "
+            "Dimension operand is preserved as a literal/index, not a tag."
         ),
         implemented=True,
     ),

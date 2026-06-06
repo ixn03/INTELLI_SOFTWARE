@@ -359,7 +359,12 @@ class RockwellL5XConnector(PlatformConnector):
             ]
 
             routines = [
-                self._parse_routine(routine_element)
+                self._parse_routine(
+                    routine_element,
+                    source_file=filename,
+                    controller=controller_name,
+                    program=program_name,
+                )
                 for routine_element in program_element.findall("./Routines/Routine")
             ]
 
@@ -383,7 +388,12 @@ class RockwellL5XConnector(PlatformConnector):
                 if not aoi_name:
                     continue
                 aoi_routines = [
-                    self._parse_routine(routine_el)
+                    self._parse_routine(
+                        routine_el,
+                        source_file=filename,
+                        controller=controller_name,
+                        program=f"__AOI__/{aoi_name}",
+                    )
                     for routine_el in aoi_el.findall("./Routines/Routine")
                 ]
                 if not aoi_routines:
@@ -427,7 +437,14 @@ class RockwellL5XConnector(PlatformConnector):
 
         return self._add_discovered_tags(project)
 
-    def _parse_routine(self, routine_element: etree._Element) -> ControlRoutine:
+    def _parse_routine(
+        self,
+        routine_element: etree._Element,
+        *,
+        source_file: str | None = None,
+        controller: str | None = None,
+        program: str | None = None,
+    ) -> ControlRoutine:
         type_raw = _attr(routine_element, "Type", "unknown")
         language, norm_type = _normalize_routine_language(type_raw)
         routine_name = _attr(routine_element, "Name", "Unknown Routine")
@@ -534,9 +551,9 @@ class RockwellL5XConnector(PlatformConnector):
             instructions = parse_l5x_fbd_routine(routine_element)
             fbd_blocks = parse_l5x_fbd_blocks(
                 routine_element,
-                source_file=None,
-                controller=None,
-                program=None,
+                source_file=source_file,
+                controller=controller,
+                program=program,
                 routine=routine_name,
             )
             return ControlRoutine(

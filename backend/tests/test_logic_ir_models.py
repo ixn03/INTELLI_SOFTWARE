@@ -163,6 +163,56 @@ class LogicIRModelTests(unittest.TestCase):
         self.assertTrue(writes[0].source_location)
         self.assertEqual(validate_normalized_output(out), [])
 
+    def test_cps_is_registered_and_normalized(self) -> None:
+        rung_text = "CPS(Source_Array[0],Dest_Array[0],10);"
+        insts = parse_ladder_rung_text(rung_text, rung_number=0)
+        self.assertEqual(insts[0].metadata.get("instruction_family"), "move_copy")
+        self.assertEqual(insts[0].output, "Dest_Array[0]")
+        self.assertIn("CPS", INSTRUCTION_SEMANTICS)
+
+        project = _project_from_instructions(
+            insts,
+            program_tags=["Source_Array", "Dest_Array"],
+        )
+        out = normalize_l5x_project(project)
+        rels = [
+            r
+            for r in out["relationships"]
+            if (r.platform_specific or {}).get("instruction_type") == "CPS"
+        ]
+        reads = [r for r in rels if r.relationship_type == RelationshipType.READS]
+        writes = [r for r in rels if r.relationship_type == RelationshipType.WRITES]
+        self.assertEqual(len(reads), 1)
+        self.assertEqual(len(writes), 1)
+        self.assertEqual(writes[0].write_behavior, WriteBehaviorType.MOVES_VALUE)
+        self.assertTrue(writes[0].source_location)
+        self.assertEqual(validate_normalized_output(out), [])
+
+    def test_size_is_registered_and_normalized(self) -> None:
+        rung_text = "SIZE(Source_Array,0,Element_Count);"
+        insts = parse_ladder_rung_text(rung_text, rung_number=0)
+        self.assertEqual(insts[0].metadata.get("instruction_family"), "move_copy")
+        self.assertEqual(insts[0].output, "Element_Count")
+        self.assertIn("SIZE", INSTRUCTION_SEMANTICS)
+
+        project = _project_from_instructions(
+            insts,
+            program_tags=["Source_Array", "Element_Count"],
+        )
+        out = normalize_l5x_project(project)
+        rels = [
+            r
+            for r in out["relationships"]
+            if (r.platform_specific or {}).get("instruction_type") == "SIZE"
+        ]
+        reads = [r for r in rels if r.relationship_type == RelationshipType.READS]
+        writes = [r for r in rels if r.relationship_type == RelationshipType.WRITES]
+        self.assertEqual(len(reads), 1)
+        self.assertEqual(len(writes), 1)
+        self.assertEqual(writes[0].write_behavior, WriteBehaviorType.MOVES_VALUE)
+        self.assertTrue(writes[0].source_location)
+        self.assertEqual(validate_normalized_output(out), [])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -120,6 +120,27 @@ def _collect_parameters(block_el: etree._Element) -> dict[str, str]:
     return params
 
 
+def _split_visible_pins(value: str | None) -> list[str]:
+    """Parse Rockwell's compact VisiblePins attribute without inferring usage."""
+
+    raw = (value or "").strip()
+    if not raw:
+        return []
+    cleaned = raw.strip("[](){}")
+    return [piece for piece in re.split(r"[,;\s]+", cleaned) if piece]
+
+
+def _layout_metadata(element: etree._Element) -> dict[str, str]:
+    metadata: dict[str, str] = {}
+    x = _attr(element, "X")
+    y = _attr(element, "Y")
+    if x:
+        metadata["x"] = x
+    if y:
+        metadata["y"] = y
+    return metadata
+
+
 def _block_type_name(block_el: etree._Element) -> str:
     return (
         _attr(block_el, "BlockType")
@@ -345,6 +366,7 @@ def _parse_fbd_block_ir(
     node_id = _attr(block_el, "ID") or str(counter[0])
     block_type = _block_type_name(block_el)
     block_name = _attr(block_el, "Name") or _attr(block_el, "Operand") or node_id
+    visible_pins = _split_visible_pins(_attr(block_el, "VisiblePins"))
     block_id = (
         "fbd_block::"
         f"{_safe_id_part(program)}/{_safe_id_part(routine)}/{_safe_id_part(node_id)}"
@@ -377,8 +399,28 @@ def _parse_fbd_block_ir(
             "element_type": _lname(block_el),
             "block_type": block_type,
             "block_name": block_name,
+            "visible_pins": visible_pins,
+            "visible_pin_count": len(visible_pins),
+            **_layout_metadata(block_el),
         },
     )
+    for visible_pin in visible_pins:
+        pin = _make_fbd_pin(
+            block=block,
+            node_id=node_id,
+            pin_name=visible_pin,
+            direction="unknown",
+            direction_source="visible_pins_attribute",
+            tag_value=None,
+            sheet_number=sheet_number,
+            source_file=source_file,
+            controller=controller,
+            program=program,
+            routine=routine,
+            metadata={"visible": True},
+        )
+        if pin.id not in {p.id for p in block.pins}:
+            block.pins.append(pin)
     for pin_el in _iter_pin_elements(block_el):
         pin = _parse_fbd_pin_ir(
             pin_el,
@@ -529,6 +571,7 @@ def _parse_fbd_ref_block_ir(
             "element_type": _lname(ref_el),
             "block_type": ref_kind,
             "io_ref_kind": ref_kind,
+            **_layout_metadata(ref_el),
         },
     )
     block.pins.append(
@@ -563,7 +606,7 @@ def _make_fbd_pin(
     controller: str | None,
     program: str | None,
     routine: str | None,
-    metadata: dict[str, str] | None = None,
+    metadata: dict[str, object] | None = None,
 ) -> FBDPin:
     pin_id = (
         "fbd_pin::"
@@ -644,6 +687,8 @@ def _parse_fbd_wire_ir(
     wire_id = (
         "fbd_wire::"
         f"{_safe_id_part(program)}/{_safe_id_part(routine)}/{_safe_id_part(str(index))}"
+        f"/{_safe_id_part(from_id)}:{_safe_id_part(from_param)}"
+        f"->{_safe_id_part(to_id)}:{_safe_id_part(to_param)}"
     )
     return {
         "id": wire_id,
@@ -686,10 +731,13 @@ def _resolve_or_create_wire_pin(
     if block is None:
         return None
     if not param and len(block.pins) == 1:
-        return block.pins[0]
+        existing = block.pins[0]
+        _upgrade_wire_endpoint_direction(existing, role_direction)
+        return existing
     pin_key = param or role_direction
     existing = pin_by_endpoint.get((node_id, pin_key))
     if existing is not None:
+        _upgrade_wire_endpoint_direction(existing, role_direction)
         return existing
     pin = _make_fbd_pin(
         block=block,
@@ -707,6 +755,15 @@ def _resolve_or_create_wire_pin(
     block.pins.append(pin)
     pin_by_endpoint[(node_id, pin_key)] = pin
     return pin
+
+
+def _upgrade_wire_endpoint_direction(pin: FBDPin, role_direction: str) -> None:
+    if pin.direction == "unknown" and role_direction in {"input", "output"}:
+        prior_source = pin.metadata.get("direction_source")
+        pin.direction = role_direction  # type: ignore[assignment]
+        pin.metadata["direction_source"] = "wire_endpoint"
+        if prior_source and prior_source != "wire_endpoint":
+            pin.metadata["prior_direction_source"] = prior_source
 
 
 def parse_l5x_fbd_routine(routine_element: etree._Element) -> list[ControlInstruction]:

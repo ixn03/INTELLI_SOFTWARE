@@ -30,7 +30,7 @@ controls concepts:
 - Rockwell AOI staging objects exposed through generic names:
   `AOIDefinition` and `AOIInstance`
 - ladder objects: `LadderRung` and `LadderBranch`
-- FBD/SFC placeholders for future data-flow normalization:
+- FBD/SFC structural objects:
   `FBDBlock`, `FBDPin`, `SFCStep`, and `SFCTransition`
 
 Vendor-specific fields belong in `metadata` or `platform_specific`; concepts
@@ -60,6 +60,13 @@ connection relationships. Explicit input pins can read tags, explicit output
 pins can write tags, and output-to-input wires can participate in dependency
 tracing. Unknown-direction pins remain `REFERENCES` with direction-unknown
 metadata and do not create cause/effect edges.
+
+When an export represents block pins through compact attributes rather than
+child elements, INTELLI preserves those visible pins as neutral `FBDPin`
+objects. A visible pin starts as direction-unknown and is upgraded only when a
+wire endpoint deterministically shows it acting as a source or target. Layout
+coordinates are kept as vendor metadata for traceability, not used as logic
+semantics.
 
 Phase 1 does not infer vendor block behavior from block type names. If an FBD
 routine is present but the export contains no block/pin/wire body, INTELLI
