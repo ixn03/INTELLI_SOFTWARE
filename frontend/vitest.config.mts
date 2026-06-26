@@ -9,6 +9,7 @@ const root = path.dirname(fileURLToPath(import.meta.url));
 export default defineConfig({
   plugins: [react()],
   test: {
+    globals: true,
     environment: "jsdom",
     setupFiles: ["./src/test/setup.ts"],
     include: ["src/**/*.test.{ts,tsx}"],
@@ -16,6 +17,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(root, "src"),
+      "next/navigation": path.resolve(root, "src/test/mocks/next-navigation.ts"),
     },
   },
 });

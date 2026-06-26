@@ -316,6 +316,106 @@ export function InlineError({ children }: { children: ReactNode }) {
 }
 
 // ===========================================================================
+// Banner -- dismissible status banner used for success / error / info
+// messages after a major action. Tones reuse the badge palette.
+// ===========================================================================
+
+type BannerTone = "success" | "error" | "info";
+
+export function Banner({
+  tone = "info",
+  children,
+  onDismiss,
+}: {
+  tone?: BannerTone;
+  children: ReactNode;
+  onDismiss?: () => void;
+}) {
+  const tones: Record<BannerTone, string> = {
+    success: "border-emerald-800/60 bg-emerald-950/40 text-emerald-100",
+    error: "border-rose-900/70 bg-rose-950/40 text-rose-100",
+    info: "border-sky-800/60 bg-sky-950/40 text-sky-100",
+  };
+  const icon = tone === "success" ? "✓" : tone === "error" ? "!" : "i";
+  return (
+    <div
+      role={tone === "error" ? "alert" : "status"}
+      className={`flex items-start gap-3 rounded-xl border px-3.5 py-2.5 text-sm ${tones[tone]}`}
+    >
+      <span
+        aria-hidden="true"
+        className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full border border-current/40 text-[11px] font-bold"
+      >
+        {icon}
+      </span>
+      <div className="min-w-0 flex-1 leading-6">{children}</div>
+      {onDismiss ? (
+        <button
+          type="button"
+          onClick={onDismiss}
+          aria-label="Dismiss message"
+          className="-mr-1 shrink-0 rounded-md px-1.5 text-current/70 transition hover:bg-white/5 hover:text-current"
+        >
+          ✕
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+// ===========================================================================
+// StepIndicator -- horizontal guided-progress strip. Each step shows a
+// number (or check when complete) and a short label, with the current step
+// highlighted. Non-interactive by design so it never competes with the
+// workflow tab buttons for focus.
+// ===========================================================================
+
+export interface FlowStep {
+  id: string;
+  label: string;
+  state: "complete" | "current" | "upcoming";
+}
+
+export function StepIndicator({ steps }: { steps: FlowStep[] }) {
+  return (
+    <ol className="flex flex-wrap items-center gap-x-1.5 gap-y-2" aria-label="Guided workflow progress">
+      {steps.map((step, index) => {
+        const tone =
+          step.state === "complete"
+            ? "border-emerald-700/60 bg-emerald-950/40 text-emerald-100"
+            : step.state === "current"
+              ? "border-cyan-300/70 bg-cyan-300/15 text-cyan-50 ring-1 ring-cyan-300/40"
+              : "border-zinc-800 bg-zinc-950/50 text-zinc-500";
+        const dot =
+          step.state === "complete"
+            ? "bg-emerald-400 text-emerald-950"
+            : step.state === "current"
+              ? "bg-cyan-300 text-cyan-950"
+              : "bg-zinc-800 text-zinc-400";
+        return (
+          <li key={step.id} className="flex items-center gap-1.5">
+            <div
+              className={`flex items-center gap-2 rounded-full border px-2.5 py-1 text-xs font-medium transition ${tone}`}
+              aria-current={step.state === "current" ? "step" : undefined}
+            >
+              <span className={`grid h-4 w-4 place-items-center rounded-full text-[10px] font-bold ${dot}`}>
+                {step.state === "complete" ? "✓" : index + 1}
+              </span>
+              {step.label}
+            </div>
+            {index < steps.length - 1 ? (
+              <span aria-hidden="true" className="text-zinc-700">
+                ›
+              </span>
+            ) : null}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+// ===========================================================================
 // LoadingLine -- low-contrast loading shim with subtle pulse.
 // ===========================================================================
 

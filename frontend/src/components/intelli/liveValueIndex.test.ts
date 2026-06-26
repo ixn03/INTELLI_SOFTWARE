@@ -1,5 +1,3 @@
-import { describe, expect, it } from "vitest";
-
 import type { SignalTroubleshootingWorkspace } from "@/types/reasoning";
 
 import {

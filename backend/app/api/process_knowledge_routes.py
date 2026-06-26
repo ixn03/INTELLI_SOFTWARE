@@ -9,6 +9,8 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.schemas.process_knowledge import (
+    AiDraftRequest,
+    AiDraftResponse,
     ApprovalHistoryRead,
     ControlImportSourceCreate,
     ControlImportSourceRead,
@@ -39,8 +41,10 @@ from app.schemas.process_knowledge import (
     ReviewDecisionRequest,
     ReviewItemRead,
     ReviewItemStatus,
+    SeedDemoResult,
 )
 from app.services import process_knowledge_service as svc
+from app.services.document_generation import DocumentGenerationResult, GenerationMode
 
 router = APIRouter(prefix="/api", tags=["process-knowledge"])
 
@@ -51,6 +55,21 @@ def _not_found(exc: svc.NotFoundError) -> HTTPException:
 
 def _conflict(exc: svc.ConflictError) -> HTTPException:
     return HTTPException(status_code=409, detail=str(exc))
+
+
+def _ai_draft_response(revision, result: DocumentGenerationResult) -> AiDraftResponse:
+    return AiDraftResponse(
+        revision=DocumentRevisionRead.model_validate(revision),
+        generation_mode=result.mode.value,
+        provider_name=result.provider_name,
+        confidence=result.confidence,
+        source_snapshot_id=result.source_snapshot_id,
+        template_id=result.template_id,
+        facts_used=[fact.to_dict() for fact in result.facts_used],
+        missing_facts=[fact.to_dict() for fact in result.missing_facts],
+        assumptions=result.assumptions,
+        warnings=result.warnings,
+    )
 
 
 @router.post("/process-units", response_model=ProcessUnitRead, status_code=201)
@@ -72,6 +91,20 @@ def list_process_units(
 ) -> ProcessUnitListResponse:
     items, total = svc.list_process_units(db, limit=limit, offset=offset)
     return ProcessUnitListResponse(items=items, total=total)
+
+
+@router.delete("/process-units/{process_unit_id}")
+def delete_process_unit(
+    process_unit_id: uuid.UUID,
+    db: Session = Depends(get_db),
+) -> dict[str, bool]:
+    try:
+        svc.delete_process_unit_if_empty(db, process_unit_id)
+        return {"deleted": True}
+    except svc.NotFoundError as exc:
+        raise _not_found(exc) from exc
+    except svc.ConflictError as exc:
+        raise _conflict(exc) from exc
 
 
 @router.post(
@@ -109,6 +142,20 @@ def list_equipment_modules(
         return items
     except svc.NotFoundError as exc:
         raise _not_found(exc) from exc
+
+
+@router.delete("/modules/{module_id}")
+def delete_equipment_module(
+    module_id: uuid.UUID,
+    db: Session = Depends(get_db),
+) -> dict[str, bool]:
+    try:
+        svc.delete_equipment_module(db, module_id)
+        return {"deleted": True}
+    except svc.NotFoundError as exc:
+        raise _not_found(exc) from exc
+    except svc.ConflictError as exc:
+        raise _conflict(exc) from exc
 
 
 @router.get("/modules/{module_id}/record", response_model=ModuleRecordResponse)
@@ -196,6 +243,153 @@ def list_document_revisions(
         return svc.list_document_revisions(db, record_id)
     except svc.NotFoundError as exc:
         raise _not_found(exc) from exc
+
+
+@router.delete("/document-revisions/{revision_id}")
+def delete_document_revision(
+    revision_id: uuid.UUID,
+    db: Session = Depends(get_db),
+) -> dict[str, bool]:
+    try:
+        svc.delete_document_revision(db, revision_id)
+        return {"deleted": True}
+    except svc.NotFoundError as exc:
+        raise _not_found(exc) from exc
+    except svc.ConflictError as exc:
+        raise _conflict(exc) from exc
+
+
+@router.post("/control-integrity/reset-generated")
+def reset_generated_workspace_data(db: Session = Depends(get_db)) -> dict[str, int]:
+    return svc.reset_generated_workspace_data(db)
+
+
+@router.post(
+    "/control-integrity/seed-demo",
+    response_model=SeedDemoResult,
+    status_code=201,
+)
+def seed_demo_process_unit(db: Session = Depends(get_db)) -> SeedDemoResult:
+    """Dev/demo helper: bootstrap a usable process unit + equipment + snapshot."""
+    return SeedDemoResult(**svc.seed_demo_process_unit(db))
+
+
+@router.post(
+    "/engineering-records/{record_id}/generate-draft",
+    response_model=DocumentRevisionRead,
+    status_code=201,
+)
+def generate_document_draft(
+    record_id: uuid.UUID,
+    actor: str | None = "controls.engineer",
+    db: Session = Depends(get_db),
+) -> DocumentRevisionRead:
+    try:
+        return svc.generate_document_draft(db, record_id=record_id, actor=actor)
+    except svc.NotFoundError as exc:
+        raise _not_found(exc) from exc
+    except svc.ConflictError as exc:
+        raise _conflict(exc) from exc
+
+
+@router.post(
+    "/engineering-records/{record_id}/generate-proposed-revision",
+    response_model=DocumentRevisionRead,
+    status_code=201,
+)
+def generate_proposed_revision(
+    record_id: uuid.UUID,
+    actor: str | None = "controls.engineer",
+    db: Session = Depends(get_db),
+) -> DocumentRevisionRead:
+    try:
+        return svc.generate_proposed_revision(db, record_id=record_id, actor=actor)
+    except svc.NotFoundError as exc:
+        raise _not_found(exc) from exc
+    except svc.ConflictError as exc:
+        raise _conflict(exc) from exc
+
+
+@router.post(
+    "/modules/{module_id}/engineering-records/{record_type}/generate-draft",
+    response_model=DocumentRevisionRead,
+    status_code=201,
+)
+def generate_module_document_draft(
+    module_id: uuid.UUID,
+    record_type: EngineeringRecordType,
+    actor: str | None = "controls.engineer",
+    db: Session = Depends(get_db),
+) -> DocumentRevisionRead:
+    try:
+        return svc.generate_document_draft(
+            db,
+            module_id=module_id,
+            record_type=record_type,
+            actor=actor,
+        )
+    except svc.NotFoundError as exc:
+        raise _not_found(exc) from exc
+    except svc.ConflictError as exc:
+        raise _conflict(exc) from exc
+
+
+@router.post(
+    "/engineering-records/{record_id}/generate-ai-draft",
+    response_model=AiDraftResponse,
+    status_code=201,
+)
+def generate_ai_draft(
+    record_id: uuid.UUID,
+    payload: AiDraftRequest | None = None,
+    db: Session = Depends(get_db),
+) -> AiDraftResponse:
+    body = payload or AiDraftRequest()
+    try:
+        revision, result = svc.generate_ai_document_draft(
+            db,
+            record_id=record_id,
+            generation_mode=GenerationMode(body.generation_mode.value),
+            selected_template_id=body.selected_template_id,
+            user_notes=body.user_notes,
+            selected_sections=body.selected_sections,
+            actor=body.actor,
+        )
+        return _ai_draft_response(revision, result)
+    except svc.NotFoundError as exc:
+        raise _not_found(exc) from exc
+    except svc.ConflictError as exc:
+        raise _conflict(exc) from exc
+
+
+@router.post(
+    "/modules/{module_id}/engineering-records/{record_type}/generate-ai-draft",
+    response_model=AiDraftResponse,
+    status_code=201,
+)
+def generate_module_ai_draft(
+    module_id: uuid.UUID,
+    record_type: EngineeringRecordType,
+    payload: AiDraftRequest | None = None,
+    db: Session = Depends(get_db),
+) -> AiDraftResponse:
+    body = payload or AiDraftRequest()
+    try:
+        revision, result = svc.generate_ai_document_draft(
+            db,
+            module_id=module_id,
+            record_type=record_type,
+            generation_mode=GenerationMode(body.generation_mode.value),
+            selected_template_id=body.selected_template_id,
+            user_notes=body.user_notes,
+            selected_sections=body.selected_sections,
+            actor=body.actor,
+        )
+        return _ai_draft_response(revision, result)
+    except svc.NotFoundError as exc:
+        raise _not_found(exc) from exc
+    except svc.ConflictError as exc:
+        raise _conflict(exc) from exc
 
 
 @router.get(

@@ -9,6 +9,7 @@ export type RecordType =
 
 export type RecordStatus = "active" | "needing_setup" | "needs_review" | "archived";
 export type RevisionStatus = "draft" | "proposed" | "approved" | "rejected" | "archived";
+export type GenerationMode = "deterministic_template" | "llm_assisted";
 export type ReviewStatus =
   | "open"
   | "approved"
@@ -103,6 +104,37 @@ export interface DocumentRevision {
   created_at: string;
 }
 
+export interface GenerationSourceFact {
+  key: string;
+  label: string;
+  values: string[];
+  source_field: string;
+  source_kind: string;
+  source_snapshot_id?: string | null;
+  present: boolean;
+}
+
+export interface AiDraftRequest {
+  generation_mode: GenerationMode;
+  selected_template_id?: string | null;
+  user_notes?: string | null;
+  selected_sections?: string[] | null;
+  actor?: string | null;
+}
+
+export interface AiDraftResponse {
+  revision: DocumentRevision;
+  generation_mode: GenerationMode;
+  provider_name: string;
+  confidence: string;
+  source_snapshot_id: string;
+  template_id?: string | null;
+  facts_used: GenerationSourceFact[];
+  missing_facts: GenerationSourceFact[];
+  assumptions: string[];
+  warnings: string[];
+}
+
 export interface LogicDiff {
   id: string;
   module_id: string;
@@ -186,6 +218,14 @@ export interface ImportSyncResult {
   changed: boolean;
   review_item_ids: string[];
   affected_record_ids: string[];
+}
+
+export interface SeedDemoResult {
+  process_unit_id: string;
+  module_id: string;
+  snapshot_id: string;
+  process_unit_name: string;
+  module_name: string;
 }
 
 export interface ModuleRecord {

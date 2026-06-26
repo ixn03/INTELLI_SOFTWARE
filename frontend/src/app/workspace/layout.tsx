@@ -11,11 +11,15 @@ const MAIN_NAV = {
   kicker: "Import, search, trace",
 };
 
-const INTEGRITY_NAV = {
-  href: "/workspace/integrity",
-  label: "Control Integrity",
-  kicker: "Logic, records, reviews",
-};
+const INTEGRITY_NAV = [
+  { href: "/workspace/integrity?tab=home", label: "Home" },
+  { href: "/workspace/integrity?tab=plant", label: "Plant Explorer" },
+  { href: "/workspace/integrity?tab=import", label: "Imports" },
+  { href: "/workspace/integrity?tab=documents", label: "Documents" },
+  { href: "/workspace/integrity?tab=reviews", label: "Review Queue" },
+  { href: "/workspace/integrity?tab=templates", label: "Templates" },
+  { href: "/workspace/integrity?tab=knowledge", label: "Knowledge Base" },
+];
 
 export default function WorkspaceLayout({
   children,
@@ -44,7 +48,7 @@ export default function WorkspaceLayout({
                 INTELLI
               </span>
               <span className="block text-[10px] uppercase tracking-[0.2em] text-cyan-200/70">
-                Diagnosis
+                Controls workflow
               </span>
             </span>
           </Link>
@@ -56,15 +60,15 @@ export default function WorkspaceLayout({
             <ol className="mt-3 space-y-2 text-xs leading-5 text-zinc-400">
               <li>
                 <span className="font-medium text-zinc-300">1. Import</span> —
-                upload your L5X
+                upload a vendor export
               </li>
               <li>
-                <span className="font-medium text-zinc-300">2. Search</span> —
-                pick a tag or output
+                <span className="font-medium text-zinc-300">2. Discover</span> —
+                identify plant and equipment
               </li>
               <li>
-                <span className="font-medium text-zinc-300">3. Diagnose</span> —
-                trace with evidence
+                <span className="font-medium text-zinc-300">3. Review</span> —
+                approve document changes
               </li>
             </ol>
           </div>
@@ -92,21 +96,31 @@ export default function WorkspaceLayout({
                 </Link>
               </li>
               <li>
-                <Link
-                  href={INTEGRITY_NAV.href}
-                  className={`block rounded-2xl border px-3 py-3 transition ${
+                <div
+                  className={`rounded-2xl border px-3 py-3 transition ${
                     onIntegrity
                       ? "border-cyan-400/30 bg-cyan-400/10 text-white"
-                      : "border-transparent text-zinc-400 hover:border-zinc-800 hover:bg-zinc-900/70 hover:text-zinc-100"
+                      : "border-transparent text-zinc-400"
                   }`}
                 >
-                  <span className="block text-sm font-semibold">
-                    {INTEGRITY_NAV.label}
-                  </span>
+                  <Link href="/workspace/integrity?tab=home" className="block text-sm font-semibold">
+                    Control Integrity
+                  </Link>
                   <span className="mt-0.5 block text-xs text-zinc-500">
-                    {INTEGRITY_NAV.kicker}
+                    Import, discovery, review
                   </span>
-                </Link>
+                  <div className="mt-3 grid gap-1">
+                    {INTEGRITY_NAV.map((item) => (
+                      <Link
+                        key={item.href}
+                        href={item.href}
+                        className="rounded-lg px-2 py-1.5 text-xs text-zinc-400 transition hover:bg-zinc-900/70 hover:text-zinc-100"
+                      >
+                        {item.label}
+                      </Link>
+                    ))}
+                  </div>
+                </div>
               </li>
             </ul>
           </div>

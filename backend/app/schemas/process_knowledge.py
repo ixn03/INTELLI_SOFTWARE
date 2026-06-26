@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from enum import Enum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -246,6 +247,42 @@ class DocumentRevisionRead(DocumentRevisionCreate):
     created_at: datetime
 
 
+class GenerationMode(str, Enum):
+    DETERMINISTIC_TEMPLATE = "deterministic_template"
+    LLM_ASSISTED = "llm_assisted"
+
+
+class AiDraftRequest(BaseModel):
+    generation_mode: GenerationMode = GenerationMode.LLM_ASSISTED
+    selected_template_id: uuid.UUID | None = None
+    user_notes: str | None = None
+    selected_sections: list[str] | None = None
+    actor: str | None = "controls.engineer"
+
+
+class GenerationSourceFactRead(BaseModel):
+    key: str
+    label: str
+    values: list[str] = Field(default_factory=list)
+    source_field: str
+    source_kind: str
+    source_snapshot_id: str | None = None
+    present: bool
+
+
+class AiDraftResponse(BaseModel):
+    revision: DocumentRevisionRead
+    generation_mode: GenerationMode
+    provider_name: str
+    confidence: str
+    source_snapshot_id: str
+    template_id: str | None = None
+    facts_used: list[GenerationSourceFactRead] = Field(default_factory=list)
+    missing_facts: list[GenerationSourceFactRead] = Field(default_factory=list)
+    assumptions: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
 class LogicDiffRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -328,6 +365,14 @@ class ImportSyncResult(BaseModel):
     changed: bool = False
     review_item_ids: list[str] = Field(default_factory=list)
     affected_record_ids: list[str] = Field(default_factory=list)
+
+
+class SeedDemoResult(BaseModel):
+    process_unit_id: uuid.UUID
+    module_id: uuid.UUID
+    snapshot_id: uuid.UUID
+    process_unit_name: str
+    module_name: str
 
 
 class ModuleRecordResponse(BaseModel):
