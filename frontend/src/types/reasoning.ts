@@ -601,6 +601,122 @@ export interface SignalEvidenceItem {
   metadata: Record<string, unknown>;
 }
 
+export interface LogicLineCondition {
+  signal_id: string;
+  signal_name: string | null;
+  instruction_type: string | null;
+  required_value: boolean | null;
+  relationship_id: string | null;
+}
+
+export interface LogicLineGroup {
+  writer_relationship_id: string;
+  source_id: string;
+  source_name: string | null;
+  source_type: string | null;
+  language:
+    | "ladder"
+    | "structured_text"
+    | "fbd"
+    | "aoi"
+    | "sfc"
+    | "unknown";
+  source_location: string | null;
+  routine: string | null;
+  rung_number: number | null;
+  statement_index: number | null;
+  instruction_type: string | null;
+  write_behavior: string | null;
+  logic_text: string | null;
+  output_summary: string | null;
+  conditions: LogicLineCondition[];
+  confidence: number;
+}
+
+export interface LogicPathSignalRef {
+  signal_id: string;
+  signal_name: string | null;
+  instruction_type: string | null;
+  relationship_id: string | null;
+  role?: string | null;
+}
+
+export interface LogicSliceOperand {
+  signal_id: string;
+  signal_name: string | null;
+  instruction_type: string | null;
+  role: string;
+  relationship_id: string | null;
+  operand_index: number | null;
+  required_value: boolean | null;
+  metadata?: Record<string, unknown>;
+}
+
+export interface LogicSliceWrite {
+  signal_id: string;
+  signal_name: string | null;
+  instruction_type: string | null;
+  write_behavior: string | null;
+  relationship_id: string;
+  operand_index?: number | null;
+}
+
+export interface LogicSlice {
+  id: string;
+  source_id: string;
+  source_name: string | null;
+  source_type: string | null;
+  language: LogicPath["language"];
+  source_location: string | null;
+  routine: string | null;
+  rung_number: number | null;
+  statement_index: number | null;
+  block_name: string | null;
+  instruction_sequence: string[];
+  slice_kind: "boolean_control" | "calculation" | "direct_write";
+  gate_operands: LogicSliceOperand[];
+  data_operands: LogicSliceOperand[];
+  writes: LogicSliceWrite[];
+  affected_signal_ids: string[];
+  readable_expression: string | null;
+  readable_summary: string | null;
+  confidence: number;
+  warnings: string[];
+  metadata: Record<string, unknown>;
+}
+
+export interface LogicPathWrite {
+  signal_id: string;
+  signal_name: string | null;
+  instruction_type: string | null;
+  write_behavior: string | null;
+  relationship_id: string | null;
+}
+
+export interface LogicPath {
+  id: string;
+  source_location: string | null;
+  routine: string | null;
+  rung_number: number | null;
+  statement_index: number | null;
+  block_name: string | null;
+  language:
+    | "ladder"
+    | "structured_text"
+    | "fbd"
+    | "aoi"
+    | "sfc"
+    | "unknown";
+  instruction_sequence: string[];
+  readable_expression: string | null;
+  input_signals: LogicPathSignalRef[];
+  output_signals: LogicPathSignalRef[];
+  write_operations: LogicPathWrite[];
+  confidence: number;
+  warnings: string[];
+  metadata: Record<string, unknown>;
+}
+
 export interface SignalConfidenceSummary {
   confidence: number;
   confidence_label?: string;
@@ -798,9 +914,16 @@ export interface SignalTroubleshootingWorkspace {
   };
   unified_evidence?: UnifiedSignalEvidence | null;
   what_controls_this_signal?: {
+    logic_slices?: LogicSlice[];
     upstream_required_conditions: SignalEvidenceItem[];
     upstream_dependencies: SignalEvidenceItem[];
     writer_conditions: SignalEvidenceItem[];
+    logic_paths?: LogicPath[];
+    logic_line_groups?: LogicLineGroup[];
+    data_source_reads?: SignalEvidenceItem[];
+    write_operations?: SignalEvidenceItem[];
+    derived_calculations?: SignalEvidenceItem[];
+    derived_explanation?: string | null;
     unknown_direction_references: SignalEvidenceItem[];
   };
   what_this_signal_controls?: {

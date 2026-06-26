@@ -57,6 +57,16 @@ WRITER_TYPES: frozenset[RelationshipType] = frozenset(
     }
 )
 
+BOOLEAN_CONDITION_INSTRUCTIONS: frozenset[str] = frozenset(
+    {"XIC", "XIO", "ONS", "OSR", "OSF", "EQU", "NEQ", "GRT", "GEQ", "LES", "LEQ", "LIM", "CMP"}
+)
+DATA_SOURCE_INSTRUCTIONS: frozenset[str] = frozenset(
+    {"SIZE", "MOV", "MOVE", "COP", "CPS", "FLL", "ADD", "SUB", "MUL", "DIV", "MOD", "CPT", "AND", "OR", "XOR", "TON", "TONR", "TOF", "RTO", "CTU", "CTD", "CTUD"}
+)
+DERIVED_CALCULATION_INSTRUCTIONS: frozenset[str] = frozenset(
+    {"SIZE", "ADD", "SUB", "MUL", "DIV", "MOD", "CPT", "AND", "OR", "XOR"}
+)
+
 _ROUTINE_RE = re.compile(r"Routine:([^/\]]+)")
 _RUNG_RE = re.compile(r"Rung\[(\d+)\]")
 _BLOCK_RE = re.compile(r"Block:([^/\]]+)")
@@ -226,6 +236,12 @@ def _build_unified_evidence(
         condition_count=len(required_conditions),
         reader_count=len(readers),
         unknown_count=len(unknowns),
+        calculated_writer_count=sum(
+            1
+            for writer in writers
+            if (writer.source_provenance.instruction_type or "").upper()
+            in DERIVED_CALCULATION_INSTRUCTIONS
+        ),
     )
 
     return UnifiedSignalEvidence(
@@ -348,6 +364,8 @@ def _required_conditions_from_upstream(
     writer_ids = [rel.id for rel in writer_rels]
 
     for dep in upstream:
+        if not _is_boolean_condition_instruction(dep.source_provenance.instruction_type):
+            continue
         cond_id = dep.upstream_signal_id
         if cond_id in seen:
             continue
@@ -369,6 +387,8 @@ def _required_conditions_from_upstream(
         for rel in by_source.get(writer.source_id, []):
             if rel.relationship_type != RelationshipType.READS:
                 continue
+            if not _is_boolean_condition_read(rel):
+                continue
             if rel.target_id in seen or rel.target_id == writer.target_id:
                 continue
             seen.add(rel.target_id)
@@ -383,6 +403,27 @@ def _required_conditions_from_upstream(
                 )
             )
     return out
+
+
+def _is_boolean_condition_read(rel: Relationship) -> bool:
+    meta = rel.platform_specific or {}
+    role = str(meta.get("operand_semantic_role") or meta.get("operand_role") or "").lower()
+    if role in {"data_source_read", "data_source", "move_source", "math_source", "source", "array_source"}:
+        return False
+    if role in {"boolean_condition_read", "condition", "contact", "comparison_operand", "gating_operand"}:
+        return True
+    return _is_boolean_condition_instruction(
+        str(meta.get("instruction_type")) if meta.get("instruction_type") else None
+    )
+
+
+def _is_boolean_condition_instruction(instruction_type: str | None) -> bool:
+    if not instruction_type:
+        return False
+    instruction = instruction_type.upper()
+    if instruction in DATA_SOURCE_INSTRUCTIONS:
+        return False
+    return instruction in BOOLEAN_CONDITION_INSTRUCTIONS
 
 
 def _verification_groups(
@@ -918,17 +959,30 @@ def _summary_answer(
     condition_count: int,
     reader_count: int,
     unknown_count: int,
+    calculated_writer_count: int = 0,
 ) -> str:
     if writer_count == 0:
         return (
             f"{target_name} has no deterministic writer in the normalized model. "
             "Review unknown references and missing evidence."
         )
-    text = (
-        f"{target_name} is controlled by {condition_count} upstream condition"
-        f"{'' if condition_count == 1 else 's'} and written in {writer_count} location"
-        f"{'' if writer_count == 1 else 's'}."
-    )
+    if condition_count == 0:
+        if calculated_writer_count:
+            text = (
+                f"{target_name} is calculated in {calculated_writer_count} location"
+                f"{'' if calculated_writer_count == 1 else 's'}."
+            )
+        else:
+            text = (
+                f"{target_name} is written in {writer_count} location"
+                f"{'' if writer_count == 1 else 's'} with no boolean upstream conditions identified."
+            )
+    else:
+        text = (
+            f"{target_name} is controlled by {condition_count} upstream condition"
+            f"{'' if condition_count == 1 else 's'} and written in {writer_count} location"
+            f"{'' if writer_count == 1 else 's'}."
+        )
     if reader_count:
         text += (
             f" It is used downstream in {reader_count} location"

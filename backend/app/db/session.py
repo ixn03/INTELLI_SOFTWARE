@@ -26,12 +26,18 @@ def get_database_url() -> str:
 def get_engine():
     url = get_database_url()
     if url.startswith("sqlite"):
-        # Shared in-memory DB for tests and local dev (single process).
+        if url in ("sqlite://", "sqlite:///:memory:"):
+            # Shared in-memory DB for tests and local dev (single process).
+            return create_engine(
+                "sqlite://",
+                future=True,
+                connect_args={"check_same_thread": False},
+                poolclass=StaticPool,
+            )
         return create_engine(
-            "sqlite://",
+            url,
             future=True,
             connect_args={"check_same_thread": False},
-            poolclass=StaticPool,
         )
     return create_engine(url, future=True)
 
@@ -62,6 +68,10 @@ def init_db() -> None:
 
 def reset_engine_cache() -> None:
     """Clear cached engine/session (for tests)."""
+    try:
+        get_engine().dispose()
+    except Exception:
+        pass
     get_database_url.cache_clear()
     get_engine.cache_clear()
     get_session_factory.cache_clear()

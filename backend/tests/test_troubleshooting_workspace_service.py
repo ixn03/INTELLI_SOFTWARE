@@ -71,6 +71,15 @@ def _st_statement() -> ControlObject:
     )
 
 
+def _calc_rung() -> ControlObject:
+    return ControlObject(
+        id="rung::PLC/PRG/Recipe_Calc/10",
+        name="Rung 10",
+        object_type=ControlObjectType.RUNG,
+        source_location="Controller:PLC/Program:PRG/Routine:Recipe_Calc/Rung[10]",
+    )
+
+
 def _read(source: str, target: str, idx: int) -> Relationship:
     return Relationship(
         id=f"rel::read::{source}::{target}::{idx}",
@@ -109,9 +118,12 @@ class TroubleshootingWorkspaceServiceTests(unittest.TestCase):
             _tag("Duplicated_Tag", "PRG_B"),
             _tag("FBD_Result"),
             _tag("ST_Result"),
+            _tag("Internal_Recipes[0]"),
+            _tag("MaxRecipeNum"),
             _rung(1),
             _rung(2),
             _rung(3),
+            _calc_rung(),
             _block(),
             _fbd_block(),
             _st_statement(),
@@ -149,6 +161,44 @@ class TroubleshootingWorkspaceServiceTests(unittest.TestCase):
                 source_location="Controller:PLC/Program:PRG/Routine:ST_Main/Statement:1",
                 confidence=ConfidenceLevel.HIGH,
                 platform_specific={"instruction_type": "ST"},
+            ),
+            Relationship(
+                id="rel::read::size::source",
+                source_id="rung::PLC/PRG/Recipe_Calc/10",
+                target_id="tag::PLC/PRG/Internal_Recipes[0]",
+                relationship_type=RelationshipType.READS,
+                source_location="Controller:PLC/Program:PRG/Routine:Recipe_Calc/Rung[10]/Instruction:SIZE",
+                confidence=ConfidenceLevel.HIGH,
+                platform_specific={"instruction_type": "SIZE", "operand_index": 0},
+            ),
+            Relationship(
+                id="rel::write::size::dest",
+                source_id="rung::PLC/PRG/Recipe_Calc/10",
+                target_id="tag::PLC/PRG/MaxRecipeNum",
+                relationship_type=RelationshipType.WRITES,
+                write_behavior=WriteBehaviorType.MOVES_VALUE,
+                source_location="Controller:PLC/Program:PRG/Routine:Recipe_Calc/Rung[10]/Instruction:SIZE",
+                confidence=ConfidenceLevel.HIGH,
+                platform_specific={"instruction_type": "SIZE", "operand_index": 2},
+            ),
+            Relationship(
+                id="rel::read::sub::accumulator",
+                source_id="rung::PLC/PRG/Recipe_Calc/10",
+                target_id="tag::PLC/PRG/MaxRecipeNum",
+                relationship_type=RelationshipType.READS,
+                source_location="Controller:PLC/Program:PRG/Routine:Recipe_Calc/Rung[10]/Instruction:SUB",
+                confidence=ConfidenceLevel.HIGH,
+                platform_specific={"instruction_type": "SUB", "operand_index": 0},
+            ),
+            Relationship(
+                id="rel::write::sub::dest",
+                source_id="rung::PLC/PRG/Recipe_Calc/10",
+                target_id="tag::PLC/PRG/MaxRecipeNum",
+                relationship_type=RelationshipType.WRITES,
+                write_behavior=WriteBehaviorType.CALCULATES,
+                source_location="Controller:PLC/Program:PRG/Routine:Recipe_Calc/Rung[10]/Instruction:SUB",
+                confidence=ConfidenceLevel.HIGH,
+                platform_specific={"instruction_type": "SUB", "operand_index": 2},
             ),
         ]
 
@@ -208,6 +258,161 @@ class TroubleshootingWorkspaceServiceTests(unittest.TestCase):
             workspace.current_state_explanation.status,
             "live_data_missing",
         )
+
+    def test_logic_line_groups_group_tags_by_writer_line(self) -> None:
+        workspace = build_signal_workspace(
+            question="Why is Motor_Run not energizing?",
+            control_objects=self.objects,
+            relationships=self.relationships,
+        )
+        groups = workspace.what_controls_this_signal.logic_line_groups
+        self.assertGreaterEqual(len(groups), 2)
+        gated = next(
+            g
+            for g in groups
+            if {c.signal_name for c in g.conditions} >= {"Permissive_A", "Fault_1"}
+        )
+        self.assertEqual(gated.language, "ladder")
+        self.assertEqual(len(gated.conditions), 2)
+        self.assertTrue(gated.logic_text)
+        self.assertIn("Permissive_A", gated.logic_text)
+        self.assertIn("Fault_1", gated.logic_text)
+
+    def test_logic_paths_group_ladder_xio_conditions_into_one_path(self) -> None:
+        objects = [
+            _tag("MTR_T1_OL"),
+            _tag("MTR_T2_OL"),
+            _tag("EMERG_STOP"),
+            _tag("FAULT_OK"),
+            ControlObject(
+                id="rung::PLC/PRG/Fault_Logic/9",
+                name="Rung 9",
+                object_type=ControlObjectType.RUNG,
+                source_location="Controller:PLC/Program:PRG/Routine:Fault_Logic/Rung[9]",
+            ),
+        ]
+        rung_id = "rung::PLC/PRG/Fault_Logic/9"
+        relationships = [
+            Relationship(
+                id="rel::read::t1",
+                source_id=rung_id,
+                target_id="tag::PLC/PRG/MTR_T1_OL",
+                relationship_type=RelationshipType.READS,
+                source_location="Controller:PLC/Program:PRG/Routine:Fault_Logic/Rung[9]",
+                confidence=ConfidenceLevel.HIGH,
+                platform_specific={"instruction_type": "XIO", "operand_role": "condition"},
+            ),
+            Relationship(
+                id="rel::read::t2",
+                source_id=rung_id,
+                target_id="tag::PLC/PRG/MTR_T2_OL",
+                relationship_type=RelationshipType.READS,
+                source_location="Controller:PLC/Program:PRG/Routine:Fault_Logic/Rung[9]",
+                confidence=ConfidenceLevel.HIGH,
+                platform_specific={"instruction_type": "XIO", "operand_role": "condition"},
+            ),
+            Relationship(
+                id="rel::read::estop",
+                source_id=rung_id,
+                target_id="tag::PLC/PRG/EMERG_STOP",
+                relationship_type=RelationshipType.READS,
+                source_location="Controller:PLC/Program:PRG/Routine:Fault_Logic/Rung[9]",
+                confidence=ConfidenceLevel.HIGH,
+                platform_specific={"instruction_type": "XIO", "operand_role": "condition"},
+            ),
+            Relationship(
+                id="rel::write::fault_ok",
+                source_id=rung_id,
+                target_id="tag::PLC/PRG/FAULT_OK",
+                relationship_type=RelationshipType.WRITES,
+                write_behavior=WriteBehaviorType.SETS_TRUE,
+                source_location="Controller:PLC/Program:PRG/Routine:Fault_Logic/Rung[9]",
+                confidence=ConfidenceLevel.HIGH,
+                platform_specific={"instruction_type": "OTE"},
+            ),
+        ]
+        workspace = build_signal_workspace(
+            question="Why is FAULT_OK not on?",
+            control_objects=objects,
+            relationships=relationships,
+        )
+        paths = workspace.what_controls_this_signal.logic_paths
+        self.assertEqual(len(paths), 1)
+        path = paths[0]
+        self.assertEqual(path.rung_number, 9)
+        self.assertEqual(path.language, "ladder")
+        expression = path.readable_expression or ""
+        self.assertIn("NOT MTR_T1_OL", expression)
+        self.assertIn("NOT MTR_T2_OL", expression)
+        self.assertIn("NOT EMERG_STOP", expression)
+        self.assertIn("FAULT_OK", expression)
+        input_names = {ref.signal_name for ref in path.input_signals}
+        self.assertEqual(input_names, {"MTR_T1_OL", "MTR_T2_OL", "EMERG_STOP"})
+        write_names = {ref.signal_name for ref in path.output_signals}
+        self.assertEqual(write_names, {"FAULT_OK"})
+        self.assertNotIn("controlled by", workspace.deterministic_explanation.lower())
+
+    def test_logic_paths_surface_size_sub_calculation(self) -> None:
+        workspace = build_signal_workspace(
+            question="How is MaxRecipeNum calculated?",
+            control_objects=self.objects,
+            relationships=self.relationships,
+        )
+        paths = workspace.what_controls_this_signal.logic_paths
+        self.assertEqual(len(paths), 1)
+        path = paths[0]
+        self.assertEqual(path.metadata.get("path_kind"), "calculation")
+        self.assertIn(
+            "MaxRecipeNum = SIZE(Internal_Recipes[0]) - 1",
+            path.readable_expression or "",
+        )
+        input_names = {ref.signal_name for ref in path.input_signals}
+        self.assertIn("Internal_Recipes[0]", input_names)
+        write_names = {write.signal_name for write in path.write_operations}
+        self.assertIn("MaxRecipeNum", write_names)
+        self.assertEqual(
+            workspace.what_controls_this_signal.upstream_required_conditions,
+            [],
+        )
+        self.assertIn("calculation logic path", workspace.deterministic_explanation.lower())
+
+    def test_logic_paths_use_st_statement_text_when_available(self) -> None:
+        objects = [
+            _tag("ST_Result"),
+            ControlObject(
+                id="st::PLC/PRG/ST_Main/3",
+                name="ST statement 3",
+                object_type=ControlObjectType.INSTRUCTION,
+                source_location="Controller:PLC/Program:PRG/Routine:ST_Main/Statement:3",
+            ),
+        ]
+        relationships = [
+            Relationship(
+                id="rel::write::st::3",
+                source_id="st::PLC/PRG/ST_Main/3",
+                target_id="tag::PLC/PRG/ST_Result",
+                relationship_type=RelationshipType.WRITES,
+                source_location="Controller:PLC/Program:PRG/Routine:ST_Main/Statement:3",
+                confidence=ConfidenceLevel.HIGH,
+                platform_specific={
+                    "instruction_type": "ST",
+                    "statement_text": "ST_Result := Permissive_A AND NOT Fault_1;",
+                },
+            ),
+        ]
+        workspace = build_signal_workspace(
+            question="Where is ST_Result written?",
+            control_objects=objects,
+            relationships=relationships,
+        )
+        paths = workspace.what_controls_this_signal.logic_paths
+        self.assertEqual(len(paths), 1)
+        self.assertEqual(
+            paths[0].readable_expression,
+            "ST_Result := Permissive_A AND NOT Fault_1;",
+        )
+        self.assertEqual(paths[0].statement_index, 3)
+        self.assertEqual(paths[0].language, "structured_text")
 
     def test_downstream_readers_shown(self) -> None:
         workspace = build_signal_workspace(
@@ -316,6 +521,73 @@ class TroubleshootingWorkspaceServiceTests(unittest.TestCase):
             relationships=self.relationships,
         )
         self.assertEqual(workspace.historical_context.status, "not_available")
+
+    def test_size_sub_operands_are_data_sources_not_conditions(self) -> None:
+        workspace = build_signal_workspace(
+            question="How is MaxRecipeNum calculated?",
+            control_objects=self.objects,
+            relationships=self.relationships,
+        )
+        condition_names = {
+            item.target_name
+            for item in workspace.what_controls_this_signal.upstream_required_conditions
+        }
+        data_source_names = {
+            item.target_name
+            for item in workspace.what_controls_this_signal.data_source_reads
+        }
+        self.assertNotIn("Internal_Recipes[0]", condition_names)
+        self.assertIsNotNone(workspace.unified_evidence)
+        assert workspace.unified_evidence is not None
+        unified_condition_names = {
+            item.signal_name
+            for item in workspace.unified_evidence.what_controls_this_signal
+        }
+        self.assertNotIn("Internal_Recipes[0]", unified_condition_names)
+        self.assertIn("Internal_Recipes[0]", data_source_names)
+        self.assertIn("MaxRecipeNum", data_source_names)
+        self.assertEqual(
+            workspace.what_controls_this_signal.data_source_reads[0].metadata[
+                "operand_semantic_role"
+            ],
+            "data_source_read",
+        )
+
+    def test_size_sub_target_is_derived_calculation_write_target(self) -> None:
+        workspace = build_signal_workspace(
+            question="How is MaxRecipeNum calculated?",
+            control_objects=self.objects,
+            relationships=self.relationships,
+        )
+        instructions = {
+            item.instruction_type
+            for item in workspace.what_controls_this_signal.derived_calculations
+        }
+        write_targets = {
+            item.target_name
+            for item in workspace.what_controls_this_signal.write_operations
+        }
+        self.assertEqual(instructions, {"SIZE", "SUB"})
+        self.assertIn("MaxRecipeNum", write_targets)
+        self.assertIn(
+            "highest valid zero-based index",
+            workspace.what_controls_this_signal.derived_explanation or "",
+        )
+        self.assertNotIn("controlled by", workspace.deterministic_explanation.lower())
+        for item in workspace.what_controls_this_signal.write_operations:
+            self.assertEqual(item.condition_signal_names, [])
+
+    def test_boolean_conditions_still_render_as_required_conditions(self) -> None:
+        workspace = build_signal_workspace(
+            question="Why is Motor_Run not energizing?",
+            control_objects=self.objects,
+            relationships=self.relationships,
+        )
+        roles = {
+            item.metadata.get("operand_semantic_role")
+            for item in workspace.what_controls_this_signal.upstream_required_conditions
+        }
+        self.assertEqual(roles, {"boolean_condition_read"})
 
 
 if __name__ == "__main__":

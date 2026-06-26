@@ -1,7 +1,7 @@
 from dataclasses import asdict
 from typing import Any, Optional
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 
 from app.connectors.registry import connector_catalog, get_connector
@@ -44,12 +44,16 @@ from app.services.version_intelligence_service import analyze_version_impact
 from app.services.llm_assist_service import answer_with_llm_assist
 from app.services.runtime_adapter_registry import get_adapter, list_adapter_descriptors
 from app.api.ingest_routes import router as ingest_router
+from app.api.process_knowledge_routes import router as process_knowledge_router
 from app.api.tag_registry_routes import router as tag_registry_router
+from app.db.session import get_db
+from sqlalchemy.orm import Session
 
 
 router = APIRouter()
 router.include_router(tag_registry_router)
 router.include_router(ingest_router)
+router.include_router(process_knowledge_router)
 
 _OBJECT_TYPE_ALIASES: dict[str, str] = {
     "tags": "tag",
@@ -484,6 +488,7 @@ class TroubleshootQuestionRequest(BaseModel):
     project_id: str
     question: str
     runtime_snapshot: Optional[dict[str, Any]] = None
+    use_live_data: bool = True
 
 
 class SequenceTraceRequest(BaseModel):
@@ -507,31 +512,48 @@ def ask_v2(request: AskV2Request) -> ReasoningTraceResult:
     )
 
 
-@router.post(
-    "/api/troubleshoot/question",
-    response_model=SignalTroubleshootingWorkspace,
-)
-def troubleshoot_question(
+def resolve_troubleshoot_workspace(
     request: TroubleshootQuestionRequest,
+    db: Session | None = None,
 ) -> SignalTroubleshootingWorkspace:
-    """Return a signal-centric troubleshooting workspace for a question.
-
-    This is deterministic and evidence-first: resolve the target signal,
-    gather writers/readers/upstream conditions/unknown references, and
-    return a UI-ready workspace payload. No LLM reasoning is used.
-    """
+    """Build troubleshooting workspace (callable from FastAPI and eval harness)."""
 
     try:
         normalized = project_store.get_normalized(request.project_id)
         project_store.set_latest(request.project_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    auto_live = request.use_live_data and request.runtime_snapshot is None
     return build_signal_workspace(
         question=request.question,
         control_objects=normalized["control_objects"],
         relationships=normalized["relationships"],
         runtime_snapshot=request.runtime_snapshot,
+        use_live_data=auto_live,
+        db=db if auto_live else None,
     )
+
+
+@router.post(
+    "/api/troubleshoot/question",
+    response_model=SignalTroubleshootingWorkspace,
+)
+def troubleshoot_question(
+    request: TroubleshootQuestionRequest,
+    db: Session = Depends(get_db),
+) -> SignalTroubleshootingWorkspace:
+    """Return a signal-centric troubleshooting workspace for a question.
+
+    This is deterministic and evidence-first: resolve the target signal,
+    gather writers/readers/upstream conditions/unknown references, and
+    return a UI-ready workspace payload. No LLM reasoning is used.
+
+    When ``use_live_data`` is true and no ``runtime_snapshot`` is supplied,
+    latest values are resolved from the tag registry + InfluxDB by matching
+    control-object names to registry ``canonical_name`` (or ``tag_logic_refs``).
+    """
+
+    return resolve_troubleshoot_workspace(request, db)
 
 
 @router.get(

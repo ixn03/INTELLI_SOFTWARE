@@ -15,6 +15,7 @@ from app.db.models.tag_registry import (
     SourceSystem,
     Tag,
     TagDataType,
+    TagLogicRef,
     TagRole,
 )
 
@@ -202,3 +203,15 @@ def seed_demo_registry(db: Session) -> None:
         ]
     )
     db.flush()
+
+    # Link demo tags to L5X control-object ids by canonical name (resolved at query time).
+    logic_refs = [
+        TagLogicRef(
+            tag_id=tag.id,
+            reference_type="control_object",
+            reference_key=tag.canonical_name,
+            description=f"Match L5X tag name {tag.canonical_name}",
+        )
+        for tag in tags
+    ]
+    db.add_all(logic_refs)

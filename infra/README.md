@@ -127,8 +127,11 @@ PostgreSQL runs init scripts on first boot:
 - `postgres/init/01-init.sql` — legacy project stub tables
 - `postgres/init/02-tag-registry.sql` — **Step 2 tag registry** (plants, equipment,
   data sources, tags) plus demo seed data
+- `postgres/init/03-stored-projects.sql` — **Phase 2 project persistence**
+  (`stored_projects` JSONB blobs for uploaded L5X + normalized graph)
 
-If you already started the stack before Step 2, recreate volumes:
+If you already started the stack before Step 2 or before project persistence,
+recreate volumes:
 
 ```bash
 docker compose --env-file .env down -v
@@ -293,7 +296,21 @@ cd ../backend
 python -m pytest tests/test_tag_ingestion_api.py -q
 ```
 
-## Next steps (out of scope for Step 3)
+## Step 4 — Live data in troubleshooting workspace
+
+The workspace API auto-fetches latest tag values when `use_live_data` is true (default):
+
+```bash
+curl -X POST http://localhost:8000/api/troubleshoot/question \
+  -H "Content-Type: application/json" \
+  -d '{"project_id":"<id>","question":"Why is P101_RunCmd not energizing?","use_live_data":true}'
+```
+
+Response includes `current_state_explanation` (target value, blocking/satisfied conditions) and `advanced_details.live_data` (resolution counts).
+
+**Prerequisites:** collector or `demo_live_data_publisher.py` running, registry tag `canonical_name` matching L5X tag name.
+
+## Next steps (out of scope for Step 4)
 
 1. **Reasoning Engine** — read live values from InfluxDB + logic graph from Neo4j.
 2. **Additional connectors** — PI, DeltaV, Seeq, MQTT/Kafka buffering.

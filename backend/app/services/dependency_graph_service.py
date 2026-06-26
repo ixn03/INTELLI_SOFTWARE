@@ -42,6 +42,13 @@ WRITER_TYPES: frozenset[RelationshipType] = frozenset(
     }
 )
 
+BOOLEAN_CONDITION_INSTRUCTIONS: frozenset[str] = frozenset(
+    {"XIC", "XIO", "ONS", "OSR", "OSF", "EQU", "NEQ", "GRT", "GEQ", "LES", "LEQ", "LIM", "CMP"}
+)
+DATA_SOURCE_INSTRUCTIONS: frozenset[str] = frozenset(
+    {"SIZE", "MOV", "MOVE", "COP", "CPS", "FLL", "ADD", "SUB", "MUL", "DIV", "MOD", "CPT", "AND", "OR", "XOR", "TON", "TONR", "TOF", "RTO", "CTU", "CTD", "CTUD"}
+)
+
 
 class DependencyEvidence(BaseModel):
     plc_logic: bool = False
@@ -169,6 +176,7 @@ def build_control_dependency_graph(
             if rel.relationship_type == RelationshipType.READS
             and rel.target_id in tags
             and rel.target_id != writer.target_id
+            and (_is_boolean_condition_read(rel) or _is_fbd_tag_binding_read(rel))
         ]
         condition_tag_ids = _unique([r.target_id for r in condition_reads])
         condition_tag_ids = _unique(
@@ -492,6 +500,31 @@ def _is_deterministic_fbd_connection(
     source = object_index.get(rel.source_id)
     target = object_index.get(rel.target_id)
     return _pin_direction(source) == "output" and _pin_direction(target) == "input"
+
+
+def _is_fbd_tag_binding_read(rel: Relationship) -> bool:
+    meta = rel.platform_specific or {}
+    return (
+        meta.get("language") == "fbd"
+        and meta.get("fbd_relation") == "pin_tag_binding"
+        and rel.relationship_type == RelationshipType.READS
+    )
+
+
+def _is_boolean_condition_read(rel: Relationship) -> bool:
+    meta = rel.platform_specific or {}
+    role = str(meta.get("operand_semantic_role") or meta.get("operand_role") or "").lower()
+    if role in {"data_source_read", "data_source", "move_source", "math_source", "source", "array_source"}:
+        return False
+    if role in {"boolean_condition_read", "condition", "contact", "comparison_operand", "gating_operand"}:
+        return True
+    instruction = str(meta.get("instruction_type")) if meta.get("instruction_type") else None
+    if not instruction:
+        return False
+    instruction = instruction.upper()
+    if instruction in DATA_SOURCE_INSTRUCTIONS:
+        return False
+    return instruction in BOOLEAN_CONDITION_INSTRUCTIONS
 
 
 def _pin_direction(obj: ControlObject | None) -> str | None:

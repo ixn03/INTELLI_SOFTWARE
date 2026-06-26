@@ -460,7 +460,7 @@ def _invoke_workspace(
     if mode == "route":
         from app.api.routes import (
             TroubleshootQuestionRequest,
-            troubleshoot_question,
+            resolve_troubleshoot_workspace,
         )
         from app.models.control_model import ControlProject
         from app.services.project_store import project_store
@@ -483,8 +483,12 @@ def _invoke_workspace(
                 "execution_contexts": [],
             },
         )
-        return troubleshoot_question(
-            TroubleshootQuestionRequest(project_id=project_id, question=question)
+        return resolve_troubleshoot_workspace(
+            TroubleshootQuestionRequest(
+                project_id=project_id,
+                question=question,
+                use_live_data=False,
+            )
         )
     raise ValueError(f"Unsupported eval mode: {mode}")
 

@@ -215,7 +215,7 @@ Three product phases map to the eleven pillars. Engineering phases inside [compl
 - Durable graph persistence across restarts
 - LLM as primary reasoning path
 
-**Alignment today (Jun 2026):** Phases 0–4 of the bridge plan are largely complete on a curated fixture corpus — ladder branch logic, ST depth, AOI/UDT/alias, and instruction registry coverage. Fleet `traceability_score` averages ~0.32; letter grades overstate plant readiness. Tasks, FBD/SFC normalization, persistence, and live merge remain open. Phase 1 is **in progress**, not done.
+**Alignment today (Jun 2026):** Bridge Phases 0–4 are complete on the committed fixture corpus. The Phase 1 acceptance gate (`backend/tools/phase1_gate.py`) passes: eval harness (10/10 cases), ladder answer keys, parser grade (17 fixtures, ~95% opcode coverage), upload-and-trace workspace UI, and trace v2 with unified evidence. **Product Phase 1 is complete for the fixture corpus.** Plant-scale programs (private L5X exports) remain a measurement and depth target — fleet `traceability_score` is still low on full controllers; Phase 2 adds persistence, tasks, and FBD/SFC cause-effect depth.
 
 ### Phase 2 — Graph, tracing, knowledge
 
@@ -275,7 +275,8 @@ This is a directional map, not an audit. It shows where existing code already se
 | LLM assist | `backend/app/services/llm_assist_service.py` | Stub/assist; not primary layer |
 | API surface | `backend/app/api/routes.py` | Upload, trace, ask endpoints |
 | Frontend types | `frontend/src/types/reasoning.ts` | Shared trace/evidence shapes |
-| Workspace UI | `frontend/src/components/intelli/` | Functional; spine workflow needs simplification |
+| Workspace UI | `frontend/src/components/intelli/` | Signal Intelligence workspace — Phase 1 spine |
+| Phase 1 gate | `backend/tools/phase1_gate.py` | Fixture-corpus acceptance (pytest + eval + parser grade) |
 
 Fragmented reasoning services (`ask_v2_service.py`, `sequence_reasoning_service.py`, `runtime_evaluation_v2_service.py`) reflect today's architecture — Phase 2 consolidates them. Vendor shells (Siemens XML, DeltaV FHX, Honeywell preservation) exist per `platform_support_matrix.md` but must not distract from Rockwell depth.
 

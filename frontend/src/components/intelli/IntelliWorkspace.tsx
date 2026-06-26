@@ -139,6 +139,7 @@ export default function IntelliWorkspace() {
         {
           project_id: projectApiKey,
           question: q,
+          use_live_data: true,
         },
       );
       setWorkspace(res.data);

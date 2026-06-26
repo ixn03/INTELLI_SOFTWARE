@@ -285,7 +285,9 @@ class UnifiedEvidenceServiceTests(unittest.TestCase):
         assert workspace.unified_evidence is not None
         self.assertEqual(workspace.unified_evidence.target_signal_name, "Output_A")
         self.assertGreater(len(workspace.unified_evidence.verification.ladder), 0)
-        self.assertEqual(
+        self.assertGreater(len(workspace.what_controls_this_signal.logic_paths), 0)
+        self.assertIn("logic path", workspace.deterministic_explanation.lower())
+        self.assertNotEqual(
             workspace.deterministic_explanation,
             workspace.unified_evidence.summary.answer,
         )

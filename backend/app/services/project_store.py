@@ -1,4 +1,4 @@
-"""In-memory project storage.
+"""In-memory project storage with optional durable persistence.
 
 This module owns the lifecycle of parsed ``ControlProject`` instances
 during a development run. It also memoizes the *normalized reasoning*
@@ -6,14 +6,23 @@ output for the most recently uploaded project so the new ``/api/`` v1
 endpoints can serve traces without re-running normalization on every
 request.
 
-Everything here is intentionally in-process (no database). Restarting
-the backend wipes all stored projects and normalized caches.
+Parsed projects and normalized graphs are kept in an in-process cache for
+speed. When database persistence is enabled (file-backed SQLite or
+Postgres), projects are also written to ``stored_projects`` and
+re-hydrated on demand after a process restart or cache reset.
 """
 
 from typing import Any, Optional
 
+from app.db.session import get_session_factory, init_db
 from app.models.control_model import ControlProject
 from app.services.normalization_service import normalize_l5x_project
+from app.services.project_persistence_service import (
+    load_normalized,
+    load_project,
+    persistence_enabled,
+    save_project,
+)
 
 
 class InMemoryProjectStore:
@@ -36,6 +45,13 @@ class InMemoryProjectStore:
         self._projects: dict[str, ControlProject] = {}
         self._normalized_cache: dict[str, dict[str, Any]] = {}
         self._latest_project_id: Optional[str] = None
+        self._schema_ready = False
+
+    def _ensure_persistence_schema(self) -> None:
+        if not persistence_enabled() or self._schema_ready:
+            return
+        init_db()
+        self._schema_ready = True
 
     # -- CRUD ---------------------------------------------------------
 
@@ -52,13 +68,23 @@ class InMemoryProjectStore:
         # don't want stale caches lingering after schema/normalizer
         # changes during dev iteration.
         self._normalized_cache.pop(project.file_hash, None)
+
+        if persistence_enabled():
+            self._ensure_persistence_schema()
+            db = get_session_factory()()
+            try:
+                save_project(db, project, clear_normalized=True)
+                db.commit()
+            finally:
+                db.close()
+
         return project
 
     def get(self, project_id: str) -> ControlProject:
-        try:
-            return self._projects[project_id]
-        except KeyError as exc:
-            raise KeyError(f"Project {project_id} was not found.") from exc
+        if project_id not in self._projects:
+            if not self.hydrate_from_db(project_id):
+                raise KeyError(f"Project {project_id} was not found.")
+        return self._projects[project_id]
 
     def list(self) -> list[ControlProject]:
         return list(self._projects.values())
@@ -84,7 +110,7 @@ class InMemoryProjectStore:
         whichever upload happened to be most recent in this process.
         """
 
-        if project_id not in self._projects:
+        if project_id not in self._projects and not self.hydrate_from_db(project_id):
             raise KeyError(f"Project {project_id} was not found.")
         self._latest_project_id = project_id
 
@@ -101,9 +127,27 @@ class InMemoryProjectStore:
         cached = self._normalized_cache.get(project_id)
         if cached is not None:
             return cached
+
+        if project_id not in self._projects:
+            self.hydrate_from_db(project_id)
+
+        cached = self._normalized_cache.get(project_id)
+        if cached is not None:
+            return cached
+
         project = self.get(project_id)  # may raise KeyError
         normalized = normalize_l5x_project(project)
         self._normalized_cache[project_id] = normalized
+
+        if persistence_enabled():
+            self._ensure_persistence_schema()
+            db = get_session_factory()()
+            try:
+                save_project(db, project, normalized=normalized)
+                db.commit()
+            finally:
+                db.close()
+
         return normalized
 
     def get_latest_normalized(self) -> Optional[dict[str, Any]]:
@@ -113,6 +157,28 @@ class InMemoryProjectStore:
         if self._latest_project_id is None:
             return None
         return self.get_normalized(self._latest_project_id)
+
+    # -- Persistence hydration ----------------------------------------
+
+    def hydrate_from_db(self, project_id: str) -> bool:
+        """Load a project (and cached normalization) from the database."""
+
+        if not persistence_enabled():
+            return False
+
+        self._ensure_persistence_schema()
+        db = get_session_factory()()
+        try:
+            project = load_project(db, project_id)
+            if project is None:
+                return False
+            self._projects[project_id] = project
+            normalized = load_normalized(db, project_id)
+            if normalized is not None:
+                self._normalized_cache[project_id] = normalized
+            return True
+        finally:
+            db.close()
 
     # -- Test / dev helpers -------------------------------------------
 
@@ -124,7 +190,7 @@ class InMemoryProjectStore:
         self._normalized_cache[project_id] = normalized
 
     def reset(self) -> None:
-        """Wipe all stored projects and caches. For tests / dev only."""
+        """Wipe in-memory projects and caches. Does not clear the database."""
 
         self._projects.clear()
         self._normalized_cache.clear()

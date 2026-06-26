@@ -232,6 +232,96 @@ const unifiedWorkspace: SignalTroubleshootingWorkspace = {
       dependency_edge_count: 2,
     },
   },
+  what_controls_this_signal: {
+    upstream_required_conditions: [
+      {
+        source_id: "rung::1",
+        source_name: "Rung 1",
+        source_type: "rung",
+        target_id: "tag::Synth/PRG_A/Permissive_A",
+        target_name: "Permissive_A",
+        relationship_type: "reads",
+        source_location:
+          "Controller:Synth/Program:PRG_A/Routine:Routine_A/Rung[1]",
+        instruction_type: "XIC",
+        write_behavior: null,
+        condition_signal_ids: [],
+        condition_signal_names: [],
+        confidence: 0.92,
+        metadata: {
+          relationship_id: "rel::read::1",
+          writer_relationship_id: "rel::write::ladder",
+          operand_semantic_role: "boolean_condition_read",
+        },
+      },
+    ],
+    upstream_dependencies: [],
+    writer_conditions: [],
+    logic_paths: [
+      {
+        id: "path::rung::2::tag::Synth/PRG_A/Output_B",
+        source_location:
+          "Controller:Synth/Program:PRG_A/Routine:Routine_A/Rung[2]",
+        routine: "Routine_A",
+        rung_number: 2,
+        statement_index: null,
+        block_name: null,
+        language: "ladder",
+        instruction_sequence: ["OTE"],
+        readable_expression: "IF Permissive_A THEN Output_B = TRUE",
+        input_signals: [
+          {
+            signal_id: "tag::Synth/PRG_A/Permissive_A",
+            signal_name: "Permissive_A",
+            instruction_type: "XIC",
+            relationship_id: "rel::read::1",
+          },
+        ],
+        output_signals: [
+          {
+            signal_id: "tag::Synth/PRG_A/Output_B",
+            signal_name: "Output_B",
+            instruction_type: "OTE",
+            relationship_id: "rel::write::ladder",
+          },
+        ],
+        write_operations: [
+          {
+            signal_id: "tag::Synth/PRG_A/Output_B",
+            signal_name: "Output_B",
+            instruction_type: "OTE",
+            write_behavior: "sets_true",
+            relationship_id: "rel::write::ladder",
+          },
+        ],
+        confidence: 0.92,
+        warnings: [],
+        metadata: { path_kind: "boolean_control" },
+      },
+    ],
+    data_source_reads: [],
+    write_operations: [],
+    derived_calculations: [],
+    derived_explanation: null,
+    unknown_direction_references: [
+      {
+        source_id: "block::generic",
+        source_name: "Generic_Block",
+        source_type: "function_block",
+        target_id: "tag::Synth/PRG_A/Output_B",
+        target_name: "Output_B",
+        relationship_type: "references",
+        source_location:
+          "Controller:Synth/Program:PRG_A/Routine:Routine_A/Block:9",
+        instruction_type: null,
+        write_behavior: null,
+        condition_signal_ids: [],
+        condition_signal_names: [],
+        confidence: 0.48,
+        metadata: { binding_status: "direction_unknown" },
+      },
+    ],
+  },
   writer_rungs: [],
   upstream_required_conditions: [],
   downstream_readers: [],
@@ -247,6 +337,136 @@ const unifiedWorkspace: SignalTroubleshootingWorkspace = {
   advanced_details: {},
 };
 
+const calculationWorkspace: SignalTroubleshootingWorkspace = {
+  ...unifiedWorkspace,
+  question: "How is MaxRecipeNum calculated?",
+  target_signal: {
+    id: "tag::Synth/PRG_A/MaxRecipeNum",
+    name: "MaxRecipeNum",
+    object_type: "tag",
+    source_location: "Controller:Synth/Program:PRG_A/Tag:MaxRecipeNum",
+  },
+  unified_evidence: null,
+  deterministic_explanation:
+    "MaxRecipeNum is calculated from the size of Internal_Recipes[0], then decremented by 1.",
+  what_controls_this_signal: {
+    upstream_required_conditions: [],
+    upstream_dependencies: [],
+    writer_conditions: [],
+    logic_paths: [
+      {
+        id: "path::rung::calc/10",
+        source_location:
+          "Controller:Synth/Program:PRG_A/Routine:Recipe_Calc/Rung[10]",
+        routine: "Recipe_Calc",
+        rung_number: 10,
+        statement_index: null,
+        block_name: null,
+        language: "ladder",
+        instruction_sequence: ["SIZE", "SUB"],
+        readable_expression: "MaxRecipeNum = SIZE(Internal_Recipes[0]) - 1",
+        input_signals: [
+          {
+            signal_id: "tag::Synth/PRG_A/Internal_Recipes[0]",
+            signal_name: "Internal_Recipes[0]",
+            instruction_type: "SIZE",
+            relationship_id: "rel::read::size::source",
+          },
+        ],
+        output_signals: [
+          {
+            signal_id: "tag::Synth/PRG_A/MaxRecipeNum",
+            signal_name: "MaxRecipeNum",
+            instruction_type: "SUB",
+            relationship_id: "rel::write::sub::dest",
+          },
+        ],
+        write_operations: [
+          {
+            signal_id: "tag::Synth/PRG_A/MaxRecipeNum",
+            signal_name: "MaxRecipeNum",
+            instruction_type: "SUB",
+            write_behavior: "calculates",
+            relationship_id: "rel::write::sub::dest",
+          },
+        ],
+        confidence: 0.92,
+        warnings: [],
+        metadata: { path_kind: "calculation" },
+      },
+    ],
+    data_source_reads: [
+      {
+        source_id: "rung::Synth/PRG_A/Recipe_Calc/10",
+        source_name: "Rung 10",
+        source_type: "rung",
+        target_id: "tag::Synth/PRG_A/Internal_Recipes[0]",
+        target_name: "Internal_Recipes[0]",
+        relationship_type: "reads",
+        source_location:
+          "Controller:Synth/Program:PRG_A/Routine:Recipe_Calc/Rung[10]/Instruction:SIZE",
+        instruction_type: "SIZE",
+        write_behavior: null,
+        condition_signal_ids: [],
+        condition_signal_names: [],
+        confidence: 0.92,
+        metadata: {
+          relationship_id: "rel::read::size::source",
+          operand_semantic_role: "data_source_read",
+        },
+      },
+    ],
+    write_operations: [
+      {
+        source_id: "rung::Synth/PRG_A/Recipe_Calc/10",
+        source_name: "Rung 10",
+        source_type: "rung",
+        target_id: "tag::Synth/PRG_A/MaxRecipeNum",
+        target_name: "MaxRecipeNum",
+        relationship_type: "writes",
+        source_location:
+          "Controller:Synth/Program:PRG_A/Routine:Recipe_Calc/Rung[10]/Instruction:SIZE",
+        instruction_type: "SIZE",
+        write_behavior: "moves_value",
+        condition_signal_ids: [],
+        condition_signal_names: [],
+        confidence: 0.92,
+        metadata: {
+          relationship_id: "rel::write::size::dest",
+          operand_semantic_role: "derived_calculation",
+        },
+      },
+      {
+        source_id: "rung::Synth/PRG_A/Recipe_Calc/10",
+        source_name: "Rung 10",
+        source_type: "rung",
+        target_id: "tag::Synth/PRG_A/MaxRecipeNum",
+        target_name: "MaxRecipeNum",
+        relationship_type: "writes",
+        source_location:
+          "Controller:Synth/Program:PRG_A/Routine:Recipe_Calc/Rung[10]/Instruction:SUB",
+        instruction_type: "SUB",
+        write_behavior: "calculates",
+        condition_signal_ids: [],
+        condition_signal_names: [],
+        confidence: 0.92,
+        metadata: {
+          relationship_id: "rel::write::sub::dest",
+          operand_semantic_role: "derived_calculation",
+        },
+      },
+    ],
+    derived_calculations: [],
+    derived_explanation:
+      "MaxRecipeNum is calculated from Internal_Recipes[0]. SIZE gets the recipe array length, then SUB subtracts 1, making MaxRecipeNum the highest valid recipe index.",
+    unknown_direction_references: [],
+  },
+  writer_rungs: [],
+  upstream_required_conditions: [],
+  downstream_readers: [],
+  unknown_direction_blocks: [],
+};
+
 describe("SignalTroubleshootingWorkspaceView", () => {
   it("renders the five signal intelligence sections", () => {
     render(<SignalTroubleshootingWorkspaceView workspace={unifiedWorkspace} />);
@@ -256,7 +476,7 @@ describe("SignalTroubleshootingWorkspaceView", () => {
     expect(screen.getByRole("heading", { name: "Evidence sources" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Engineer/documentation knowledge" })).toBeInTheDocument();
     expect(screen.getAllByText("Output_B").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Permissive_A").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Permissive_A/).length).toBeGreaterThan(0);
   });
 
   it("renders ladder and FBD verification groups", () => {
@@ -269,24 +489,94 @@ describe("SignalTroubleshootingWorkspaceView", () => {
     expect(screen.getAllByText(/Pin Out/).length).toBeGreaterThan(0);
   });
 
-  it("shows unknown references separately from controls", () => {
+  it("renders logic path cards instead of a flat boolean tag list", () => {
     render(<SignalTroubleshootingWorkspaceView workspace={unifiedWorkspace} />);
-    expect(screen.getAllByText(/unknown-direction block/i).length).toBeGreaterThan(
-      0,
-    );
-    expect(screen.getAllByText("Generic_Block").length).toBeGreaterThan(0);
-    const controlsColumn = screen.getByRole("heading", {
-      name: "Upstream required conditions",
-    }).parentElement?.parentElement;
-    expect(controlsColumn).not.toBeNull();
     expect(
-      within(controlsColumn as HTMLElement).queryByText("Generic_Block"),
+      screen.getByRole("heading", { name: "What controls this?" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/IF Permissive_A THEN Output_B = TRUE/)).toBeInTheDocument();
+    expect(screen.getByText(/Inputs: Permissive_A/)).toBeInTheDocument();
+    expect(screen.getByText(/Writes: Output_B/)).toBeInTheDocument();
+    const controlsSection = screen
+      .getByRole("heading", { name: "What controls this?" })
+      .closest("section");
+    expect(controlsSection).not.toBeNull();
+    expect(
+      within(controlsSection as HTMLElement).queryByRole("heading", {
+        name: "Permissive_A",
+      }),
     ).not.toBeInTheDocument();
+  });
+
+  it("renders derived calculation logic paths with distinct styling", () => {
+    render(<SignalTroubleshootingWorkspaceView workspace={calculationWorkspace} />);
+    expect(
+      screen.getByText("MaxRecipeNum = SIZE(Internal_Recipes[0]) - 1"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Calculation")).toBeInTheDocument();
+    expect(screen.getByText(/Inputs: Internal_Recipes\[0\]/)).toBeInTheDocument();
+  });
+
+  it("shows unknown references separately from logic paths", () => {
+    render(<SignalTroubleshootingWorkspaceView workspace={unifiedWorkspace} />);
+    expect(screen.getByText(/Unknown-direction references/)).toBeInTheDocument();
+    expect(screen.getAllByText("Generic_Block").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/IF.*Generic_Block/)).not.toBeInTheDocument();
   });
 
   it("keeps advanced relationship metadata collapsed by default", () => {
     render(<SignalTroubleshootingWorkspaceView workspace={unifiedWorkspace} />);
     expect(screen.getAllByText("Advanced details")).toHaveLength(1);
     expect(screen.queryByText("rel::write::ladder")).not.toBeInTheDocument();
+  });
+
+  it("renders calculation logic paths separately from boolean gating", () => {
+    render(<SignalTroubleshootingWorkspaceView workspace={calculationWorkspace} />);
+    expect(
+      screen.getByText("MaxRecipeNum = SIZE(Internal_Recipes[0]) - 1"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Calculation")).toBeInTheDocument();
+    expect(screen.getByText(/Inputs: Internal_Recipes\[0\]/)).toBeInTheDocument();
+    expect(screen.getByText(/highest valid recipe index/i)).toBeInTheDocument();
+    const controlsSection = screen
+      .getByRole("heading", { name: "What controls this?" })
+      .closest("section");
+    expect(controlsSection).not.toBeNull();
+    expect(
+      within(controlsSection as HTMLElement).queryByText("Internal_Recipes[0]"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows live values on logic path input signals", () => {
+    const workspace: SignalTroubleshootingWorkspace = {
+      ...unifiedWorkspace,
+      current_state_explanation: {
+        status: "live_data_available",
+        target_current_value: {
+          signal_id: "tag::Synth/PRG_A/Output_B",
+          signal_name: "Output_B",
+          value: false,
+          quality: "good",
+          source: "OPC_UA",
+        },
+        upstream_condition_current_values: [
+          {
+            signal_id: "tag::Synth/PRG_A/Permissive_A",
+            signal_name: "Permissive_A",
+            value: false,
+            quality: "good",
+            source: "OPC_UA",
+          },
+        ],
+        blocking_conditions: [],
+        satisfied_conditions: [],
+        stale_values: [],
+        missing_values: [],
+        confidence_contribution: 0.18,
+      },
+    };
+    render(<SignalTroubleshootingWorkspaceView workspace={workspace} />);
+    expect(screen.getByText(/Permissive_A FALSE/)).toBeInTheDocument();
+    expect(screen.getByText(/Live FALSE/)).toBeInTheDocument();
   });
 });

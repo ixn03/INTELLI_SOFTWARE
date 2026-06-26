@@ -11,6 +11,12 @@ const MAIN_NAV = {
   kicker: "Import, search, trace",
 };
 
+const INTEGRITY_NAV = {
+  href: "/workspace/integrity",
+  label: "Control Integrity",
+  kicker: "Logic, records, reviews",
+};
+
 export default function WorkspaceLayout({
   children,
 }: {
@@ -19,6 +25,7 @@ export default function WorkspaceLayout({
   const pathname = usePathname();
   const onMainWorkspace =
     pathname === "/workspace" || pathname === "/workspace/";
+  const onIntegrity = pathname.startsWith("/workspace/integrity");
   const onAdvanced = pathname.startsWith("/workspace/advanced");
 
   return (
@@ -81,6 +88,23 @@ export default function WorkspaceLayout({
                   </span>
                   <span className="mt-0.5 block text-xs text-zinc-500">
                     {MAIN_NAV.kicker}
+                  </span>
+                </Link>
+              </li>
+              <li>
+                <Link
+                  href={INTEGRITY_NAV.href}
+                  className={`block rounded-2xl border px-3 py-3 transition ${
+                    onIntegrity
+                      ? "border-cyan-400/30 bg-cyan-400/10 text-white"
+                      : "border-transparent text-zinc-400 hover:border-zinc-800 hover:bg-zinc-900/70 hover:text-zinc-100"
+                  }`}
+                >
+                  <span className="block text-sm font-semibold">
+                    {INTEGRITY_NAV.label}
+                  </span>
+                  <span className="mt-0.5 block text-xs text-zinc-500">
+                    {INTEGRITY_NAV.kicker}
                   </span>
                 </Link>
               </li>

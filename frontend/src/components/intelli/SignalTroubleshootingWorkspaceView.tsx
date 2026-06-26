@@ -3,10 +3,26 @@ import type { ReactNode } from "react";
 import type {
   FBDEvidenceGroup,
   LadderEvidenceGroup,
+  LogicPath,
   SignalTroubleshootingWorkspace,
   UnifiedSignalEvidence,
 } from "@/types/reasoning";
 
+import {
+  buildLogicPathsFromEvidence,
+  formatLogicPathExpression,
+  formatLogicPathSource,
+  formatSignalList,
+  isCalculationPath,
+} from "./logicPaths";
+import {
+  buildLiveValueIndex,
+  formatLiveValue,
+  liveValueBadgeTone,
+  lookupLiveValue,
+  type LiveValueIndex,
+  type SignalLiveValue,
+} from "./liveValueIndex";
 import { Badge, Code, EmptyState } from "./ui";
 
 export function SignalTroubleshootingWorkspaceView({
@@ -32,6 +48,7 @@ export function SignalTroubleshootingWorkspaceView({
   }
 
   const unified = workspace.unified_evidence ?? null;
+  const liveIndex = buildLiveValueIndex(workspace);
   const targetName =
     unified?.target_signal_name ??
     workspace.target_signal?.name ??
@@ -41,8 +58,14 @@ export function SignalTroubleshootingWorkspaceView({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
-      <SignalHeader targetName={targetName} workspace={workspace} unified={unified} />
-      <WhatControlsSection workspace={workspace} unified={unified} />
+      <SignalHeader
+        targetName={targetName}
+        workspace={workspace}
+        unified={unified}
+        liveIndex={liveIndex}
+      />
+      <WhatControlsSection workspace={workspace} unified={unified} liveIndex={liveIndex} />
+      <WhatControlsSectionLegacyBuckets workspace={workspace} />
       <WhatThisControlsSection workspace={workspace} unified={unified} />
       <CurrentStateSection workspace={workspace} />
       <EvidenceSourcesSection workspace={workspace} unified={unified} />
@@ -62,15 +85,22 @@ function SignalHeader({
   targetName,
   workspace,
   unified,
+  liveIndex,
 }: {
   targetName: string;
   workspace: SignalTroubleshootingWorkspace;
   unified: UnifiedSignalEvidence | null;
+  liveIndex: LiveValueIndex;
 }) {
   const confidence =
     unified?.confidence_summary.confidence ??
     workspace.confidence_summary.confidence;
   const scope = workspace.resolved_scope;
+  const targetLive = lookupLiveValue(liveIndex, [
+    workspace.target_signal?.id,
+    workspace.target_signal?.name,
+    targetName,
+  ]);
 
   return (
     <section className="rounded-lg border border-zinc-800/80 bg-zinc-950/55">
@@ -79,7 +109,14 @@ function SignalHeader({
           <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500">
             Signal intelligence
           </p>
-          <h2 className="mt-1 text-lg font-semibold text-white">{targetName}</h2>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <h2 className="text-lg font-semibold text-white">{targetName}</h2>
+            {targetLive ? (
+              <LiveValueBadge live={targetLive} label="Live" />
+            ) : workspace.current_state_explanation?.status === "live_data_missing" ? (
+              <Badge tone="warning">Live missing</Badge>
+            ) : null}
+          </div>
           <p className="mt-2 text-sm leading-6 text-zinc-300">
             {unified?.summary.answer ?? workspace.deterministic_explanation}
           </p>
@@ -102,20 +139,31 @@ function SignalHeader({
 function WhatControlsSection({
   workspace,
   unified,
+  liveIndex,
 }: {
   workspace: SignalTroubleshootingWorkspace;
   unified: UnifiedSignalEvidence | null;
+  liveIndex: LiveValueIndex;
 }) {
   const controls =
     workspace.what_controls_this_signal?.upstream_required_conditions ??
     workspace.upstream_required_conditions;
-  const unifiedControls = unified?.what_controls_this_signal ?? [];
+  const hasSemanticControlBuckets = workspace.what_controls_this_signal != null;
+  const unifiedControls = hasSemanticControlBuckets
+    ? []
+    : (unified?.what_controls_this_signal ?? []);
   const controlCount = controls.length || unifiedControls.length;
-  const dependencies =
-    workspace.what_controls_this_signal?.upstream_dependencies ?? [];
+  const writeOperations =
+    workspace.what_controls_this_signal?.write_operations ?? workspace.writer_rungs;
+  const logicPaths: LogicPath[] =
+    workspace.what_controls_this_signal?.logic_paths?.length
+      ? workspace.what_controls_this_signal.logic_paths
+      : buildLogicPathsFromEvidence(controls, writeOperations);
   const unknowns =
     workspace.what_controls_this_signal?.unknown_direction_references ??
     workspace.unknown_direction_blocks;
+  const derivedExplanation =
+    workspace.what_controls_this_signal?.derived_explanation ?? null;
   const writers = workspace.who_writes_this_signal ?? {
     ladder: workspace.writer_rungs,
     fbd: [],
@@ -127,43 +175,119 @@ function WhatControlsSection({
 
   return (
     <section className="rounded-lg border border-zinc-800/80 bg-zinc-950/55">
-      <SectionTitle title="What controls this?" detail="Upstream permissives, interlocks, writer conditions, and direction-unknown references are separated." />
-      <div className="grid gap-4 p-5 lg:grid-cols-2 xl:grid-cols-4">
-        <AnswerColumn title="Upstream required conditions" empty="No deterministic upstream conditions were found." count={controlCount}>
-          {controls.length
-            ? controls.map((item) => <EvidenceMini key={evidenceKey(item)} item={item} />)
-            : unifiedControls.map((item, idx) => (
-                <MiniCard
-                  key={`unified-control-${idx}`}
-                  title={item.signal_name ?? "Unknown signal"}
-                  subtitle={formatProvenance(item.source_provenance)}
-                  confidence={item.confidence}
-                />
+      <SectionTitle
+        title="What controls this?"
+        detail="Each logic path is one rung, ST statement, or block that writes this signal. Inputs and write behavior are reconstructed from the normalized program model."
+      />
+      <div className="space-y-4 p-5">
+        {derivedExplanation ? (
+          <p className="rounded-lg border border-sky-900/40 bg-sky-950/20 px-4 py-3 text-sm leading-6 text-sky-100">
+            {derivedExplanation}
+          </p>
+        ) : null}
+        {logicPaths.length ? (
+          <div className="grid gap-4 lg:grid-cols-2">
+            {logicPaths.map((path) => (
+              <LogicPathCard key={path.id} path={path} liveIndex={liveIndex} />
+            ))}
+          </div>
+        ) : unifiedControls.length ? (
+          <div className="grid gap-4 lg:grid-cols-2">
+            {unifiedControls.map((item, idx) => (
+              <MiniCard
+                key={`unified-control-${idx}`}
+                title={item.signal_name ?? "Unknown signal"}
+                subtitle={formatProvenance(item.source_provenance)}
+                confidence={item.confidence}
+                extra={
+                  item.signal_name ? (
+                    <ConditionLiveValues
+                      names={[item.signal_name]}
+                      ids={[item.signal_id]}
+                      liveIndex={liveIndex}
+                    />
+                  ) : null
+                }
+              />
+            ))}
+          </div>
+        ) : (
+          <EmptyState title="No deterministic logic paths were found for this signal." />
+        )}
+        {unknowns.length ? (
+          <details className="rounded-lg border border-amber-900/30 bg-amber-950/10">
+            <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-amber-100">
+              Unknown-direction references ({unknowns.length})
+            </summary>
+            <div className="grid gap-3 p-4 pt-0">
+              {unknowns.map((item) => (
+                <EvidenceMini key={evidenceKey(item)} item={item} warning />
               ))}
-        </AnswerColumn>
-        <AnswerColumn title="Upstream dependencies" empty="No additional upstream dependency edges were found." count={dependencies.length}>
-          {dependencies.map((item) => <EvidenceMini key={evidenceKey(item)} item={item} />)}
-        </AnswerColumn>
-        <AnswerColumn title="Writer conditions" empty="No writer conditions were found." count={controlCount}>
-          {controls.length
-            ? controls.map((item) => <EvidenceMini key={`writer-condition-${evidenceKey(item)}`} item={item} />)
-            : unifiedControls.map((item, idx) => (
-                <MiniCard
-                  key={`unified-writer-condition-${idx}`}
-                  title={item.signal_name ?? "Unknown signal"}
-                  subtitle={formatProvenance(item.source_provenance)}
-                  confidence={item.confidence}
-                />
-              ))}
-        </AnswerColumn>
-        <AnswerColumn title="Unknown-direction references" empty="No unknown-direction references were found." count={unknowns.length} warning>
-          {unknowns.map((item) => <EvidenceMini key={evidenceKey(item)} item={item} warning />)}
-        </AnswerColumn>
+            </div>
+          </details>
+        ) : null}
       </div>
       <div className="border-t border-zinc-800/70 px-5 py-3">
         <EvidenceSourceChips counts={unified?.evidence_sources ?? fallbackEvidenceCounts(writers)} />
       </div>
     </section>
+  );
+}
+
+function WhatControlsSectionLegacyBuckets({
+  workspace,
+}: {
+  workspace: SignalTroubleshootingWorkspace;
+}) {
+  const dataSources = workspace.what_controls_this_signal?.data_source_reads ?? [];
+  const writeOperations =
+    workspace.what_controls_this_signal?.write_operations ?? workspace.writer_rungs;
+  const derivedCalculations =
+    workspace.what_controls_this_signal?.derived_calculations ?? [];
+  const dependencies =
+    workspace.what_controls_this_signal?.upstream_dependencies ?? [];
+  if (
+    !dataSources.length &&
+    !writeOperations.length &&
+    !derivedCalculations.length &&
+    !dependencies.length
+  ) {
+    return null;
+  }
+  return (
+    <details className="rounded-lg border border-zinc-800/80 bg-zinc-950/55">
+      <summary className="cursor-pointer px-5 py-3 text-sm font-medium text-zinc-300">
+        Legacy evidence buckets (advanced)
+      </summary>
+      <div className="grid gap-4 p-5 lg:grid-cols-2">
+        {dependencies.length ? (
+          <AnswerColumn title="Upstream dependencies" empty="" count={dependencies.length}>
+            {dependencies.map((item) => <EvidenceMini key={evidenceKey(item)} item={item} />)}
+          </AnswerColumn>
+        ) : null}
+        {dataSources.length ? (
+          <AnswerColumn title="Data sources" empty="" count={dataSources.length}>
+            {dataSources.map((item) => (
+              <EvidenceMini key={evidenceKey(item)} item={item} />
+            ))}
+          </AnswerColumn>
+        ) : null}
+        {writeOperations.length ? (
+          <AnswerColumn title="Write operations" empty="" count={writeOperations.length}>
+            {writeOperations.map((item) => (
+              <EvidenceMini key={`write-${evidenceKey(item)}`} item={item} />
+            ))}
+          </AnswerColumn>
+        ) : null}
+        {derivedCalculations.length ? (
+          <AnswerColumn title="Derived calculations" empty="" count={derivedCalculations.length}>
+            {derivedCalculations.map((item) => (
+              <EvidenceMini key={`derived-${evidenceKey(item)}`} item={item} />
+            ))}
+          </AnswerColumn>
+        ) : null}
+      </div>
+    </details>
   );
 }
 
@@ -183,7 +307,7 @@ function WhatThisControlsSection({
     <section className="rounded-lg border border-zinc-800/80 bg-zinc-950/55">
       <SectionTitle title="What does this control?" detail="Downstream readers and writes influenced by this signal through shared routines or blocks." />
       <div className="grid gap-4 p-5 lg:grid-cols-2 xl:grid-cols-4">
-        <AnswerColumn title="Downstream readers" empty="No downstream readers were found." count={readers.length}>
+        <AnswerColumn title="Downstream usage" empty="No downstream usage was found." count={readers.length}>
           {readers.map((item) => <EvidenceMini key={evidenceKey(item)} item={item} />)}
         </AnswerColumn>
         <AnswerColumn title="Writes influenced" empty="No downstream writes were influenced by this signal in the normalized graph." count={influenced.length}>
@@ -202,11 +326,52 @@ function WhatThisControlsSection({
 
 function CurrentStateSection({ workspace }: { workspace: SignalTroubleshootingWorkspace }) {
   const state = workspace.current_state_explanation;
+  const liveMeta = workspace.advanced_details?.live_data as
+    | {
+        enabled?: boolean;
+        resolved?: number;
+        missing_registry?: number;
+        missing_influx?: number;
+        source?: string;
+      }
+    | undefined;
+  const target = state?.target_current_value as
+    | {
+        signal_name?: string | null;
+        value?: unknown;
+        timestamp?: string | null;
+        quality?: string | null;
+        source?: string | null;
+      }
+    | null
+    | undefined;
   return (
     <section className="rounded-lg border border-zinc-800/80 bg-zinc-950/55">
-      <SectionTitle title="Current state explanation" detail="Live values are used only when they are supplied; missing live data is reported explicitly." />
-      <div className="grid gap-4 p-5 lg:grid-cols-3">
-        <StatusCard title="Status" value={state?.status?.replaceAll("_", " ") ?? "live data missing"} />
+      <SectionTitle
+        title="Current state explanation"
+        detail={
+          liveMeta?.enabled
+            ? `Live values from tag registry + InfluxDB (${liveMeta.resolved ?? 0} resolved).`
+            : "Live values are used when supplied or when the tag registry has matching samples."
+        }
+      />
+      <div className="grid gap-4 p-5 lg:grid-cols-4">
+        <StatusCard
+          title="Status"
+          value={state?.status?.replaceAll("_", " ") ?? "live data missing"}
+        />
+        <div className="rounded-lg border border-zinc-800/80 bg-zinc-900/35 p-4">
+          <h3 className="text-sm font-semibold text-zinc-100">Target live value</h3>
+          {target ? (
+            <p className="mt-2 text-sm text-zinc-300">
+              {target.signal_name ?? "Target"}: <span className="font-mono">{String(target.value)}</span>
+              {target.quality ? ` · ${target.quality}` : ""}
+              {target.source ? ` · ${target.source}` : ""}
+            </p>
+          ) : (
+            <p className="mt-2 text-sm text-zinc-500">No live value for target signal.</p>
+          )}
+        </div>
         <AnswerColumn title="Blocking conditions" empty="No blocking live conditions are known." count={state?.blocking_conditions.length ?? 0} warning>
           {(state?.blocking_conditions ?? []).map((item, idx) => <LiveValueMini key={`blocking-${idx}`} item={item} warning />)}
         </AnswerColumn>
@@ -214,6 +379,12 @@ function CurrentStateSection({ workspace }: { workspace: SignalTroubleshootingWo
           {(state?.satisfied_conditions ?? []).map((item, idx) => <LiveValueMini key={`satisfied-${idx}`} item={item} />)}
         </AnswerColumn>
       </div>
+      {(state?.missing_values?.length ?? 0) > 0 ? (
+        <div className="border-t border-zinc-800/80 px-5 py-3 text-xs text-zinc-500">
+          Missing live values:{" "}
+          {state?.missing_values.map((item) => item.name ?? item.id).join(", ")}
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -426,6 +597,73 @@ function LevelThreeAdvanced({
   );
 }
 
+function LogicPathCard({
+  path,
+  liveIndex,
+}: {
+  path: LogicPath;
+  liveIndex: LiveValueIndex;
+}) {
+  const calculation = isCalculationPath(path);
+  const writes = path.write_operations.length
+    ? formatSignalList(
+        path.write_operations.map((write) => ({
+          signal_id: write.signal_id,
+          signal_name: write.signal_name,
+          instruction_type: write.instruction_type,
+          relationship_id: write.relationship_id,
+        })),
+      )
+    : formatSignalList(path.output_signals);
+
+  return (
+    <div
+      className={`rounded-lg border p-3 ${
+        calculation
+          ? "border-sky-800/70 bg-sky-950/20"
+          : "border-zinc-800/80 bg-zinc-900/45"
+      }`}
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge tone={calculation ? "info" : "neutral"}>
+          {formatLogicPathSource(path)}
+        </Badge>
+        {calculation ? <Badge tone="outline">Calculation</Badge> : null}
+        <Badge tone="neutral">{Math.round(path.confidence * 100)}%</Badge>
+      </div>
+      <p className="mt-2 font-mono text-sm leading-6 text-zinc-100">
+        {formatLogicPathExpression(path)}
+      </p>
+      {path.input_signals.length ? (
+        <p className="mt-2 text-xs text-zinc-400">
+          Inputs: {formatSignalList(path.input_signals)}
+        </p>
+      ) : null}
+      {writes !== "—" ? (
+        <p className="mt-1 text-xs text-zinc-400">Writes: {writes}</p>
+      ) : null}
+      {path.warnings.length ? (
+        <div className="mt-2 space-y-1">
+          {path.warnings.map((warning) => (
+            <p key={warning} className="text-xs text-amber-200/85">
+              {warning}
+            </p>
+          ))}
+        </div>
+      ) : null}
+      {path.input_signals.length ? (
+        <ConditionLiveValues
+          names={path.input_signals.map(
+            (signal) => signal.signal_name ?? signal.signal_id,
+          )}
+          ids={path.input_signals.map((signal) => signal.signal_id)}
+          liveIndex={liveIndex}
+        />
+      ) : null}
+    </div>
+  );
+}
+
 function LadderEvidenceCard({ item }: { item: LadderEvidenceGroup }) {
   const roleLabel =
     item.role === "writer"
@@ -506,10 +744,17 @@ function SectionTitle({ title, detail }: { title: string; detail: string }) {
 function EvidenceMini({
   item,
   warning = false,
+  liveIndex,
+  showConditionLiveValues = false,
 }: {
   item: SignalTroubleshootingWorkspace["writer_rungs"][number];
   warning?: boolean;
+  liveIndex?: LiveValueIndex;
+  showConditionLiveValues?: boolean;
 }) {
+  const targetLive =
+    liveIndex &&
+    lookupLiveValue(liveIndex, [item.target_id, item.target_name]);
   return (
     <MiniCard
       title={item.target_name ?? item.source_name ?? "Unknown signal"}
@@ -526,7 +771,64 @@ function EvidenceMini({
       confidence={item.confidence}
       badges={[item.relationship_type, item.instruction_type, item.write_behavior]}
       warning={warning}
+      extra={
+        <>
+          {targetLive ? <LiveValueBadge live={targetLive} /> : null}
+          {showConditionLiveValues && liveIndex ? (
+            <ConditionLiveValues
+              names={item.condition_signal_names}
+              ids={item.condition_signal_ids}
+              liveIndex={liveIndex}
+            />
+          ) : null}
+        </>
+      }
     />
+  );
+}
+
+function ConditionLiveValues({
+  names,
+  ids,
+  liveIndex,
+}: {
+  names: string[];
+  ids?: string[];
+  liveIndex: LiveValueIndex;
+}) {
+  if (!names.length) return null;
+  return (
+    <div className="mt-2 flex flex-wrap gap-2">
+      {names.map((name, idx) => {
+        const live = lookupLiveValue(liveIndex, [name, ids?.[idx]]);
+        if (!live) {
+          return (
+            <Badge key={`${name}-missing`} tone="neutral">
+              {name}: no live
+            </Badge>
+          );
+        }
+        return <LiveValueBadge key={`${name}-live`} live={live} label={name} />;
+      })}
+    </div>
+  );
+}
+
+function LiveValueBadge({
+  live,
+  label,
+}: {
+  live: SignalLiveValue;
+  label?: string;
+}) {
+  const tone = liveValueBadgeTone(live);
+  const prefix = label ? `${label} ` : "";
+  return (
+    <Badge tone={tone}>
+      {prefix}
+      {formatLiveValue(live.value)}
+      {live.source ? ` · ${live.source}` : ""}
+    </Badge>
   );
 }
 
@@ -536,11 +838,16 @@ function LiveValueMini({ item, warning = false }: { item: unknown; warning?: boo
     signal_id?: string;
     value?: unknown;
     timestamp?: string | null;
+    quality?: string | null;
+    source?: string | null;
+    canonical_name?: string | null;
   };
+  const label = value.canonical_name ?? value.signal_name ?? value.signal_id ?? "Unknown signal";
+  const extras = [value.quality, value.source].filter(Boolean).join(" · ");
   return (
     <MiniCard
-      title={value.signal_name ?? value.signal_id ?? "Unknown signal"}
-      subtitle={`Value: ${String(value.value)}${value.timestamp ? ` · ${value.timestamp}` : ""}`}
+      title={label}
+      subtitle={`Value: ${String(value.value)}${value.timestamp ? ` · ${value.timestamp}` : ""}${extras ? ` · ${extras}` : ""}`}
       warning={warning}
     />
   );
@@ -642,12 +949,14 @@ function MiniCard({
   confidence,
   badges = [],
   warning = false,
+  extra,
 }: {
   title: string;
   subtitle?: string | null;
   confidence?: number;
   badges?: (string | null | undefined)[];
   warning?: boolean;
+  extra?: ReactNode;
 }) {
   return (
     <div
@@ -673,6 +982,7 @@ function MiniCard({
       {subtitle ? (
         <p className="mt-1 text-xs leading-5 text-zinc-400">{subtitle}</p>
       ) : null}
+      {extra}
     </div>
   );
 }

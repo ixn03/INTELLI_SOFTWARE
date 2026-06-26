@@ -216,8 +216,88 @@ python tools/verify_live_ingestion.py
 
 ```bash
 cd backend
-python -m pytest tests/test_tag_ingestion_api.py tests/test_tag_registry_api.py -q
+python -m pytest tests/test_tag_ingestion_api.py tests/test_tag_registry_api.py tests/test_live_snapshot_service.py tests/test_troubleshoot_live_data_api.py -q
 ```
+
+## Step 4 — Live data in troubleshooting workspace
+
+When you ask a troubleshooting question, INTELLI can auto-fetch latest values from **tag registry + InfluxDB** and merge them into the workspace `current_state_explanation`.
+
+```text
+L5X upload → normalized graph (in-memory)
+        +
+Tag registry canonical_name ↔ control-object name
+        +
+InfluxDB latest sample
+        ↓
+POST /api/troubleshoot/question  (use_live_data: true)
+        ↓
+Workspace shows target live value + blocking/satisfied conditions
+```
+
+### How linking works
+
+1. Workspace collects the **target signal** and **upstream condition** tags from the parsed graph.
+2. Each signal is matched to a registry tag by (in order):
+   - `tag_logic_refs.reference_key` == control object id
+   - `canonical_name` or `raw_name` == signal name
+   - `tag_aliases.alias_name` == signal name
+3. Latest values are read from InfluxDB and keyed by both control-object id and signal name.
+
+### API example
+
+```bash
+curl -X POST http://localhost:8000/api/troubleshoot/question \
+  -H "Content-Type: application/json" \
+  -d '{
+    "project_id": "<your-project-id>",
+    "question": "Why is P101_RunCmd not energizing?",
+    "use_live_data": true
+  }'
+```
+
+Check `current_state_explanation` and `advanced_details.live_data` in the response.
+
+### Prerequisites
+
+- Docker stack running (Postgres tag registry + InfluxDB)
+- OPC UA collector or `demo_live_data_publisher.py` posting samples
+- L5X tag names aligned with registry `canonical_name` (demo: `P101_RunCmd`, etc.)
+
+The workspace UI sends `use_live_data: true` automatically.
+
+### Conditions panel (Signal Intelligence UI)
+
+In **What controls this? → Boolean control conditions**, each upstream condition shows a live badge when `current_state_explanation` includes matching values (`Permissive_A FALSE · OPC_UA`, etc.). The signal header shows the target's live value. Missing registry/Influx matches render `no live` on individual conditions.
+
+## Phase 2 — Durable project persistence
+
+Uploaded L5X projects and their normalized graphs are stored in Postgres `stored_projects` (JSONB blobs keyed by `file_hash`). The in-process cache is still used for speed; on restart or `GET /projects/{id}`, the store hydrates from the database when `DATABASE_URL` points at Postgres (or file-backed SQLite).
+
+```text
+POST /upload  →  project_store.save()  →  stored_projects row
+GET /projects/{id}  →  hydrate from DB if not in memory
+get_normalized()  →  lazy normalize + persist normalized_blob
+```
+
+Docker init: `infra/postgres/init/03-stored-projects.sql`. If the stack was created before this migration, recreate volumes (`docker compose down -v && docker compose up -d`).
+
+Tests: `python -m unittest tests.test_project_persistence`
+
+## Phase 1 — MVP spine complete (fixture corpus)
+
+Product Phase 1 success criteria: upload L5X → ask about a tag → get deterministic trace with evidence and confidence on ladder, ST, AOI, and branched rungs.
+
+Run the acceptance gate:
+
+```bash
+cd backend
+python tools/phase1_gate.py
+```
+
+Gate checks: full pytest, troubleshooting eval harness (direct + route), ladder answer keys, and parser grade on 17 committed L5X fixtures.
+
+**Plant-scale programs** (full multi-program controllers) are tracked separately via `traceability_score` and private L5X eval — see `docs/product_vision_roadmap.md` Phase 2.
 
 ## Internal Model Architecture
 
