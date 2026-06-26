@@ -328,10 +328,58 @@ class ProcessKnowledgeServiceTests(unittest.TestCase):
         self.assertEqual(extract["project_name"], "Mini_Ctrl")
         self.assertIn("R_Ladder", extract["routines"])
         self.assertGreater(len(extract["tags"]), 0)
+        self.assertGreater(len(extract["io_tags"]), 0)
+        self.assertGreater(len(extract["io_rows"]), 0)
+        self.assertTrue(extract["directions"])
+        self.assertIn("data_types", extract)
+        self.assertTrue(extract["sources"])
         self.assertTrue(extract["reads"] or extract["writes"] or extract["relationships"])
         self.assertTrue(extract["outputs"] or extract["devices"])
         self.assertIn("graph_summary", extract)
         self.assertIn("graph", extract)
+
+    def test_generated_io_list_from_real_l5x_contains_tag_direction_and_source(self) -> None:
+        unit = svc.create_process_unit(self.db, ProcessUnitCreate(name="IO Extract Unit"))
+        module = svc.create_equipment_module(
+            self.db,
+            unit.id,
+            EquipmentModuleCreate(name="EM_IO_EXTRACT"),
+        )
+        source = svc.create_import_source(
+            self.db,
+            ControlImportSourceCreate(
+                process_unit_id=unit.id,
+                module_id=module.id,
+                name="Conveyance L5X upload",
+                source_system="rockwell_l5x",
+            ),
+        )
+        source_id = source.id
+        module_id = module.id
+        self.db.commit()
+        fixture = _BACKEND_ROOT / "tests" / "fixtures" / "l5x" / "Conveyance_LD.L5X"
+
+        svc.run_import_sync_from_bytes(
+            self.db,
+            source_id=source_id,
+            filename=fixture.name,
+            content=fixture.read_bytes(),
+            actor="controls.engineer",
+        )
+
+        revision = svc.generate_document_draft(
+            self.db,
+            module_id=module_id,
+            record_type=EngineeringRecordType.IO_LIST,
+            actor="controls.engineer",
+        )
+        body = revision.body_markdown or ""
+
+        self.assertIn("START_PB", body)
+        self.assertIn("direction=input", body)
+        self.assertIn("data_type=BOOL", body)
+        self.assertIn("source=controller", body)
+        self.assertIn("Start Pushbutton", body)
 
     def test_generated_control_narrative_uses_richer_import_extract(self) -> None:
         unit = svc.create_process_unit(self.db, ProcessUnitCreate(name="Narrative Extract Unit"))
@@ -370,6 +418,8 @@ class ProcessKnowledgeServiceTests(unittest.TestCase):
 
         body = revision.body_markdown or ""
         self.assertIn("R_Ladder", body)
+        self.assertIn("OutTag", body)
+        self.assertIn("Other", body)
         self.assertIn("mini_routine_mix.L5X", body)
         useful_sections = [
             section
@@ -377,6 +427,48 @@ class ProcessKnowledgeServiceTests(unittest.TestCase):
             if section["facts"]
         ]
         self.assertGreaterEqual(len(useful_sections), 3)
+
+    def test_generated_control_narrative_from_real_l5x_contains_logic_actions(self) -> None:
+        unit = svc.create_process_unit(self.db, ProcessUnitCreate(name="Narrative Real Unit"))
+        module = svc.create_equipment_module(
+            self.db,
+            unit.id,
+            EquipmentModuleCreate(name="EM_REAL_NARRATIVE"),
+        )
+        source = svc.create_import_source(
+            self.db,
+            ControlImportSourceCreate(
+                process_unit_id=unit.id,
+                module_id=module.id,
+                name="Conveyance L5X upload",
+                source_system="rockwell_l5x",
+            ),
+        )
+        source_id = source.id
+        module_id = module.id
+        self.db.commit()
+        fixture = _BACKEND_ROOT / "tests" / "fixtures" / "l5x" / "Conveyance_LD.L5X"
+
+        svc.run_import_sync_from_bytes(
+            self.db,
+            source_id=source_id,
+            filename=fixture.name,
+            content=fixture.read_bytes(),
+            actor="controls.engineer",
+        )
+
+        revision = svc.generate_document_draft(
+            self.db,
+            module_id=module_id,
+            record_type=EngineeringRecordType.CONTROL_NARRATIVE,
+            actor="controls.engineer",
+        )
+        body = revision.body_markdown or ""
+
+        self.assertIn("Conveyance_LD", body)
+        self.assertIn("START_PB", body)
+        self.assertIn("CL1_RUN", body)
+        self.assertIn("LAMP_FAULT", body)
 
     def test_changed_import_creates_logic_diff_review_items_and_preserves_approved_revision(self) -> None:
         unit = svc.create_process_unit(self.db, ProcessUnitCreate(name="Review Unit"))
@@ -997,7 +1089,7 @@ class ProcessKnowledgeGenerateDraftApiTests(unittest.TestCase):
             unit.id,
             EquipmentModuleCreate(name="EM_API_DRAFT"),
         )
-        svc.create_logic_snapshot(
+        snapshot = svc.create_logic_snapshot(
             self.db,
             module.id,
             LogicSnapshotCreate(
@@ -1008,6 +1100,7 @@ class ProcessKnowledgeGenerateDraftApiTests(unittest.TestCase):
         )
         self.unit_id = unit.id
         self.module_id = module.id
+        self.snapshot_id = snapshot.id
         self.db.commit()
         self.client = TestClient(app)
 
@@ -1056,6 +1149,14 @@ class ProcessKnowledgeGenerateDraftApiTests(unittest.TestCase):
         ]
         self.assertEqual(len(matching), 1)
         self.assertEqual(matching[0]["status"], "open")
+
+    def test_snapshot_parsed_extract_endpoint_returns_parser_facts(self) -> None:
+        response = self.client.get(f"/api/snapshots/{self.snapshot_id}/parsed-extract")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["tags"], ["MIX_TIMER"])
+        self.assertEqual(payload["directions"], ["Output"])
 
 
 if __name__ == "__main__":

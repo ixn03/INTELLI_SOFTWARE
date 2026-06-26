@@ -64,6 +64,69 @@ def _tags(parsed_extract: dict[str, Any]) -> list[str]:
     return sorted(set(tags))
 
 
+def _io_tags(parsed_extract: dict[str, Any]) -> list[dict[str, Any]]:
+    items = parsed_extract.get("io_tags") or parsed_extract.get("tags")
+    if not isinstance(items, list):
+        return []
+    return [item for item in items if isinstance(item, dict) and item.get("tag")]
+
+
+def _io_rows(parsed_extract: dict[str, Any]) -> list[str]:
+    existing = _as_string_list(parsed_extract.get("io_rows"))
+    if existing:
+        return existing
+    rows: list[str] = []
+    for item in _io_tags(parsed_extract):
+        source = item.get("program") or item.get("source") or "unknown"
+        rows.append(
+            " | ".join(
+                [
+                    str(item.get("tag") or ""),
+                    f"direction={item.get('direction') or 'unknown'}",
+                    f"data_type={item.get('data_type') or 'unknown'}",
+                    f"description={item.get('description') or 'Needs engineer input'}",
+                    f"source={source}",
+                ]
+            )
+        )
+    return rows
+
+
+def _io_field(parsed_extract: dict[str, Any], field: str, *fallback_keys: str) -> list[str]:
+    existing = _first_present(parsed_extract, field, *fallback_keys)
+    if existing:
+        return existing
+    values: list[str] = []
+    for item in _io_tags(parsed_extract):
+        value = item.get(field)
+        if field == "source":
+            value = item.get("program") or item.get("source")
+        if value:
+            values.append(f"{item['tag']}: {value}")
+    return sorted(set(values))
+
+
+def _source_values(parsed_extract: dict[str, Any]) -> list[str]:
+    return _io_field(parsed_extract, "source", "sources")
+
+
+def _format_access_entries(parsed_extract: dict[str, Any], key: str) -> list[str]:
+    entries: list[str] = []
+    for item in parsed_extract.get(key) or []:
+        if not isinstance(item, dict):
+            continue
+        tag = item.get("tag")
+        if not tag:
+            continue
+        location = " / ".join(
+            str(piece)
+            for piece in (item.get("program"), item.get("routine"))
+            if piece
+        )
+        entries.append(f"{tag} ({location})" if location else str(tag))
+    return sorted(set(entries))
+
+
 def _setpoints(parsed_extract: dict[str, Any]) -> list[str]:
     values = _as_string_list(parsed_extract.get("setpoints"))
     values.extend(_command_values(parsed_extract, "setpoints"))
@@ -82,10 +145,12 @@ def _first_present(parsed_extract: dict[str, Any], *keys: str) -> list[str]:
 _FactDef = tuple[str, str, Callable[[dict[str, Any]], list[str]]]
 
 _FACT_DEFS: dict[str, _FactDef] = {
+    "programs": ("Programs", "programs", lambda e: _as_string_list(e.get("programs"))),
     "commands": ("Commands", "commands", _command_names),
     "devices": ("Devices", "commands[].devices", lambda e: _command_values(e, "devices")),
     "steps": ("Sequence steps", "commands[].steps", lambda e: _command_values(e, "steps")),
     "tags": ("Tags", "tags", _tags),
+    "io_rows": ("IO rows", "io_tags", _io_rows),
     "routines": ("Routines", "routines", lambda e: _as_string_list(e.get("routines"))),
     "setpoints": ("Setpoints", "setpoints", _setpoints),
     "permissives": ("Permissives", "permissives", lambda e: _as_string_list(e.get("permissives"))),
@@ -93,13 +158,17 @@ _FACT_DEFS: dict[str, _FactDef] = {
     "conditions": ("Conditions", "conditions", lambda e: _as_string_list(e.get("conditions"))),
     "alarms": ("Alarms", "alarms", lambda e: _as_string_list(e.get("alarms"))),
     "operator_prompts": ("Operator prompts", "operator_prompts", lambda e: _as_string_list(e.get("operator_prompts"))),
+    "outputs": ("Outputs/actions", "outputs", lambda e: _as_string_list(e.get("outputs"))),
+    "reads": ("Reads", "reads", lambda e: _format_access_entries(e, "reads")),
+    "writes": ("Writes", "writes", lambda e: _format_access_entries(e, "writes")),
     "causes": ("Causes", "causes", lambda e: _first_present(e, "causes")),
     "effects": ("Effects", "effects", lambda e: _as_string_list(e.get("effects"))),
     "actions": ("Actions", "actions", lambda e: _as_string_list(e.get("actions"))),
     "priorities": ("Alarm priorities", "priorities", lambda e: _first_present(e, "priorities", "priority")),
-    "directions": ("IO directions", "directions", lambda e: _first_present(e, "directions", "direction")),
-    "data_types": ("Data types", "data_types", lambda e: _first_present(e, "data_types", "data_type")),
-    "descriptions": ("Descriptions", "descriptions", lambda e: _first_present(e, "descriptions", "description")),
+    "directions": ("IO directions", "directions", lambda e: _io_field(e, "direction", "directions")),
+    "data_types": ("Data types", "data_types", lambda e: _io_field(e, "data_type", "data_types")),
+    "descriptions": ("Descriptions", "descriptions", lambda e: _io_field(e, "description", "descriptions")),
+    "sources": ("Sources", "sources", _source_values),
     "operator_responses": ("Operator responses", "operator_responses", lambda e: _as_string_list(e.get("operator_responses"))),
     "consequences": ("Consequences", "consequences", lambda e: _as_string_list(e.get("consequences"))),
 }
@@ -107,11 +176,12 @@ _FACT_DEFS: dict[str, _FactDef] = {
 # Which fact keys are relevant per record type (drives the facts package).
 RECORD_TYPE_FACT_KEYS: dict[str, list[str]] = {
     "control_narrative": [
-        "commands", "devices", "steps", "routines", "tags",
+        "programs", "commands", "devices", "steps", "routines", "tags",
+        "reads", "writes", "outputs", "actions",
         "permissives", "interlocks", "conditions", "setpoints",
         "alarms", "operator_prompts",
     ],
-    "io_list": ["tags", "descriptions", "directions", "data_types"],
+    "io_list": ["io_rows", "tags", "descriptions", "directions", "data_types", "sources"],
     "cause_effect_matrix": ["causes", "effects", "conditions", "actions", "tags"],
     "alarm_rationalization": [
         "alarms", "priorities", "causes", "operator_responses",
@@ -128,7 +198,8 @@ def build_source_facts(
 ) -> list[GenerationSourceFact]:
     """Build the ordered fact list for a record type (present and missing)."""
 
-    keys = RECORD_TYPE_FACT_KEYS.get(record_type, list(_FACT_DEFS.keys()))
+    record_type_key = str(getattr(record_type, "value", record_type))
+    keys = RECORD_TYPE_FACT_KEYS.get(record_type_key, list(_FACT_DEFS.keys()))
     facts: list[GenerationSourceFact] = []
     for key in keys:
         definition = _FACT_DEFS.get(key)
@@ -149,16 +220,24 @@ def build_source_facts(
     return facts
 
 
-def fact_keys_for_section(section: str) -> list[str]:
+def fact_keys_for_section(section: str, record_type: str | None = None) -> list[str]:
     """Map a template section heading to the fact keys that feed it."""
 
     normalized = section.lower()
+    record_type_key = str(getattr(record_type, "value", record_type))
+    if record_type_key == "io_list":
+        if normalized in {"tag", "tags"} or "tag" in normalized:
+            return ["io_rows", "tags"]
+        if "source" in normalized:
+            return ["sources"]
+        if "related module" in normalized:
+            return ["sources", "tags"]
     if "equipment controlled" in normalized or "related module" in normalized:
-        return ["tags"]
+        return ["tags", "devices", "outputs"]
     if "command" in normalized:
-        return ["commands", "devices"]
+        return ["commands", "devices", "outputs", "actions"]
     if "sequence" in normalized:
-        return ["routines", "steps", "commands"]
+        return ["routines", "steps", "commands", "reads", "writes", "outputs"]
     if "permissive" in normalized or "interlock" in normalized or "condition" in normalized:
         return ["permissives", "interlocks", "conditions"]
     if "setpoint" in normalized:
@@ -183,6 +262,8 @@ def fact_keys_for_section(section: str) -> list[str]:
         return ["effects", "actions"]
     if normalized in {"tag", "related tag/module"} or "tag" in normalized:
         return ["tags"]
+    if "purpose" in normalized:
+        return ["programs", "routines"]
     return []
 
 
@@ -191,7 +272,7 @@ def facts_for_section(
     record_type: str,
     facts: list[GenerationSourceFact],
 ) -> list[GenerationSourceFact]:
-    keys = fact_keys_for_section(section)
+    keys = fact_keys_for_section(section, record_type)
     if not keys:
         return []
     by_key = {fact.key: fact for fact in facts}

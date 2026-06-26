@@ -539,7 +539,7 @@ describe("ControlDocumentIntegrityWorkspace", () => {
     render(<ControlDocumentIntegrityWorkspace />);
 
     fireEvent.click(screen.getAllByRole("button", { name: /Documents/ })[0]);
-    await screen.findByText("Filtrate Separator control narrative");
+    expect((await screen.findAllByText("Filtrate Separator control narrative")).length).toBeGreaterThan(0);
     const generate = await screen.findAllByRole("button", { name: "Generate first draft" });
     fireEvent.click(generate[0]);
 
@@ -555,7 +555,7 @@ describe("ControlDocumentIntegrityWorkspace", () => {
       );
     });
     expect(await screen.findByText("IO List draft created. Review required.")).toBeInTheDocument();
-    expect(await screen.findByText("Filtrate Separator IO List")).toBeInTheDocument();
+    expect((await screen.findAllByText("Filtrate Separator IO List")).length).toBeGreaterThan(0);
     expect(screen.getAllByText("Draft").length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("button", { name: "Review Draft" }));
     expect((await screen.findAllByText("Review Queue")).length).toBeGreaterThan(0);
@@ -573,10 +573,31 @@ describe("ControlDocumentIntegrityWorkspace", () => {
     fireEvent.click(screen.getAllByRole("button", { name: /Documents/ })[0]);
 
     expect(await screen.findByRole("heading", { name: "Generate Document" })).toBeInTheDocument();
-    expect(screen.getByText(/safe disabled or fake mode/)).toBeInTheDocument();
+    expect(screen.getByText(/Parser facts remain the source of truth/)).toBeInTheDocument();
     expect(screen.getByLabelText("Control Narrative")).toBeChecked();
     expect(screen.getByLabelText("IO List")).not.toBeChecked();
     expect(screen.getByLabelText("User notes")).toBeInTheDocument();
+  });
+
+  it("renders the document library folders and a draft revision body", async () => {
+    mockAxios.get.mockImplementation((url) => {
+      const target = String(url);
+      if (target.endsWith("/api/engineering-records")) {
+        return Promise.resolve({ data: [engineeringRecord, ioRecord] });
+      }
+      if (target.endsWith("/api/engineering-records/record-2/revisions")) {
+        return Promise.resolve({ data: [draftRevision] });
+      }
+      return mockGet(target);
+    });
+    render(<ControlDocumentIntegrityWorkspace />);
+
+    fireEvent.click(screen.getAllByRole("button", { name: /Documents/ })[0]);
+
+    expect(await screen.findByRole("heading", { name: "Document Library" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /IO List/ }));
+    expect((await screen.findAllByText("Filtrate Separator IO List")).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/MIX_TIMER/).length).toBeGreaterThan(0);
   });
 
   it("generation mode selector works", async () => {
@@ -685,8 +706,10 @@ describe("ControlDocumentIntegrityWorkspace", () => {
 
     expect(await screen.findByText("Generated draft summary")).toBeInTheDocument();
     expect(screen.getByText("Confidence: medium")).toBeInTheDocument();
+    expect(screen.getByText("Revision 0.1 - Provider: fake")).toBeInTheDocument();
     expect(screen.getByText("llm_assist_disabled")).toBeInTheDocument();
     expect(screen.getByText("Setpoints: Needs engineer input")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open in Document Library" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Open Draft for Review" }));
     expect((await screen.findAllByText("Review Queue")).length).toBeGreaterThan(0);
   });
@@ -826,7 +849,7 @@ describe("ControlDocumentIntegrityWorkspace", () => {
     fireEvent.click(screen.getAllByRole("button", { name: /Documents/ })[0]);
     const generate = await screen.findAllByRole("button", { name: "Generate first draft" });
     const getCallsBeforeGenerate = getCalls.length;
-    fireEvent.click(generate[0]);
+    fireEvent.click(generate[1]);
 
     await waitFor(() => {
       expect(mockAxios.post).toHaveBeenCalledWith(
@@ -860,7 +883,7 @@ describe("ControlDocumentIntegrityWorkspace", () => {
     render(<ControlDocumentIntegrityWorkspace />);
 
     fireEvent.click(screen.getAllByRole("button", { name: /Documents/ })[0]);
-    await screen.findByText("Filtrate Separator control narrative");
+    expect((await screen.findAllByText("Filtrate Separator control narrative")).length).toBeGreaterThan(0);
     const generate = await screen.findAllByRole("button", { name: "Generate first draft" });
     fireEvent.click(generate[0]);
 

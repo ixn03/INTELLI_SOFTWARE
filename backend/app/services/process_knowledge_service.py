@@ -616,6 +616,23 @@ def _tags_from_extract(parsed_extract: dict[str, Any]) -> list[str]:
     return sorted(set(tags))
 
 
+def _access_entries_from_extract(parsed_extract: dict[str, Any], key: str) -> list[str]:
+    entries: list[str] = []
+    for item in parsed_extract.get(key) or []:
+        if not isinstance(item, dict):
+            continue
+        tag = item.get("tag")
+        if not tag:
+            continue
+        location = " / ".join(
+            str(piece)
+            for piece in (item.get("program"), item.get("routine"))
+            if piece
+        )
+        entries.append(f"{tag} ({location})" if location else str(tag))
+    return sorted(set(entries))
+
+
 def _format_list(items: list[str]) -> str:
     if not items:
         return "Needs engineer input"
@@ -643,19 +660,26 @@ def _section_content(
     interlocks = _as_string_list(parsed_extract.get("interlocks"))
     conditions = _as_string_list(parsed_extract.get("conditions"))
     steps = _all_command_values(parsed_extract, "steps")
+    outputs = _as_string_list(parsed_extract.get("outputs"))
+    actions = _as_string_list(parsed_extract.get("actions"))
+    reads = _access_entries_from_extract(parsed_extract, "reads")
+    writes = _access_entries_from_extract(parsed_extract, "writes")
 
     if "purpose" in normalized:
+        purpose_facts = _as_string_list(parsed_extract.get("programs")) or routines
         return (
             f"Describe the control intent for {module.name} using snapshot {snapshot.source_filename}.",
-            [module.name, snapshot.source_filename],
+            [module.name, snapshot.source_filename, *purpose_facts],
             False,
         )
     if "equipment controlled" in normalized or "related module" in normalized:
-        return (_format_list([module.name, *tags]), [module.name, *tags], not tags)
+        facts = [module.name, *tags, *outputs]
+        return (_format_list(facts), facts, not tags)
     if "commands" in normalized:
-        return (_format_list(command_names), command_names, not command_names)
+        facts = [*command_names, *_all_command_values(parsed_extract, "devices"), *outputs, *actions]
+        return (_format_list(facts), facts, not facts)
     if "sequence" in normalized:
-        facts = [*routines, *steps] or command_names
+        facts = [*routines, *steps, *reads, *writes, *outputs] or command_names
         return (_format_list(facts), facts, not facts)
     if "permissive" in normalized or "interlock" in normalized or "condition" in normalized:
         facts = [*permissives, *interlocks, *conditions]
@@ -664,6 +688,9 @@ def _section_content(
         return (_format_list(setpoints), setpoints, not setpoints)
     if "alarm" in normalized:
         facts = [*alarms, *prompts]
+        return (_format_list(facts), facts, not facts)
+    if record_type == EngineeringRecordType.IO_LIST and (normalized in {"tag", "tags"} or "tag" in normalized):
+        facts = _as_string_list(parsed_extract.get("io_rows")) or tags
         return (_format_list(facts), facts, not facts)
     if normalized in {"tag", "related tag/module"} or "tag" in normalized:
         return (_format_list(tags), tags, not tags)
@@ -683,7 +710,8 @@ def _section_content(
         )
         return (_format_list(facts), facts, not facts)
     if "source" in normalized:
-        facts = [snapshot.source_filename]
+        facts = _as_string_list(parsed_extract.get("sources"))
+        facts.extend([snapshot.source_filename])
         connector = parsed_extract.get("connector")
         if connector:
             facts.append(str(connector))
@@ -1491,6 +1519,40 @@ def build_process_knowledge_extract(
         if _looks_like_operator_prompt(name):
             _append_unique(operator_prompts, name)
 
+    io_rows = [
+        " | ".join(
+            [
+                str(item.get("tag") or ""),
+                f"direction={item.get('direction') or 'unknown'}",
+                f"data_type={item.get('data_type') or 'unknown'}",
+                f"description={item.get('description') or 'Needs engineer input'}",
+                f"source={item.get('program') or item.get('source') or 'unknown'}",
+            ]
+        )
+        for item in io_tags
+        if item.get("tag")
+    ]
+    descriptions = [
+        f"{item['tag']}: {item['description']}"
+        for item in io_tags
+        if item.get("tag") and item.get("description")
+    ]
+    directions = [
+        f"{item['tag']}: {item['direction']}"
+        for item in io_tags
+        if item.get("tag") and item.get("direction")
+    ]
+    data_types = [
+        f"{item['tag']}: {item['data_type']}"
+        for item in io_tags
+        if item.get("tag") and item.get("data_type")
+    ]
+    sources = [
+        f"{item['tag']}: {item.get('program') or item.get('source')}"
+        for item in io_tags
+        if item.get("tag") and (item.get("program") or item.get("source"))
+    ]
+
     relationship_types = {"reads", "writes", "commands", "starts", "stops", "permits", "inhibits"}
     relationships = [
         item
@@ -1520,7 +1582,12 @@ def build_process_knowledge_extract(
         "routines": routines,
         "equipment_modules": equipment_modules,
         "tags": io_tags or tags,
+        "io_rows": io_rows,
         "tag_descriptions": tag_descriptions,
+        "descriptions": descriptions,
+        "directions": directions,
+        "data_types": data_types,
+        "sources": sources,
         "reads": reads,
         "writes": writes,
         "relationships": relationships,
@@ -1826,6 +1893,13 @@ def get_snapshot_diff(db: Session, snapshot_id: uuid.UUID) -> LogicDiff | None:
         .order_by(LogicDiff.created_at.desc())
         .limit(1)
     )
+
+
+def get_logic_snapshot(db: Session, snapshot_id: uuid.UUID) -> LogicSnapshot:
+    snapshot = db.get(LogicSnapshot, snapshot_id)
+    if snapshot is None:
+        raise NotFoundError("Logic snapshot not found.")
+    return snapshot
 
 
 def list_review_items_for_process_unit(

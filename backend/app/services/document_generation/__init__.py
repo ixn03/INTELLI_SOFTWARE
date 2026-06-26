@@ -33,6 +33,7 @@ from app.services.document_generation.providers import (
     DisabledDocumentProvider,
     FakeDocumentProvider,
     LLMDocumentProvider,
+    OpenAIResponsesDocumentProvider,
     resolve_document_provider,
 )
 from app.services.document_generation.service import (
@@ -54,6 +55,7 @@ __all__ = [
     "DisabledDocumentProvider",
     "FakeDocumentProvider",
     "LLMDocumentProvider",
+    "OpenAIResponsesDocumentProvider",
     "resolve_document_provider",
     "INTELLI_DOC_SYSTEM_PROMPT",
     "generate_document",

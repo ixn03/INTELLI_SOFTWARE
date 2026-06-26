@@ -49,6 +49,7 @@ const RECORD_ORDER: RecordType[] = [
   "alarm_rationalization",
   "moc",
   "knowledge_issue",
+  "engineering_note",
 ];
 
 const GENERATABLE_DOCUMENT_TYPES: RecordType[] = [
@@ -191,6 +192,8 @@ export default function ControlDocumentIntegrityWorkspace() {
   const [generationMode, setGenerationMode] = useState<GenerationMode>("llm_assisted");
   const [generationNotes, setGenerationNotes] = useState("");
   const [aiDraftSummaries, setAiDraftSummaries] = useState<AiDraftSummary[]>([]);
+  const [selectedDocumentFolder, setSelectedDocumentFolder] = useState<RecordType>("control_narrative");
+  const [selectedDocumentRevisionId, setSelectedDocumentRevisionId] = useState("");
 
   const selectedUnit = units.find((entry) => entry.unit.id === selectedUnitId) ?? null;
   const selectedModule =
@@ -548,6 +551,10 @@ export default function ControlDocumentIntegrityWorkspace() {
         summaries.push({ ...res.data, record_type: type });
       }
       setAiDraftSummaries(summaries);
+      if (summaries[0]) {
+        setSelectedDocumentFolder(summaries[0].record_type);
+        setSelectedDocumentRevisionId(summaries[0].revision.id);
+      }
       setActionMessage(`${selectedTypes.length} document draft${selectedTypes.length === 1 ? "" : "s"} generated. Review required.`);
       await loadModule();
       await loadUnits();
@@ -821,6 +828,25 @@ export default function ControlDocumentIntegrityWorkspace() {
               generationLoading={generationLoading.selected}
               onGenerate={() => void generateSelectedAiDrafts()}
               onOpenReview={() => setActiveTab("reviews")}
+              onOpenLibrary={(recordType, revisionId) => {
+                setSelectedDocumentFolder(recordType);
+                setSelectedDocumentRevisionId(revisionId);
+              }}
+            />
+            <DocumentLibraryPanel
+              recordsByType={recordsByType}
+              revisionsByRecord={revisionsByRecord}
+              reviewItems={reviewItems}
+              selectedFolder={selectedDocumentFolder}
+              selectedRevisionId={selectedDocumentRevisionId}
+              onSelectFolder={(recordType) => {
+                setSelectedDocumentFolder(recordType);
+                setSelectedDocumentRevisionId("");
+              }}
+              onSelectRevision={(recordType, revisionId) => {
+                setSelectedDocumentFolder(recordType);
+                setSelectedDocumentRevisionId(revisionId);
+              }}
             />
             <EngineeringRecordsSection
               recordsByType={recordsByType}
@@ -1122,6 +1148,153 @@ function RecentImportsPanel({ importSources }: { importSources: ControlImportSou
   );
 }
 
+function DocumentLibraryPanel({
+  recordsByType,
+  revisionsByRecord,
+  reviewItems,
+  selectedFolder,
+  selectedRevisionId,
+  onSelectFolder,
+  onSelectRevision,
+}: {
+  recordsByType: Map<RecordType, EngineeringRecord[]>;
+  revisionsByRecord: Record<string, DocumentRevision[]>;
+  reviewItems: ReviewItem[];
+  selectedFolder: RecordType;
+  selectedRevisionId: string;
+  onSelectFolder: (recordType: RecordType) => void;
+  onSelectRevision: (recordType: RecordType, revisionId: string) => void;
+}) {
+  const folders = RECORD_ORDER.map((type) => {
+    const records = recordsByType.get(type) ?? [];
+    const revisions = records.flatMap((record) => revisionsByRecord[record.id] ?? []);
+    const openReviews = reviewItems.filter((item) =>
+      records.some((record) => record.id === item.engineering_record_id) &&
+      ["open", "needs_manual_review"].includes(item.status),
+    );
+    return { type, records, revisions, openReviews };
+  });
+  const selected = folders.find((folder) => folder.type === selectedFolder) ?? folders[0];
+  const selectedType = selected?.type ?? selectedFolder;
+  const selectedRecords = selected?.records ?? [];
+  const selectedRevisions = selected?.revisions ?? [];
+  const selectedRevision =
+    selectedRevisions.find((revision) => revision.id === selectedRevisionId) ??
+    selectedRevisions[0] ??
+    null;
+  const selectedRecord = selectedRevision
+    ? selectedRecords.find((record) => record.id === selectedRevision.engineering_record_id)
+    : selectedRecords[0] ?? null;
+
+  return (
+    <Card>
+      <CardHeader
+        title="Document Library"
+        eyebrow="Controlled folders"
+        trailing={<Badge tone="info">Module scoped</Badge>}
+      />
+      <CardBody className="grid gap-4 lg:grid-cols-[18rem_minmax(0,1fr)]">
+        <nav aria-label="Controlled document folders" className="space-y-2">
+          {folders.map((folder) => {
+            const latest = folder.revisions[0] ?? null;
+            const missing = folder.records.length === 0 && folder.revisions.length === 0;
+            const active = folder.type === selectedFolder;
+            return (
+              <button
+                key={folder.type}
+                type="button"
+                onClick={() => onSelectFolder(folder.type)}
+                className={`w-full rounded-xl border p-3 text-left transition ${
+                  active
+                    ? "border-cyan-400/60 bg-cyan-400/10"
+                    : "border-zinc-800 bg-zinc-900/35 hover:border-zinc-700"
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm font-semibold text-zinc-100">
+                    {RECORD_LABELS[folder.type]}
+                  </span>
+                  <Badge tone={missing ? "warning" : statusTone(latest?.status)}>
+                    {missing ? "Missing" : fmtStatus(latest?.status)}
+                  </Badge>
+                </div>
+                <p className="mt-1 text-xs text-zinc-500">
+                  {folder.revisions.length} revision{folder.revisions.length === 1 ? "" : "s"}
+                  {folder.openReviews.length ? ` · ${folder.openReviews.length} review` : ""}
+                </p>
+              </button>
+            );
+          })}
+        </nav>
+
+        <section className="rounded-2xl border border-zinc-800 bg-zinc-950/45 p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-500">
+                Selected folder
+              </p>
+              <h3 className="mt-1 text-lg font-semibold text-zinc-50">
+                {RECORD_LABELS[selectedType]}
+              </h3>
+              <p className="mt-1 text-sm text-zinc-400">
+                {selectedRecord?.title ?? ABSENCE_COPY[selectedType]}
+              </p>
+            </div>
+            <Badge tone={selectedRevision ? statusTone(selectedRevision.status) : "warning"}>
+              {selectedRevision ? fmtStatus(selectedRevision.status) : "Needs setup"}
+            </Badge>
+          </div>
+
+          {selectedRevisions.length > 0 ? (
+            <div className="mt-4 flex flex-wrap gap-2">
+              {selectedRevisions.map((revision) => (
+                <button
+                  key={revision.id}
+                  type="button"
+                  onClick={() => onSelectRevision(selectedType, revision.id)}
+                  className={`rounded-lg border px-3 py-2 text-xs font-medium ${
+                    revision.id === selectedRevision?.id
+                      ? "border-cyan-400/70 bg-cyan-400/10 text-cyan-50"
+                      : "border-zinc-800 bg-zinc-900/50 text-zinc-300 hover:border-zinc-700"
+                  }`}
+                >
+                  Rev {revision.revision} · {fmtStatus(revision.status)}
+                </button>
+              ))}
+            </div>
+          ) : null}
+
+          {selectedRevision ? (
+            <div className="mt-4 grid gap-3">
+              <div className="grid gap-2 md:grid-cols-3">
+                <StatusLine label="Revision" value={selectedRevision.revision} />
+                <StatusLine label="Status" value={fmtStatus(selectedRevision.status)} />
+                <StatusLine
+                  label="Source snapshot"
+                  value={selectedRevision.source_logic_snapshot_id ?? "Not linked"}
+                />
+              </div>
+              <div className="rounded-xl border border-zinc-800 bg-zinc-900/45 p-4">
+                <p className="mb-3 text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">
+                  Document body
+                </p>
+                <pre className="max-h-[28rem] overflow-auto whitespace-pre-wrap rounded-lg bg-zinc-950/70 p-4 text-sm leading-6 text-zinc-100">
+                  {selectedRevision.body_markdown || "No document body stored on this revision."}
+                </pre>
+              </div>
+            </div>
+          ) : (
+            <EmptyState
+              title="No document exists in this folder yet."
+              hint="Generate a draft from parser facts, import an existing document, or create a placeholder record for engineer setup."
+            />
+          )}
+        </section>
+      </CardBody>
+    </Card>
+  );
+}
+
 function DocumentSelectionPanel({
   selectedDocumentTypes,
   onChange,
@@ -1134,6 +1307,7 @@ function DocumentSelectionPanel({
   generationLoading,
   onGenerate,
   onOpenReview,
+  onOpenLibrary,
 }: {
   selectedDocumentTypes: Record<RecordType, boolean>;
   onChange: (next: Record<RecordType, boolean>) => void;
@@ -1146,6 +1320,7 @@ function DocumentSelectionPanel({
   generationLoading?: boolean;
   onGenerate: () => void;
   onOpenReview: () => void;
+  onOpenLibrary: (recordType: RecordType, revisionId: string) => void;
 }) {
   const selectedCount = GENERATABLE_DOCUMENT_TYPES.filter((type) => selectedDocumentTypes[type]).length;
   return (
@@ -1168,8 +1343,9 @@ function DocumentSelectionPanel({
             </p>
           ) : null}
           <p className="mt-3 rounded-lg border border-sky-800/60 bg-sky-950/30 px-3 py-2 text-xs leading-5 text-sky-100/85">
-            AI-assisted generation may run in safe disabled or fake mode depending on backend
-            configuration. Parser facts remain the source of truth.
+            Parser facts remain the source of truth. AI-assisted mode uses OpenAI only when
+            backend LLM env settings and an API key are enabled; otherwise INTELLI stores a
+            deterministic parser-backed draft.
           </p>
         </div>
 
@@ -1245,7 +1421,11 @@ function DocumentSelectionPanel({
         </div>
 
         {summaries.length > 0 ? (
-          <AiDraftResultSummary summaries={summaries} onOpenReview={onOpenReview} />
+          <AiDraftResultSummary
+            summaries={summaries}
+            onOpenReview={onOpenReview}
+            onOpenLibrary={onOpenLibrary}
+          />
         ) : null}
       </CardBody>
     </Card>
@@ -1255,9 +1435,11 @@ function DocumentSelectionPanel({
 function AiDraftResultSummary({
   summaries,
   onOpenReview,
+  onOpenLibrary,
 }: {
   summaries: AiDraftSummary[];
   onOpenReview: () => void;
+  onOpenLibrary: (recordType: RecordType, revisionId: string) => void;
 }) {
   return (
     <div className="rounded-xl border border-cyan-400/30 bg-cyan-400/10 p-4">
@@ -1287,8 +1469,16 @@ function AiDraftResultSummary({
               </div>
             </div>
             <p className="mt-2 text-xs text-cyan-100/75">
-              Revision {summary.revision.revision} - {summary.revision.id}
+              Revision {summary.revision.revision} - Provider: {summary.provider_name}
             </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button
+                tone="secondary"
+                onClick={() => onOpenLibrary(summary.record_type, summary.revision.id)}
+              >
+                Open in Document Library
+              </Button>
+            </div>
             {summary.warnings.length > 0 ? (
               <div className="mt-3">
                 <p className="text-xs font-semibold uppercase tracking-[0.14em] text-cyan-100/60">

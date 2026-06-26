@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy.orm import Session
@@ -413,6 +414,18 @@ def get_snapshot_diff(
     db: Session = Depends(get_db),
 ) -> LogicDiffRead | None:
     return svc.get_snapshot_diff(db, snapshot_id)
+
+
+@router.get("/snapshots/{snapshot_id}/parsed-extract")
+def get_snapshot_parsed_extract(
+    snapshot_id: uuid.UUID,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    try:
+        snapshot = svc.get_logic_snapshot(db, snapshot_id)
+        return snapshot.parsed_extract or {}
+    except svc.NotFoundError as exc:
+        raise _not_found(exc) from exc
 
 
 @router.get(

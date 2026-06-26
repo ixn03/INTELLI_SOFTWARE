@@ -8,10 +8,12 @@ revisions preserved), missing-fact handling, and deterministic mode.
 from __future__ import annotations
 
 import os
+import json
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 _BACKEND_ROOT = Path(__file__).resolve().parent.parent
 if str(_BACKEND_ROOT) not in sys.path:
@@ -39,11 +41,13 @@ from app.services.document_generation import (  # noqa: E402
     FakeDocumentProvider,
     GenerationMode,
     GenerationSourceFact,
+    OpenAIResponsesDocumentProvider,
     TemplateSpec,
     generate_document,
 )
 from app.services.document_generation.facts import build_source_facts  # noqa: E402
 from app.services.document_generation.models import ProviderGenerationInput  # noqa: E402
+from app.services.llm_providers import LLMConfig  # noqa: E402
 
 
 class _RecordingProvider:
@@ -144,6 +148,70 @@ class DocumentGenerationCoreTests(unittest.TestCase):
         for fact in result.missing_facts:
             self.assertFalse(fact.present)
             self.assertTrue(fact.source_field)
+
+    def test_openai_provider_uses_responses_api_and_structured_facts(self) -> None:
+        payload = ProviderGenerationInput(
+            system_prompt="sys",
+            record_type="control_narrative",
+            document_title="EM_TEST Narrative",
+            module_name="EM_TEST",
+            template=TemplateSpec(None, "Template", "intelli_default", ["Commands"]),
+            sections=["Commands"],
+            facts=[
+                GenerationSourceFact(
+                    key="commands",
+                    label="Commands",
+                    values=["MIX"],
+                    source_field="LogicSnapshot.parsed_extract.commands",
+                    source_snapshot_id="snap-1",
+                )
+            ],
+        )
+        provider = OpenAIResponsesDocumentProvider(
+            LLMConfig(
+                provider_name="openai",
+                enabled=True,
+                model_name="gpt-test",
+                temperature=0.2,
+                max_tokens=512,
+            ),
+            api_key="test-key",
+            base_url="https://api.test/v1",
+        )
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return (
+                    b'{"output_text":"{\\"sections\\":[{\\"title\\":\\"Commands\\",'
+                    b'\\"body_markdown\\":\\"MIX is the available command.\\",'
+                    b'\\"fact_keys\\":[\\"commands\\"],\\"needs_engineer_input\\":false}],'
+                    b'\\"assumptions\\":[],\\"warnings\\":[],\\"confidence\\":\\"high\\"}"}'
+                )
+
+        def fake_urlopen(req, timeout):
+            self.assertEqual(req.full_url, "https://api.test/v1/responses")
+            self.assertEqual(req.headers["Authorization"], "Bearer test-key")
+            body = json.loads(req.data.decode("utf-8"))
+            self.assertEqual(body["model"], "gpt-test")
+            self.assertIn("Return only valid JSON", body["instructions"])
+            self.assertIn('"facts"', body["input"])
+            self.assertNotIn("raw_ladder_xml", body["input"])
+            self.assertEqual(timeout, 60)
+            return FakeResponse()
+
+        with patch("app.services.document_generation.providers.urllib_request.urlopen", side_effect=fake_urlopen):
+            result = provider.generate(payload)
+
+        self.assertEqual(result.provider_name, "openai")
+        self.assertEqual(result.confidence, "high")
+        self.assertEqual(result.sections[0].fact_keys, ["commands"])
+        self.assertIn("MIX", result.sections[0].body_markdown)
 
 
 class AiDraftPersistenceTests(unittest.TestCase):
